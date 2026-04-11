@@ -3,6 +3,18 @@ import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 
+const DEFAULT_AI_BEHAVIOR = {
+  aiRole: 'Setter / Assistant',
+  primaryObjective: 'Book Call',
+  offerName: '',
+  offerSummary: '',
+  topPainPoints: '',
+  desiredOutcomes: '',
+  qualificationCriteria: '',
+  disqualifiers: '',
+  leadCommStyle: 'Mixed (default)',
+}
+
 export default function Settings() {
   const { profile } = useAuth()
   const [bot, setBot] = useState(null)
@@ -10,12 +22,8 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState(true)
-
-  const [leadType, setLeadType] = useState('Cold')
-  const [buyerType, setBuyerType] = useState('Emotional')
-  const [commStyle, setCommStyle] = useState('Hybrid')
-  const [campaignGoal, setCampaignGoal] = useState('General')
   const [targetAvatar, setTargetAvatar] = useState('')
+  const [aiBehavior, setAiBehavior] = useState(DEFAULT_AI_BEHAVIOR)
 
   useEffect(() => { load() }, [profile])
 
@@ -25,13 +33,17 @@ export default function Settings() {
     if (data) {
       setBot(data)
       setAutoSend(data.auto_send_enabled === true)
-      setLeadType(data.lead_type || 'Cold')
-      setBuyerType(data.buyer_type || 'Emotional')
-      setCommStyle(data.communication_style || 'Hybrid')
-      setCampaignGoal(data.campaign_goal || 'General')
       setTargetAvatar(data.target_avatar || '')
+      const saved = data.ai_behavior_settings
+      if (saved && typeof saved === 'object') {
+        setAiBehavior({ ...DEFAULT_AI_BEHAVIOR, ...saved })
+      }
     }
     setLoading(false)
+  }
+
+  function setBehavior(key, val) {
+    setAiBehavior(prev => ({ ...prev, [key]: val }))
   }
 
   async function saveSettings() {
@@ -41,11 +53,8 @@ export default function Settings() {
       .from('bots')
       .update({
         auto_send_enabled: autoSend,
-        lead_type: leadType,
-        buyer_type: buyerType,
-        communication_style: commStyle,
-        campaign_goal: campaignGoal,
         target_avatar: targetAvatar,
+        ai_behavior_settings: aiBehavior,
         updated_at: new Date().toISOString()
       })
       .eq('id', bot.id)
@@ -61,21 +70,28 @@ export default function Settings() {
 
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
 
+  const SectionLabel = ({ num, title }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px', marginTop: '4px' }}>
+      <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.7rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>{num}</div>
+      <div style={{ fontSize: '.82rem', fontWeight: 700, color: 'var(--tx)', textTransform: 'uppercase', letterSpacing: '.07em' }}>{title}</div>
+    </div>
+  )
+
   return (
     <div className="page">
       {toast && <div className="toast">{toast}</div>}
 
       <div className="page-header">
         <div>
-          <div className="page-title">Settings</div>
-          <div className="page-sub">{bot?.name} · Bot configuration</div>
+          <div className="page-title">AI Behavior Settings</div>
+          <div className="page-sub">Define how the AI understands your offer, your leads, and how it drives conversations toward conversion.</div>
         </div>
         <button className="btn btn-primary" onClick={saveSettings} disabled={saving}>
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
       </div>
 
-      {/* ══ AI MODE — PROMINENT TOP SECTION ══ */}
+      {/* ══ AI MODE ══ */}
       <div style={{
         background: autoSend
           ? 'linear-gradient(135deg, #faf6e8 0%, #fff9ed 100%)'
@@ -85,9 +101,7 @@ export default function Settings() {
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '24px' }}>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: autoSend ? 'var(--acc)' : 'var(--tx3)', marginBottom: '8px' }}>
-              AI Mode
-            </div>
+            <div style={{ fontSize: '.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: autoSend ? 'var(--acc)' : 'var(--tx3)', marginBottom: '8px' }}>AI Mode</div>
             <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--tx)', marginBottom: '6px' }}>
               {autoSend ? 'Auto Mode' : 'Training Mode'}
             </div>
@@ -96,168 +110,160 @@ export default function Settings() {
                 ? 'The AI sends messages automatically when it is confident in its response. Monitor the inbox regularly to ensure quality.'
                 : 'All AI responses are reviewed by you before being sent to leads. Use this mode while training the AI or when you want full control.'}
             </div>
-
-            {/* Mode cards */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '20px' }}>
-              {/* Training Mode card */}
-              <div
-                onClick={() => setAutoSend(false)}
-                style={{
-                  padding: '16px', borderRadius: 'var(--r)', cursor: 'pointer', transition: 'all .2s',
-                  background: !autoSend ? 'var(--surf)' : 'transparent',
-                  border: !autoSend ? '2px solid var(--bdr2)' : '2px solid transparent',
-                  opacity: autoSend ? 0.6 : 1
-                }}
-              >
+              <div onClick={() => setAutoSend(false)} style={{ padding: '16px', borderRadius: 'var(--r)', cursor: 'pointer', transition: 'all .2s', background: !autoSend ? 'var(--surf)' : 'transparent', border: !autoSend ? '2px solid var(--bdr2)' : '2px solid transparent', opacity: autoSend ? 0.6 : 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: !autoSend ? '#2d6a4f' : 'var(--bdr2)', flexShrink: 0 }} />
                   <div style={{ fontSize: '.82rem', fontWeight: 600, color: 'var(--tx)' }}>Training Mode</div>
                 </div>
-                <div style={{ fontSize: '.76rem', color: 'var(--tx3)', lineHeight: 1.55 }}>
-                  All responses are reviewed before being sent. Best for teaching the AI your style.
-                </div>
+                <div style={{ fontSize: '.76rem', color: 'var(--tx3)', lineHeight: 1.55 }}>All responses are reviewed before being sent. Best for teaching the AI your style.</div>
               </div>
-
-              {/* Auto Mode card */}
-              <div
-                onClick={() => setAutoSend(true)}
-                style={{
-                  padding: '16px', borderRadius: 'var(--r)', cursor: 'pointer', transition: 'all .2s',
-                  background: autoSend ? 'var(--accp)' : 'transparent',
-                  border: autoSend ? '2px solid var(--accl)' : '2px solid transparent',
-                  opacity: !autoSend ? 0.6 : 1
-                }}
-              >
+              <div onClick={() => setAutoSend(true)} style={{ padding: '16px', borderRadius: 'var(--r)', cursor: 'pointer', transition: 'all .2s', background: autoSend ? 'var(--accp)' : 'transparent', border: autoSend ? '2px solid var(--accl)' : '2px solid transparent', opacity: !autoSend ? 0.6 : 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: autoSend ? 'var(--acc)' : 'var(--bdr2)', flexShrink: 0 }} />
                   <div style={{ fontSize: '.82rem', fontWeight: 600, color: 'var(--tx)' }}>Auto Mode</div>
                 </div>
-                <div style={{ fontSize: '.76rem', color: 'var(--tx3)', lineHeight: 1.55 }}>
-                  AI sends messages automatically when confident. Best when the AI is well trained.
-                </div>
+                <div style={{ fontSize: '.76rem', color: 'var(--tx3)', lineHeight: 1.55 }}>AI sends messages automatically when confident. Best when the AI is well trained.</div>
               </div>
             </div>
-
             {autoSend && (
-              <div style={{
-                marginTop: '14px', padding: '10px 14px', borderRadius: 'var(--rsm)',
-                background: 'var(--ambbg)', border: '1px solid var(--ambbd)',
-                fontSize: '.79rem', color: 'var(--amb)', lineHeight: 1.55
-              }}>
+              <div style={{ marginTop: '14px', padding: '10px 14px', borderRadius: 'var(--rsm)', background: 'var(--ambbg)', border: '1px solid var(--ambbd)', fontSize: '.79rem', color: 'var(--amb)', lineHeight: 1.55 }}>
                 ⚠ Make sure the AI has been well trained before enabling Auto Mode. Monitor the inbox for a few days after switching.
               </div>
             )}
           </div>
-
-          {/* Toggle */}
           <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', paddingTop: '28px' }}>
-            <button
-              onClick={() => setAutoSend(!autoSend)}
-              style={{
-                position: 'relative', width: '56px', height: '30px',
-                borderRadius: '100px', border: 'none', cursor: 'pointer',
-                background: autoSend ? 'var(--acc)' : 'var(--bdr2)',
-                transition: 'background .2s', padding: 0
-              }}
-            >
-              <div style={{
-                position: 'absolute', top: '4px',
-                left: autoSend ? '29px' : '4px',
-                width: '22px', height: '22px', borderRadius: '50%',
-                background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.2)',
-                transition: 'left .2s'
-              }} />
+            <button onClick={() => setAutoSend(!autoSend)} style={{ position: 'relative', width: '56px', height: '30px', borderRadius: '100px', border: 'none', cursor: 'pointer', background: autoSend ? 'var(--acc)' : 'var(--bdr2)', transition: 'background .2s', padding: 0 }}>
+              <div style={{ position: 'absolute', top: '4px', left: autoSend ? '29px' : '4px', width: '22px', height: '22px', borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.2)', transition: 'left .2s' }} />
             </button>
-            <div style={{ fontSize: '.7rem', color: 'var(--tx3)', fontWeight: 500 }}>
-              {autoSend ? 'ON' : 'OFF'}
-            </div>
+            <div style={{ fontSize: '.7rem', color: 'var(--tx3)', fontWeight: 500 }}>{autoSend ? 'ON' : 'OFF'}</div>
           </div>
         </div>
       </div>
 
-      {/* CAMPAIGN CONFIG */}
+      {/* ══ AI BEHAVIOR SETTINGS ══ */}
       <div className="card">
-        <div className="card-title">Campaign Configuration</div>
-        <div style={{ fontSize: '.82rem', color: 'var(--tx3)', marginBottom: '18px', lineHeight: 1.6 }}>
-          Define how this bot should approach leads. These settings are injected into the bot's system prompt to tailor its tone and strategy per campaign.
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-
-          <div className="form-group">
-            <label className="form-label">Lead Type</label>
-            <select className="form-input" value={leadType} onChange={e => setLeadType(e.target.value)}>
-              <option value="Cold">Cold</option>
-              <option value="Warm">Warm</option>
-              <option value="Hot">Hot</option>
-            </select>
-            <div className="form-hint">How familiar are leads with your offer when they first message?</div>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Buyer Type</label>
-            <select className="form-input" value={buyerType} onChange={e => setBuyerType(e.target.value)}>
-              <option value="Emotional">Emotional</option>
-              <option value="Logical">Logical</option>
-              <option value="Transactional">Transactional</option>
-            </select>
-            <div className="form-hint">How do your leads typically make decisions?</div>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Communication Style</label>
-            <select className="form-input" value={commStyle} onChange={e => setCommStyle(e.target.value)}>
-              <option value="Soft">Soft</option>
-              <option value="Hybrid">Hybrid</option>
-              <option value="Direct">Direct</option>
-            </select>
-            <div className="form-hint">How should the bot communicate with leads?</div>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Campaign Goal</label>
-            <select className="form-input" value={campaignGoal} onChange={e => setCampaignGoal(e.target.value)}>
-              <option value="General">General</option>
-              <option value="Book a Call">Book a Call</option>
-              <option value="Qualify Leads">Qualify Leads</option>
-              <option value="Nurture">Nurture</option>
-            </select>
-            <div className="form-hint">What is the primary outcome you want from conversations?</div>
+        <div style={{ marginBottom: '20px' }}>
+          <div className="card-title" style={{ marginBottom: '4px' }}>AI Behavior Settings</div>
+          <div style={{ fontSize: '.82rem', color: 'var(--tx3)', lineHeight: 1.6 }}>
+            Define how the AI understands your offer, your leads, and how it drives conversations toward conversion.
           </div>
         </div>
 
-        <div className="form-group" style={{ marginTop: '8px' }}>
-          <label className="form-label">Target Avatar</label>
+        {/* Section 1: AI Role */}
+        <div style={{ borderTop: '1px solid var(--bdr)', paddingTop: '20px', marginBottom: '20px' }}>
+          <SectionLabel num="1" title="AI Role" />
+          <div className="form-group">
+            <label className="form-label">Who is the AI speaking as?</label>
+            <select className="form-input" value={aiBehavior.aiRole} onChange={e => setBehavior('aiRole', e.target.value)}>
+              <option value="Coach / Brand Voice">Coach / Brand Voice — speaks as the expert, in your tone</option>
+              <option value="Setter / Assistant">Setter / Assistant — qualifies leads on behalf of the coach</option>
+              <option value="Hybrid">Hybrid — starts as setter, transitions to coach voice as trust builds</option>
+            </select>
+            <div className="form-hint">This shapes how the AI introduces itself and maintains its persona throughout the conversation.</div>
+          </div>
+        </div>
+
+        {/* Section 2: Primary Objective */}
+        <div style={{ borderTop: '1px solid var(--bdr)', paddingTop: '20px', marginBottom: '20px' }}>
+          <SectionLabel num="2" title="Primary Objective" />
+          <div className="form-group">
+            <label className="form-label">What is the AI optimizing for?</label>
+            <select className="form-input" value={aiBehavior.primaryObjective} onChange={e => setBehavior('primaryObjective', e.target.value)}>
+              <option value="Book Call">Book Call — goal is to schedule a discovery or sales call</option>
+              <option value="Close Sale">Close Sale — goal is to convert the lead directly in the conversation</option>
+            </select>
+            <div className="form-hint">This determines when the AI pivots toward its end goal and how urgently it pushes forward.</div>
+          </div>
+        </div>
+
+        {/* Section 3: Offer Context */}
+        <div style={{ borderTop: '1px solid var(--bdr)', paddingTop: '20px', marginBottom: '20px' }}>
+          <SectionLabel num="3" title="Offer Context" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="form-group">
+              <label className="form-label">Offer Name</label>
+              <input className="form-input" type="text" placeholder="e.g. Bombers Blueprint, The 90-Day Transformation, Elite Coaching Program" value={aiBehavior.offerName} onChange={e => setBehavior('offerName', e.target.value)} />
+              <div className="form-hint">What is the name of what you're selling?</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Offer Summary</label>
+              <textarea className="form-input" rows={3} placeholder="e.g. A 12-week golf fitness coaching program for amateur golfers over 40 who want to add distance, reduce injury risk, and finally play their best golf — without spending more time at the range." value={aiBehavior.offerSummary} onChange={e => setBehavior('offerSummary', e.target.value)} style={{ resize: 'none', lineHeight: 1.6 }} />
+              <div className="form-hint">What does your offer do and who is it for? Be specific — the AI uses this to stay on-topic and never misrepresent your offer.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 4: Lead Understanding */}
+        <div style={{ borderTop: '1px solid var(--bdr)', paddingTop: '20px', marginBottom: '20px' }}>
+          <SectionLabel num="4" title="Lead Understanding" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="form-group">
+              <label className="form-label">Top Pain Points</label>
+              <textarea className="form-input" rows={3} placeholder="e.g. Losing distance off the tee. Back and hip pain affecting their swing. Inconsistent ball striking. Tried the range but nothing sticks. Feel like their body is the limiting factor." value={aiBehavior.topPainPoints} onChange={e => setBehavior('topPainPoints', e.target.value)} style={{ resize: 'none', lineHeight: 1.6 }} />
+              <div className="form-hint">What problems does your ideal lead struggle with? The AI uses these to identify and reflect back pain during conversations.</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Desired Outcomes</label>
+              <textarea className="form-input" rows={3} placeholder="e.g. Hit the ball further than they did 10 years ago. Play pain-free. Break 80. Feel athletic and confident on the course again. Impress their playing partners." value={aiBehavior.desiredOutcomes} onChange={e => setBehavior('desiredOutcomes', e.target.value)} style={{ resize: 'none', lineHeight: 1.6 }} />
+              <div className="form-hint">What does your lead want to achieve? The AI uses this to connect your offer to their goals.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 5: Qualification Criteria */}
+        <div style={{ borderTop: '1px solid var(--bdr)', paddingTop: '20px', marginBottom: '20px' }}>
+          <SectionLabel num="5" title="Qualification Criteria" />
+          <div style={{ background: 'var(--ambbg)', border: '1px solid var(--ambbd)', borderRadius: 'var(--rsm)', padding: '10px 14px', marginBottom: '14px', fontSize: '.79rem', color: 'var(--amb)', lineHeight: 1.55 }}>
+            ⚠ This is critical. The AI uses these rules to decide who to push forward and who to disqualify. Be specific.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div className="form-group">
+              <label className="form-label">What qualifies a strong lead?</label>
+              <textarea className="form-input" rows={3} placeholder="e.g. Golfer who plays at least once a week. Has a specific goal (distance, pain, consistency). Expresses frustration or urgency. Has tried something before that didn't fully work. Ready to invest in a solution now." value={aiBehavior.qualificationCriteria} onChange={e => setBehavior('qualificationCriteria', e.target.value)} style={{ resize: 'none', lineHeight: 1.6 }} />
+              <div className="form-hint">What must be true for someone to be worth moving forward in the conversation?</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Disqualifiers</label>
+              <textarea className="form-input" rows={3} placeholder="e.g. Complete beginners with no commitment to improving. Someone looking for free advice or a quick fix. Leads who mention they're happy with how they're playing. Anyone aggressive or rude." value={aiBehavior.disqualifiers} onChange={e => setBehavior('disqualifiers', e.target.value)} style={{ resize: 'none', lineHeight: 1.6 }} />
+              <div className="form-hint">Who should NOT be converted or booked? The AI will politely exit or deprioritise these leads.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 6: Lead Communication Style */}
+        <div style={{ borderTop: '1px solid var(--bdr)', paddingTop: '20px' }}>
+          <SectionLabel num="6" title="Lead Communication Style" />
+          <div className="form-group">
+            <label className="form-label">How do your leads typically communicate?</label>
+            <select className="form-input" value={aiBehavior.leadCommStyle} onChange={e => setBehavior('leadCommStyle', e.target.value)}>
+              <option value="Direct & Results-Focused">Direct & Results-Focused — brief, straight to the point, wants the bottom line</option>
+              <option value="Expressive & Emotional">Expressive & Emotional — shares context and feelings, responds to warmth</option>
+              <option value="Analytical & Detail-Oriented">Analytical & Detail-Oriented — asks questions, wants clarity before committing</option>
+              <option value="Mixed (default)">Mixed (default) — AI adapts based on how the lead responds</option>
+            </select>
+            <div className="form-hint">The AI automatically adjusts its tone, pacing, and level of detail based on this setting. Mixed is recommended unless your audience is very consistent.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ══ TARGET AVATAR ══ */}
+      <div className="card">
+        <div className="card-title">Target Avatar</div>
+        <div style={{ fontSize: '.82rem', color: 'var(--tx3)', marginBottom: '14px', lineHeight: 1.6 }}>
+          Describe your ideal lead in detail. This gives the AI a complete picture of who it's talking to.
+        </div>
+        <div className="form-group">
           <textarea
             className="form-input"
-            rows={3}
-            placeholder="e.g. 40-55 year old male golfer, busy professional, family man. Frustrated by losing distance and nagging aches. Has tried generic programs but nothing golf-specific."
+            rows={4}
+            placeholder="e.g. 40-55 year old male golfer, busy professional, family man. Frustrated by losing distance and nagging aches. Has tried generic programs but nothing golf-specific. Plays once or twice a week, takes the game seriously, wants to compete with his club friends again."
             value={targetAvatar}
             onChange={e => setTargetAvatar(e.target.value)}
             style={{ resize: 'none', lineHeight: 1.6 }}
           />
-          <div className="form-hint">Describe your ideal lead so the bot can tailor its approach.</div>
+          <div className="form-hint">The more specific, the better. Include age, lifestyle, frustrations, goals, and how they typically discover solutions.</div>
         </div>
-
-        {(leadType || buyerType || commStyle) && (
-          <div style={{
-            padding: '12px 14px', borderRadius: 'var(--rsm)',
-            background: 'var(--accp)', border: '1px solid var(--accl)'
-          }}>
-            <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--acc)', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: '6px' }}>
-              Bot Approach Preview
-            </div>
-            <div style={{ fontSize: '.81rem', color: 'var(--tx2)', lineHeight: 1.65 }}>
-              {leadType === 'Cold' && buyerType === 'Emotional' && commStyle === 'Soft' && 'Slow-build rapport first. Validate emotions, go deep on pain before any pivot to solution.'}
-              {leadType === 'Cold' && buyerType === 'Logical' && commStyle === 'Direct' && 'Short, value-driven messages. Lead with outcomes and structure. Skip the small talk.'}
-              {leadType === 'Warm' && buyerType === 'Emotional' && commStyle === 'Hybrid' && 'Balanced approach. Acknowledge, bridge, question. Medium pace. Build on existing interest.'}
-              {leadType === 'Hot' && commStyle === 'Direct' && "Move fast. They're ready. Confirm pain, confirm priority, get to the call bridge quickly."}
-              {leadType === 'Hot' && commStyle !== 'Direct' && 'High intent detected. Confirm urgency and pivot to call booking efficiently.'}
-              {leadType === 'Cold' && buyerType === 'Transactional' && "Keep it short and value-focused. They want to know what's in it for them quickly."}
-              {leadType === 'Warm' && buyerType === 'Logical' && 'Structured questioning. Show you understand their situation with data and outcomes.'}
-              {leadType === 'Warm' && buyerType === 'Transactional' && "They're interested but need a clear reason to move. Make the value obvious and fast."}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
