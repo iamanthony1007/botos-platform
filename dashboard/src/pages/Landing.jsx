@@ -112,7 +112,7 @@ export default function Landing() {
         textAlign: 'center', padding: '18px', fontSize: '12px',
         color: 'rgba(40,35,25,0.4)', position: 'relative', zIndex: 1
       }}>
-        Built by Anthony · MU AI © 2026
+        MU AI © 2026
       </div>
     </div>
   )

@@ -29,7 +29,6 @@ export default function Login() {
     }}>
       <div style={{ width: '100%', maxWidth: '420px' }}>
 
-        {/* Logo — no box, just the image */}
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <img
             src={LOGO_STACKED}
@@ -44,7 +43,6 @@ export default function Login() {
           </div>
         </div>
 
-        {/* Card */}
         <div style={{
           background: '#fff', borderRadius: '16px', padding: '32px',
           boxShadow: '0 4px 24px rgba(0,0,0,.07)', border: '1px solid #E8E6DE'
@@ -107,7 +105,7 @@ export default function Login() {
         </div>
 
         <div style={{ textAlign: 'center', marginTop: '24px', fontSize: '.76rem', color: '#B8B8A8' }}>
-          Built by Anthony
+          MU AI © 2026
         </div>
       </div>
     </div>
