@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Golf Bot Tester & Training 🧠</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 30px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .learning-stats {
+            background: #f0f4ff;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        
+        .learning-stats h3 {
+            color: #667eea;
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+        
+        .learning-stats p {
+            color: #555;
+            font-size: 13px;
+            margin: 4px 0;
+        }
+        
+        .chat-container {
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            max-height: 500px;
+            overflow-y: auto;
+            background: #f9f9f9;
+        }
+        
+        .message {
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .message.user {
+            align-items: flex-end;
+        }
+        
+        .message.bot {
+            align-items: flex-start;
+        }
+        
+        .message-content {
+            padding: 12px 16px;
+            border-radius: 18px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+        
+        .message.user .message-content {
+            background: #667eea;
+            color: white;
+        }
+        
+        .message.bot .message-content {
+            background: white;
+            color: #333;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .message-meta {
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .stage-badge {
+            background: #f0f4ff;
+            color: #667eea;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        
+        .readiness-badge {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        
+        .readiness-badge.HOT {
+            background: #fee;
+            color: #c00;
+        }
+        
+        .readiness-badge.WARM {
+            background: #ffa;
+            color: #880;
+        }
+        
+        .readiness-badge.COLD {
+            background: #eef;
+            color: #00c;
+        }
+        
+        .edit-button {
+            background: #764ba2;
+            color: white;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            cursor: pointer;
+            margin-left: 8px;
+        }
+        
+        .edit-button:hover {
+            background: #5e3a82;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        input[type="text"], textarea {
+            flex: 1;
+            padding: 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            padding: 14px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #5568d3;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.6);
+        }
+        
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .modal-header {
+            margin-bottom: 20px;
+        }
+        
+        .modal-header h2 {
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+        
+        .modal-header p {
+            color: #666;
+            font-size: 13px;
+        }
+        
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 20px;
+        }
+        
+        .close:hover {
+            color: #000;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        
+        .form-group textarea {
+            width: 100%;
+            min-height: 80px;
+            resize: vertical;
+        }
+        
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        .form-group input[type="text"] {
+            width: 100%;
+        }
+        
+        .char-count {
+            text-align: right;
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .tag-input-wrapper {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .tag {
+            background: #f0f4ff;
+            color: #667eea;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .tag .remove-tag {
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .suggested-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .suggested-tag {
+            background: #e9ecef;
+            color: #495057;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            cursor: pointer;
+            border: 1px solid #dee2e6;
+        }
+        
+        .suggested-tag:hover {
+            background: #667eea;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧠 Golf Bot Tester & Training</h1>
+        <p class="subtitle">Test conversations and train the bot with psychological insights</p>
+        
+        <div class="learning-stats" id="learningStats">
+            <h3>🎯 Learning System Status</h3>
+            <p id="learningCount">Loading...</p>
+            <p>Each correction teaches the bot psychological patterns and improves future responses.</p>
+        </div>
+        
+        <div class="success-message" id="successMessage"></div>
+        
+        <div class="chat-container" id="chatContainer">
+            <p style="text-align: center; color: #888; padding: 20px;">
+                Start a conversation by typing a message below
+            </p>
+        </div>
+        
+        <div class="input-group">
+            <input type="text" id="messageInput" placeholder="Type your message as the lead..." />
+            <button onclick="sendMessage()" id="sendButton">Send</button>
+        </div>
+    </div>
+
+    <!-- Edit & Train Modal -->
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="close" onclick="closeEditModal()">&times;</span>
+                <h2>✏️ Edit & Train Bot</h2>
+                <p>Improve the bot by correcting this response and explaining why</p>
+            </div>
+            
+            <div class="form-group">
+                <label>Original Bot Reply:</label>
+                <textarea id="originalReply" readonly></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label>✅ Your Corrected Reply:</label>
+                <textarea id="editedReply" oninput="updateCharCount('editedReply', 'editedCharCount')"></textarea>
+                <div class="char-count" id="editedCharCount">0 characters</div>
+            </div>
+            
+            <div class="form-group">
+                <label>🧠 Why Did You Change It? (Psychological Insight):</label>
+                <p style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                    Explain the psychological reasoning: What was wrong with tone, timing, question structure, depth, etc.?
+                </p>
+                <textarea id="editReason" placeholder="Example: 'Too corporate, not Australian enough. Lead showed frustration signals (time-based language) but bot stayed surface level instead of deepening. Should have validated emotion first, then asked about timeframe.'" oninput="updateCharCount('editReason', 'reasonCharCount')"></textarea>
+                <div class="char-count" id="reasonCharCount">0 characters</div>
+            </div>
+            
+            <div class="form-group">
+                <label>📍 Conversation Stage:</label>
+                <select id="conversationStage">
+                    <option value="">Select stage...</option>
+                    <option value="ENTRY & CONTEXT">Entry & Context</option>
+                    <option value="GOAL IDENTIFICATION">Goal Identification</option>
+                    <option value="DEPTH & EFFORT CHECK">Depth & Effort Check</option>
+                    <option value="REALITY CHECK">Reality Check</option>
+                    <option value="READINESS FILTER">Readiness Filter</option>
+                    <option value="AUTHORITY BRIDGE">Authority Bridge</option>
+                    <option value="CALL COMMITMENT">Call Commitment</option>
+                    <option value="BOOKING DISCIPLINE">Booking Discipline</option>
+                    <option value="NURTURE & EXIT">Nurture & Exit</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>💭 Situation Context (Optional):</label>
+                <input type="text" id="situationContext" placeholder="e.g., 'Lead showed price objection early' or 'Lead expressed frustration about lack of progress'" />
+            </div>
+            
+            <div class="form-group">
+                <label>🏷️ Tags (Click to add):</label>
+                <div class="suggested-tags">
+                    <span class="suggested-tag" onclick="addTag('tone')">tone</span>
+                    <span class="suggested-tag" onclick="addTag('australian-voice')">australian-voice</span>
+                    <span class="suggested-tag" onclick="addTag('depth')">depth</span>
+                    <span class="suggested-tag" onclick="addTag('validation')">validation</span>
+                    <span class="suggested-tag" onclick="addTag('urgency')">urgency</span>
+                    <span class="suggested-tag" onclick="addTag('objection-handling')">objection-handling</span>
+                    <span class="suggested-tag" onclick="addTag('question-structure')">question-structure</span>
+                    <span class="suggested-tag" onclick="addTag('bridge')">bridge</span>
+                    <span class="suggested-tag" onclick="addTag('stage-progression')">stage-progression</span>
+                </div>
+                <div class="tag-input-wrapper" id="tagContainer"></div>
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn-secondary" onclick="closeEditModal()">Cancel</button>
+                <button class="btn-primary" onclick="submitEdit()">💾 Save & Train Bot</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        const CUSTOMER_ID = 'test_user_' + Math.random().toString(36).substr(2, 9);
+        let currentReviewId = null;
+        let currentBotReply = null;
+        let selectedTags = [];
+
+        // Load learning stats on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch(`${API_BASE}/learnings`);
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('learningCount').textContent = 
+                        `📚 ${data.total_learnings} corrections captured | Bot is continuously learning`;
+                }
+            } catch (e) {
+                console.log('Could not load learning stats');
+            }
+        });
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            // Disable input
+            input.disabled = true;
+            document.getElementById('sendButton').disabled = true;
+            
+            // Add user message to chat
+            addMessageToChat('user', message);
+            input.value = '';
+            
+            try {
+                const response = await fetch(`${API_BASE}/webhook`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        customer_id: CUSTOMER_ID,
+                        message: message,
+                        channel: 'test'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Bot response failed');
+                }
+                
+                const data = await response.json();
+                console.log('Bot response received:', data);
+                
+                // Add bot message to chat with metadata
+                addMessageToChat('bot', data.reply, {
+                    stage: data.conversation_stage,
+                    readiness: data.lead_readiness,
+                    review_id: data.review_id
+                });
+                
+            } catch (error) {
+                console.error('Error:', error);
+                addMessageToChat('bot', '❌ Error: Could not get response from bot');
+            } finally {
+                input.disabled = false;
+                document.getElementById('sendButton').disabled = false;
+                input.focus();
+            }
+        }
+
+        function addMessageToChat(role, content, metadata = {}) {
+            const container = document.getElementById('chatContainer');
+            
+            // Clear placeholder if first message
+            if (container.children.length === 1 && container.children[0].tagName === 'P') {
+                container.innerHTML = '';
+            }
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+            
+            messageDiv.appendChild(contentDiv);
+            
+            // Add metadata for bot messages
+            if (role === 'bot' && metadata.stage) {
+                const metaDiv = document.createElement('div');
+                metaDiv.className = 'message-meta';
+                
+                const stageBadge = document.createElement('span');
+                stageBadge.className = 'stage-badge';
+                stageBadge.textContent = metadata.stage;
+                metaDiv.appendChild(stageBadge);
+                
+                if (metadata.readiness) {
+                    const readinessBadge = document.createElement('span');
+                    readinessBadge.className = `readiness-badge ${metadata.readiness}`;
+                    readinessBadge.textContent = metadata.readiness;
+                    metaDiv.appendChild(readinessBadge);
+                }
+                
+                if (metadata.review_id) {
+                    const editBtn = document.createElement('button');
+                    editBtn.className = 'edit-button';
+                    editBtn.textContent = '✏️ Edit & Train';
+                    editBtn.setAttribute('data-review-id', metadata.review_id);
+                    editBtn.setAttribute('data-bot-reply', content);
+                    editBtn.onclick = function() {
+                        editResponseClick(this);
+                    };
+                    metaDiv.appendChild(editBtn);
+                }
+                
+                messageDiv.appendChild(metaDiv);
+            }
+            
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function editResponseClick(button) {
+            const reviewId = button.getAttribute('data-review-id');
+            const botReply = button.getAttribute('data-bot-reply');
+            editResponse(reviewId, botReply);
+        }
+
+        function editResponse(reviewId, botReply) {
+            console.log('Opening edit modal:', { reviewId, botReply });
+            currentReviewId = reviewId;
+            currentBotReply = botReply;
+            selectedTags = [];
+            
+            document.getElementById('originalReply').value = botReply;
+            document.getElementById('editedReply').value = botReply;
+            document.getElementById('editReason').value = '';
+            document.getElementById('conversationStage').value = '';
+            document.getElementById('situationContext').value = '';
+            document.getElementById('tagContainer').innerHTML = '';
+            
+            updateCharCount('editedReply', 'editedCharCount');
+            updateCharCount('editReason', 'reasonCharCount');
+            
+            document.getElementById('editModal').style.display = 'block';
+        }
+
+        function closeEditModal() {
+            document.getElementById('editModal').style.display = 'none';
+            currentReviewId = null;
+            currentBotReply = null;
+            selectedTags = [];
+        }
+
+        function addTag(tag) {
+            if (selectedTags.includes(tag)) return;
+            
+            selectedTags.push(tag);
+            
+            const tagContainer = document.getElementById('tagContainer');
+            const tagElement = document.createElement('span');
+            tagElement.className = 'tag';
+            tagElement.innerHTML = `
+                ${tag}
+                <span class="remove-tag" onclick="removeTag('${tag}')">&times;</span>
+            `;
+            tagContainer.appendChild(tagElement);
+        }
+
+        function removeTag(tag) {
+            selectedTags = selectedTags.filter(t => t !== tag);
+            renderTags();
+        }
+
+        function renderTags() {
+            const tagContainer = document.getElementById('tagContainer');
+            tagContainer.innerHTML = '';
+            selectedTags.forEach(tag => {
+                const tagElement = document.createElement('span');
+                tagElement.className = 'tag';
+                tagElement.innerHTML = `
+                    ${tag}
+                    <span class="remove-tag" onclick="removeTag('${tag}')">&times;</span>
+                `;
+                tagContainer.appendChild(tagElement);
+            });
+        }
+
+        function updateCharCount(textareaId, countId) {
+            const textarea = document.getElementById(textareaId);
+            const count = document.getElementById(countId);
+            count.textContent = `${textarea.value.length} characters`;
+        }
+
+        async function submitEdit() {
+            // Save to local variables BEFORE closing modal
+            const reviewId = currentReviewId;
+            const originalReply = currentBotReply;
+            const editedReply = document.getElementById('editedReply').value.trim();
+            const reason = document.getElementById('editReason').value.trim();
+            const conversationStage = document.getElementById('conversationStage').value;
+            const situationContext = document.getElementById('situationContext').value.trim();
+            const tags = [...selectedTags];
+            
+            if (!editedReply || !reason) {
+                alert('Please fill in both the corrected reply and the reason for changing it.');
+                return;
+            }
+            
+            if (!reviewId) {
+                alert('Error: Review ID is missing');
+                console.error('Review ID is null');
+                return;
+            }
+            
+            // Close modal AFTER saving values
+            closeEditModal();
+            
+            console.log('Submitting edit:', {
+                review_id: reviewId,
+                customer_id: CUSTOMER_ID,
+                original_reply: originalReply,
+                edited_reply: editedReply,
+                reason: reason,
+                conversation_stage: conversationStage,
+                situation_context: situationContext,
+                tags: tags,
+                edited_length: editedReply.length,
+                reason_length: reason.length
+            });
+            
+            try {
+                const response = await fetch(`${API_BASE}/feedback`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        review_id: reviewId,
+                        customer_id: CUSTOMER_ID,
+                        original_reply: originalReply,
+                        edited_reply: editedReply,
+                        reason: reason,
+                        conversation_stage: conversationStage,
+                        situation_context: situationContext,
+                        tags: tags
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.text();
+                    throw new Error(error);
+                }
+                
+                const result = await response.json();
+                console.log('Feedback response:', result);
+                
+                // Show success message
+                const successMsg = document.getElementById('successMessage');
+                successMsg.textContent = '✅ Bot learned from your edit! The psychological insight has been captured.';
+                successMsg.style.display = 'block';
+                setTimeout(() => {
+                    successMsg.style.display = 'none';
+                }, 5000);
+                
+                // Update learning count
+                try {
+                    const statsResponse = await fetch(`${API_BASE}/learnings`);
+                    if (statsResponse.ok) {
+                        const data = await statsResponse.json();
+                        document.getElementById('learningCount').textContent = 
+                            `📚 ${data.total_learnings} corrections captured | Bot is continuously learning`;
+                    }
+                } catch (e) {
+                    console.log('Could not update stats');
+                }
+                
+            } catch (error) {
+                console.error('Error submitting feedback:', error);
+                alert('Error saving feedback: ' + error.message);
+            }
+        }
+
+        // Allow Enter to send message
+        document.getElementById('messageInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('editModal');
+            if (event.target == modal) {
+                closeEditModal();
+            }
+        }
+    </script>
+</body>
+</html>

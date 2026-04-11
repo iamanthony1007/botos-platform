@@ -1,0 +1,11 @@
+name = "sales-bot"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+account_id = "444afb7987a4f1e657e0bad22a528a42"
+
+[[kv_namespaces]]
+binding = "MEMORY_STORE"
+id = "34e52c784a4e4e40925b93b17354cbec"
+
+[vars]
+ENVIRONMENT = "production"

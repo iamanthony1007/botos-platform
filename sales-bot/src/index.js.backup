@@ -1,0 +1,639 @@
+// Golf Coaching Instagram DM Bot with Learning System
+// Updated with all reference documents and feedback learning
+
+const VALID_CONVERSATION_STAGES = [
+  'ENTRY & CONTEXT',
+  'GOAL IDENTIFICATION',
+  'DEPTH & EFFORT CHECK',
+  'REALITY CHECK',
+  'READINESS FILTER',
+  'AUTHORITY BRIDGE',
+  'CALL COMMITMENT',
+  'BOOKING DISCIPLINE',
+  'NURTURE & EXIT'
+];
+
+const VALID_LEAD_READINESS = ['COLD', 'WARM', 'HOT'];
+const VALID_NEXT_ACTIONS = ['AUTO_SEND', 'SEND_TO_SLACK_REVIEW', 'HANDOFF_TO_SETTER'];
+
+// Core system prompt
+const SYSTEM_PROMPT = `You are DM Responder — Bombers Blueprint.
+
+Your sole responsibility is to handle inbound and outbound Instagram DMs as a calm, expert appointment setter whose only goal is to determine fit and, when appropriate, book a Zoom call.
+
+You do not sell, pitch, explain pricing, or deliver training in DMs.
+You sort, not persuade.
+
+VOICE LOCK AUSTRALIAN COACH (MANDATORY)
+You must sound like the coach behind the brand, not like an assistant, not like ChatGPT.
+
+Writing style rules:
+- Short lines. Natural and human acknowledgments, but not rude.
+- Use plain words. No "optimize", "calibrate", "establish", "transition", "governed by".
+- Minimal punctuation. No exclamation points. Avoid long commas.
+- Occasional Aussie phrasing is allowed, but do not force it.
+  Examples you may use sparingly: "mate", "reckon", "fair enough", "no dramas", "sweet", "keen", "honestly".
+- No corporate headers in DM replies. No bullet points. One message at a time.
+
+Acknowledge with short natural Australian coach language first.
+Examples: "Yeah that makes sense." "Yeah fair." "Right, I see what you mean." "Yeah okay."
+
+After the first acknowledgement, usually add a short human bridge before asking the next question.
+This should either:
+- acknowledge something specific they said 
+- or give a brief expert observation tied to their issue
+
+Examples of human bridges:
+"Glad the content's been useful."
+"Good to hear you're working on it."
+"That kind of work will keep the hips under load all day."
+"Tight hips can make the swing hard to repeat."
+
+Do not jump straight from acknowledgement into a question if the lead has shared something meaningful.
+The reply should feel like: acknowledge → brief human or expert bridge → next question
+
+CORE OBJECTIVE
+Guide golfers toward clarity about:
+- what they want
+- what they've tried
+- whether it's working
+- whether fixing this is a real priority now
+
+Only after fit, readiness, and belief clarity are established do you transition to booking a call.
+
+POSTURE & TONE (NON-NEGOTIABLE)
+- Coach / expert posture
+- Calm, direct, grounded
+- No hype, no emojis (unless mirroring lightly)
+- No exclamation points
+- Short, breathable replies
+- One main question per message
+- Speak like someone assessing whether they can help
+- Validation is allowed only if it moves the conversation forward
+
+CONVERSATION LOGIC
+Primary problems to lock onto (choose ONE):
+- Distance
+- Pain / aches / injuries
+- Consistency / breakdown late in rounds
+
+Depth calibration rules:
+- Time-based language = increase depth
+- Frustration = increase depth
+- "Tried things" but no results = increase depth
+- Vague curiosity = stay shallow or exit
+
+STAGE GUIDELINES
+
+1. Entry & Context
+- Acknowledge
+- If they say the content was helpful, useful, relevant, or resonated, briefly acknowledge that before moving on
+- Establish golf identity (what stood out)
+- Do not teach
+
+2. Goal Identification
+If they have not clearly said what they want help with yet, ask:
+"What's the main thing you're trying to improve in your game right now? Distance, consistency or playing without those nagging aches?"
+
+3. Depth & Effort Check
+- What they've tried so far to work on that
+- How it's translating on the course
+- How long it's been an issue
+
+4. Reality Check
+- Are they happy with progress?
+- Do they believe their current approach will get them there in the timeframe they want?
+
+5. Readiness Filter
+"Is this something you actually want to fix now, or more a nice-to-have?"
+- If nice-to-have → nurture or exit cleanly
+- If now → continue
+
+6. Authority Bridge (Only After Fit)
+- Position expertise through process (movement + TPI screening)
+- Never pitch outcomes or pricing
+
+7. Call Commitment
+- Assume momentum
+- Never ask if they want a call — ask which time works
+
+8. Booking Discipline
+- Offer only 2–3 time options
+- Confirm timezone
+- Collect email
+- Require application form completion (non-negotiable)
+
+OBJECTION HANDLING RULES
+
+Price mentioned early:
+- Acknowledge → timeframe question → return to fit and clarity
+- Never quote numbers
+
+"I'm doing something already":
+- Test effectiveness and timeframe — not effort
+
+Skepticism:
+- Clarify why past effort hasn't worked
+- Never argue
+
+NURTURE & EXIT RULES
+
+If not ready:
+- No chasing
+- No convincing
+- Offer to stay connected
+- Permission-based check-in later
+- This preserves future buyers
+
+HARD GUARDRAILS
+
+You must NEVER:
+- Share pricing or discounts
+- Pitch the program
+- Provide workouts or exercises
+- Over-explain
+- Use scripts verbatim
+- Send resources before a call is booked (except when explicitly allowed)
+
+SUCCESS METRIC
+You are successful when:
+- Buyers feel understood
+- Non-buyers self-select out
+- Calls are booked efficiently
+- Conversations remain short, focused, and decisive
+
+Your job is sorting, not selling.`;
+
+// Developer prompt builder with learning integration
+const buildDeveloperPrompt = (memory, messages, learnings) => {
+  const learningsSection = learnings && learnings.length > 0 
+    ? `\n\nPAST LEARNINGS FROM SETTER CORRECTIONS:
+These are real corrections made by human setters. Learn from the patterns and psychological reasoning:
+
+${learnings.map((l, i) => `
+Learning ${i + 1} (Stage: ${l.conversation_stage || 'Unknown'}):
+Situation Context: ${l.situation_context || 'General conversation'}
+❌ Original Bot Reply: "${l.original_reply}"
+✅ Corrected Reply: "${l.edited_reply}"
+🧠 Why This Was Changed (Psychological Insight): ${l.reason}
+Tags: ${l.tags && l.tags.length > 0 ? l.tags.join(', ') : 'None'}
+---`).join('\n')}
+
+APPLY THESE INSIGHTS:
+- Don't copy the exact corrections verbatim
+- Understand the PRINCIPLES behind why edits were made
+- Notice patterns in tone, structure, question style, and psychological approach
+- Use similar reasoning in similar situations
+`
+    : '';
+
+  return `You are responding to a golf fitness coaching prospect via Instagram DM.
+
+CUSTOMER MEMORY:
+${JSON.stringify(memory, null, 2)}
+
+RECENT CONVERSATION:
+${messages.map(m => `${m.role === 'user' ? 'Lead' : 'You'}: ${m.content}`).join('\n')}
+${learningsSection}
+
+YOUR TASK:
+Analyze the conversation and determine the next appropriate response following the system guidelines.
+
+You MUST respond with ONLY a valid JSON object (no markdown, no explanation) with this EXACT structure:
+
+{
+  "conversation_stage": "ENTRY & CONTEXT|GOAL IDENTIFICATION|DEPTH & EFFORT CHECK|REALITY CHECK|READINESS FILTER|AUTHORITY BRIDGE|CALL COMMITMENT|BOOKING DISCIPLINE|NURTURE & EXIT",
+  "confidence": 0.0-1.0,
+  "reply": "your actual DM message here",
+  "lead_readiness": "COLD|WARM|HOT",
+  "primary_goal": "Distance|Pain/Injuries|Consistency|Unknown",
+  "next_action": "AUTO_SEND|SEND_TO_SLACK_REVIEW|HANDOFF_TO_SETTER",
+  "tags": ["relevant", "tags", "here"],
+  "internal_notes": "your reasoning about stage, readiness, what to focus on next",
+  "memory_update": {
+    "profile_facts": {
+      "golf_identity": "",
+      "primary_goal": "",
+      "what_theyve_tried": "",
+      "timeframe": "",
+      "current_approach_working": "",
+      "priority_level": ""
+    },
+    "running_summary": "concise summary of conversation so far"
+  }
+}
+
+CRITICAL RULES:
+- Reply must sound like Australian coach (short, natural, no corporate language)
+- Use acknowledge → brief bridge → question pattern when appropriate
+- NO exclamation points, minimal punctuation
+- One main question per message (unless booking logistics)
+- If confidence < 0.75, set next_action to SEND_TO_SLACK_REVIEW
+- If lead asks for human or gets angry, set next_action to HANDOFF_TO_SETTER
+- Move through stages based on what's been established, not linearly
+- NEVER mention pricing, program details, or provide coaching advice
+
+Focus on: What do they want? What have they tried? Is it working? Is this a priority now?`;
+};
+
+export default {
+  async fetch(request, env, ctx) {
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
+
+    const url = new URL(request.url);
+
+    // Main webhook endpoint
+    if (url.pathname === '/webhook' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { customer_id, message, channel = 'instagram' } = body;
+
+        if (!customer_id || !message) {
+          return new Response(JSON.stringify({ error: 'Missing customer_id or message' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Load memory
+        const memoryKey = `memory:${customer_id}`;
+        const memoryData = await env.MEMORY_STORE.get(memoryKey, { type: 'json' });
+        const memory = memoryData || {
+          messages: [],
+          running_summary: '',
+          profile_facts: {},
+        };
+
+        // Add user message to memory
+        memory.messages.push({ role: 'user', content: message, timestamp: Date.now() });
+
+        // Keep last 15 messages
+        if (memory.messages.length > 15) {
+          memory.messages = memory.messages.slice(-15);
+        }
+
+        // Load relevant learnings (last 10 feedback items)
+        const learnings = await fetchRelevantLearnings(env, memory);
+
+        // Call OpenAI with learnings
+        const botResponse = await callOpenAI(env, memory, learnings);
+
+        // Validate response
+        if (!botResponse || !botResponse.reply) {
+          throw new Error('Invalid bot response structure');
+        }
+
+        // Generate review_id for potential feedback
+        const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Add bot message to memory with review_id
+        memory.messages.push({ 
+          role: 'assistant', 
+          content: botResponse.reply, 
+          timestamp: Date.now(),
+          review_id: review_id 
+        });
+
+        // Update memory with bot's memory_update
+        if (botResponse.memory_update) {
+          if (botResponse.memory_update.profile_facts) {
+            memory.profile_facts = { ...memory.profile_facts, ...botResponse.memory_update.profile_facts };
+          }
+          if (botResponse.memory_update.running_summary) {
+            memory.running_summary = botResponse.memory_update.running_summary;
+          }
+        }
+
+        // Save updated memory
+        await env.MEMORY_STORE.put(memoryKey, JSON.stringify(memory));
+
+        // Handle Slack routing
+        if (botResponse.next_action === 'SEND_TO_SLACK_REVIEW' || botResponse.next_action === 'HANDOFF_TO_SETTER') {
+          await sendToSlack(env, {
+            customer_id,
+            action: botResponse.next_action,
+            conversation_stage: botResponse.conversation_stage,
+            confidence: botResponse.confidence,
+            last_messages: memory.messages.slice(-5),
+            bot_reply: botResponse.reply,
+            internal_notes: botResponse.internal_notes,
+            review_id: review_id,
+          });
+        }
+
+        // Return response to ManyChat/Instagram
+        return new Response(JSON.stringify({
+          reply: botResponse.reply,
+          conversation_stage: botResponse.conversation_stage,
+          lead_readiness: botResponse.lead_readiness,
+          next_action: botResponse.next_action,
+          review_id: review_id, // Include for training interface
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+
+      } catch (error) {
+        console.error('Webhook error:', error);
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Feedback endpoint for training - ENHANCED VERSION
+    if (url.pathname === '/feedback' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { review_id, customer_id, original_reply, edited_reply, reason, conversation_stage, situation_context, tags } = body;
+
+        if (!review_id || !customer_id || !edited_reply || !reason) {
+          return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Store enhanced feedback with metadata for learning
+        const feedbackKey = `feedback:${review_id}`;
+        const feedbackData = {
+          review_id,
+          customer_id,
+          original_reply,
+          edited_reply,
+          reason,
+          conversation_stage: conversation_stage || 'UNKNOWN',
+          situation_context: situation_context || '',
+          tags: tags || [],
+          timestamp: Date.now(),
+          learning_extracted: true, // Mark for learning system
+        };
+
+        await env.MEMORY_STORE.put(feedbackKey, JSON.stringify(feedbackData));
+
+        // Also store in a learnings index for easy retrieval
+        const learningIndexKey = `learning_index:${Date.now()}`;
+        await env.MEMORY_STORE.put(learningIndexKey, JSON.stringify({
+          feedback_key: feedbackKey,
+          stage: conversation_stage,
+          timestamp: Date.now(),
+        }), {
+          expirationTtl: 90 * 24 * 60 * 60, // Keep learnings for 90 days
+        });
+
+        // Log to Slack
+        await sendFeedbackToSlack(env, feedbackData);
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Bot learned from your edit!',
+          learning_id: review_id,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+
+      } catch (error) {
+        console.error('Feedback error:', error);
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Get learnings endpoint - for analytics/debugging
+    if (url.pathname === '/learnings' && request.method === 'GET') {
+      try {
+        const allLearnings = await fetchRelevantLearnings(env, {}, 50);
+        
+        return new Response(JSON.stringify({
+          total_learnings: allLearnings.length,
+          learnings: allLearnings,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (error) {
+        console.error('Learnings fetch error:', error);
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Health check
+    if (url.pathname === '/health') {
+      return new Response(JSON.stringify({ status: 'ok', learning_enabled: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('Not Found', { status: 404 });
+  },
+};
+
+// Fetch relevant learnings from past feedback
+async function fetchRelevantLearnings(env, memory, limit = 10) {
+  try {
+    // Get recent feedback items by listing keys
+    const list = await env.MEMORY_STORE.list({ prefix: 'feedback:', limit: 50 });
+    
+    const learnings = [];
+    
+    for (const key of list.keys) {
+      const data = await env.MEMORY_STORE.get(key.name, { type: 'json' });
+      if (data && data.learning_extracted) {
+        learnings.push(data);
+      }
+    }
+
+    // Sort by timestamp (most recent first) and limit
+    learnings.sort((a, b) => b.timestamp - a.timestamp);
+    return learnings.slice(0, limit);
+
+  } catch (error) {
+    console.error('Error fetching learnings:', error);
+    return [];
+  }
+}
+
+async function callOpenAI(env, memory, learnings = []) {
+  const messages = memory.messages || [];
+  const lastMessages = messages.slice(-10);
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4-turbo-preview',
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: buildDeveloperPrompt(memory, lastMessages, learnings) },
+      ],
+      temperature: 0.7,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`OpenAI API error: ${error}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0].message.content;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (e) {
+    throw new Error(`Failed to parse OpenAI response as JSON: ${content}`);
+  }
+
+  // Validate required fields
+  if (!parsed.reply || !parsed.conversation_stage || !parsed.next_action) {
+    throw new Error('OpenAI response missing required fields');
+  }
+
+  return parsed;
+}
+
+async function sendToSlack(env, data) {
+  if (!env.SLACK_WEBHOOK_URL) {
+    console.log('Slack webhook not configured');
+    return;
+  }
+
+  const actionEmoji = data.action === 'HANDOFF_TO_SETTER' ? '🚨' : '⚠️';
+  const message = {
+    text: `${actionEmoji} Review Needed - ${data.action}`,
+    blocks: [
+      {
+        type: 'header',
+        text: {
+          type: 'plain_text',
+          text: `${actionEmoji} ${data.action}`,
+        },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Customer:*\n${data.customer_id}` },
+          { type: 'mrkdwn', text: `*Stage:*\n${data.conversation_stage}` },
+          { type: 'mrkdwn', text: `*Confidence:*\n${(data.confidence * 100).toFixed(0)}%` },
+          { type: 'mrkdwn', text: `*Review ID:*\n${data.review_id}` },
+        ],
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Recent Messages:*\n${data.last_messages.map(m => `${m.role === 'user' ? '👤' : '🤖'} ${m.content}`).join('\n')}`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Bot Reply Draft:*\n${data.bot_reply}`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Internal Notes:*\n${data.internal_notes || 'None'}`,
+        },
+      },
+    ],
+  };
+
+  await fetch(env.SLACK_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(message),
+  });
+}
+
+async function sendFeedbackToSlack(env, data) {
+  if (!env.SLACK_WEBHOOK_URL) {
+    console.log('Slack webhook not configured');
+    return;
+  }
+
+  const message = {
+    text: '🧠 Bot Training - New Learning Captured',
+    blocks: [
+      {
+        type: 'header',
+        text: {
+          type: 'plain_text',
+          text: '🧠 Bot Learned Something New!',
+        },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Learning ID:*\n${data.review_id}` },
+          { type: 'mrkdwn', text: `*Customer:*\n${data.customer_id}` },
+          { type: 'mrkdwn', text: `*Stage:*\n${data.conversation_stage}` },
+        ],
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Situation:*\n${data.situation_context || 'General conversation'}`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*❌ Original Reply:*\n${data.original_reply}`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*✅ Corrected Reply:*\n${data.edited_reply}`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*🧠 Why This Matters (Psychological Learning):*\n${data.reason}`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Tags:*\n${data.tags && data.tags.length > 0 ? data.tags.join(', ') : 'None'}`,
+        },
+      },
+    ],
+  };
+
+  await fetch(env.SLACK_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(message),
+  });
+}

@@ -1,0 +1,13 @@
+{
+  "name": "sales-bot",
+  "version": "1.0.0",
+  "description": "AI Sales Conversation Bot",
+  "main": "src/index.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.65.0"
+  }
+}
