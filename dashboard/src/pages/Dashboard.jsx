@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
@@ -16,7 +16,6 @@ export default function Dashboard() {
     if (!profile) return
     setLoading(true)
     try {
-      // Admins load all bots by organization. Clients load only their assigned bot.
       let botsData = []
       const isAdmin = profile.role === 'admin' || profile.role === 'superadmin'
       if (isAdmin && profile.organization_id) {
@@ -57,7 +56,7 @@ export default function Dashboard() {
 
       setStats({
         conversations: totalConvos || 0,
-        autoSend: totalConvos > 0 ? 82 : 0,
+        autoSend: totalConvos > 0 ? Math.round((bookedCount || 0) / totalConvos * 100) : 0,
         callsBooked: bookedCount || 0,
         learnings: totalLearnings || 0,
       })
@@ -65,16 +64,46 @@ export default function Dashboard() {
     setLoading(false)
   }
 
+  function getLeadName(c) {
+    if (!c) return ''
+    if (c.username) return `@${c.username}`
+    if (c.profile_name) return c.profile_name
+    // Channel-based fallback
+    const ch = (c.channel || '').toLowerCase()
+    if (ch.includes('instagram') || ch === 'manychat') return 'Instagram Lead'
+    if (ch.includes('facebook')) return 'Facebook Lead'
+    if (ch.includes('whatsapp')) return 'WhatsApp Lead'
+    if (ch.includes('sms') || ch.includes('text')) return 'SMS Lead'
+    if (ch.includes('email')) return 'Email Lead'
+    return 'Unknown Lead'
+  }
+
+  function readinessInfo(r, stage) {
+    if (stage === 'CALL BOOKING') return { emoji: '✅', label: 'Call Booked', color: '#16a34a', bg: '#f0fdf4', border: '1px solid #bbf7d0' }
+    if (r === 'HOT') return { emoji: '🔥', label: 'HOT', color: '#e53e3e', bg: '#fff5f5', border: '1px solid #fed7d7' }
+    if (r === 'WARM') return { emoji: '🟡', label: 'WARM', color: '#d97706', bg: '#fffbeb', border: '1px solid #fde68a' }
+    return { emoji: '🔵', label: 'COLD', color: '#3b82f6', bg: '#eff6ff', border: '1px solid #bfdbfe' }
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return ''
+    const d = new Date(ts), now = new Date(), diff = now - d
+    const mins = Math.floor(diff / 60000)
+    const hours = Math.floor(diff / 3600000)
+    if (mins < 1) return 'Just now'
+    if (mins < 60) return `${mins}m ago`
+    if (hours < 24) return `${hours}h ago`
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    if (today - msgDay === 86400000) return 'Yesterday'
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  }
+
   function stageColor(stage) {
     if (!stage) return '#829082'
     if (stage.includes('CALL')) return '#1a4d8a'
     if (stage.includes('READY') || stage.includes('REALITY')) return '#a06800'
     return '#2d6a4f'
-  }
-
-  function readinessBadge(r) {
-    const map = { HOT: 'badge-red', WARM: 'badge-amber', COLD: 'badge-blue' }
-    return map[r] || 'badge-gray'
   }
 
   if (loading) return (
@@ -129,27 +158,38 @@ export default function Dashboard() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Lead ID</th>
+                  <th>Lead</th>
                   <th>Stage</th>
                   <th>Readiness</th>
                   <th>Status</th>
-                  <th>Last Active</th>
+                  <th>Last Interaction</th>
                 </tr>
               </thead>
               <tbody>
-                {conversations.map(c => (
-                  <tr key={c.id}>
-                    <td>{c.customer_id}</td>
-                    <td>
-                      <span style={{ fontSize: '.78rem', color: stageColor(c.conversation_stage) }}>
-                        {c.conversation_stage || 'Entry'}
-                      </span>
-                    </td>
-                    <td><span className={`badge ${readinessBadge(c.lead_readiness)}`}>{c.lead_readiness || 'COLD'}</span></td>
-                    <td><span className={`badge ${c.status === 'booked' ? 'badge-blue' : c.status === 'active' ? 'badge-green' : 'badge-gray'}`}>{c.status || 'active'}</span></td>
-                    <td style={{ fontSize: '.78rem', color: 'var(--tx3)' }}>{new Date(c.updated_at).toLocaleDateString()}</td>
-                  </tr>
-                ))}
+                {conversations.map(c => {
+                  const ri = readinessInfo(c.lead_readiness, c.conversation_stage)
+                  return (
+                    <tr key={c.id}>
+                      <td style={{ fontWeight: 500, fontSize: '.85rem' }}>{getLeadName(c)}</td>
+                      <td>
+                        <span style={{ fontSize: '.78rem', color: stageColor(c.conversation_stage) }}>
+                          {c.conversation_stage || 'Entry'}
+                        </span>
+                      </td>
+                      <td>
+                        <span style={{ fontSize: '.78rem', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', color: ri.color, background: ri.bg, border: ri.border }}>
+                          {ri.emoji} {ri.label}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge ${c.status === 'booked' ? 'badge-blue' : c.status === 'active' ? 'badge-green' : 'badge-gray'}`}>
+                          {c.status || 'active'}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '.78rem', color: 'var(--tx3)' }}>{fmtTime(c.updated_at)}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
