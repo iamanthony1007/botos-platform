@@ -29,7 +29,7 @@ export default function Analytics() {
   const [stats, setStats] = useState({ active: 0, qualified: 0, qualifiedPct: 0, aiAssisted: 0, booked: 0, conversionRate: 0 })
   const [funnelData, setFunnelData] = useState([])
   const [stageData, setStageData] = useState([])
-  const [systemPerf, setSystemPerf] = useState({ bookingRate: 0, reviewsSent: 0 })
+  const [systemPerf, setSystemPerf] = useState({ bookingRate: 0, reviewsSent: 0, autoSendRate: 0 })
   const [loading, setLoading] = useState(true)
   const [botName, setBotName] = useState('Bombers Blueprint')
 
@@ -81,10 +81,12 @@ export default function Analytics() {
       const qualifiedPct = active > 0 ? Math.round((qualified / active) * 100) : 0
       const conversionRate = qualified > 0 ? Math.round((booked / qualified) * 100) : 0
       const reviewsSent = allReviews.length
+      const autoSent = allReviews.filter(r => r.status === "approved").length
+      const autoSendRate = allReviews.length > 0 ? Math.round((autoSent / allReviews.length) * 100) : 0
       const bookingRate = active > 0 ? parseFloat(((booked / active) * 100).toFixed(1)) : 0
 
       setStats({ active, qualified, qualifiedPct, aiAssisted, booked, conversionRate })
-      setSystemPerf({ bookingRate, reviewsSent })
+      setSystemPerf({ bookingRate, reviewsSent, autoSendRate })
 
       // Funnel: strict 3-step
       setFunnelData([
@@ -233,6 +235,15 @@ export default function Analytics() {
                 </div>
                 <span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#e53e3e' }}>{systemPerf.reviewsSent}</span>
               </div>
+              {adminRole && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px", background: "var(--blubg)", borderRadius: "var(--rsm)", border: "1px solid var(--blubd)" }}>
+                  <div>
+                    <div style={{ fontSize: ".82rem", color: "var(--tx2)", fontWeight: 500 }}>AI Auto-Send Rate</div>
+                    <div style={{ fontSize: ".72rem", color: "var(--tx3)", marginTop: "2px" }}>Approved ÷ Total reviews</div>
+                  </div>
+                  <span style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--blu)" }}>{systemPerf.autoSendRate}%</span>
+                </div>
+              )}
             </div>
           )}
         </div>
