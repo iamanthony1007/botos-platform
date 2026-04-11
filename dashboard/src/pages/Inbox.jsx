@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 
-const FILTERS = ['All', 'Pending', 'Handoff', 'Resolved']
+const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved']
 
 const STAGE_ORDER = [
   'CALL BOOKING', 'CALL OFFERED', 'CALL BOOK BRIDGE', 'COACHING HAT',
@@ -85,7 +85,7 @@ export default function Inbox() {
       }
       leadsMap[r.customer_id].all_reviews.push(r)
       if (r.status === 'pending') leadsMap[r.customer_id].pending_count++
-      if (r.action_type === 'HANDOFF_TO_SETTER' && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
+      if ((r.action_type === 'HANDOFF_TO_SETTER' || r.action_type === 'ESCALATE_TO_HUMAN') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
       if (!leadsMap[r.customer_id].latest_preview) leadsMap[r.customer_id].latest_preview = r.bot_reply || ''
     })
 
@@ -225,7 +225,14 @@ export default function Inbox() {
     if (lead.username) return `@${lead.username}`
     if (lead.profile_name) return lead.profile_name
     if (lead.identity) return lead.identity
-    return `Lead ${lead.customer_id}`
+    // Channel-based fallback instead of raw ID
+    const ch = (lead.channel || '').toLowerCase()
+    if (ch.includes('instagram') || ch === 'manychat') return 'Instagram Lead'
+    if (ch.includes('facebook')) return 'Facebook Lead'
+    if (ch.includes('whatsapp')) return 'WhatsApp Lead'
+    if (ch.includes('sms') || ch.includes('text')) return 'SMS Lead'
+    if (ch.includes('email')) return 'Email Lead'
+    return 'Unknown Lead'
   }
 
   function intentStyle(i) {
@@ -300,7 +307,7 @@ export default function Inbox() {
     const matchesFilter =
       filter === 'All' ? true :
       filter === 'Pending' ? l.pending_count > 0 :
-      filter === 'Handoff' ? l.handoff_count > 0 :
+      filter === 'Escalated' ? l.handoff_count > 0 :
       filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0 : true
     return matchesSearch && matchesFilter
   }).sort((a, b) => {
@@ -352,7 +359,7 @@ export default function Inbox() {
         {/* Filter tabs */}
         <div style={{ display: 'flex', padding: '0 10px 8px', gap: '4px', flexShrink: 0 }}>
           {FILTERS.map(f => {
-            const count = f === 'Pending' ? totalPending : f === 'Handoff' ? leads.reduce((a, l) => a + l.handoff_count, 0) : null
+            const count = f === 'Pending' ? totalPending : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0) : null
             return (
               <button key={f} onClick={() => setFilter(f)} style={{
                 flex: 1, padding: '5px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
@@ -602,8 +609,8 @@ export default function Inbox() {
 
                 <div style={{ padding: '10px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '.8rem', fontWeight: 600, color: activeReview.action_type === 'HANDOFF_TO_SETTER' ? '#e53e3e' : '#d97706' }}>
-                      {activeReview.action_type === 'HANDOFF_TO_SETTER' ? '🚨 Handoff' : '⚠ Review needed'}
+                    <span style={{ fontSize: '.8rem', fontWeight: 600, color: (activeReview.action_type === 'HANDOFF_TO_SETTER' || activeReview.action_type === 'ESCALATE_TO_HUMAN') ? '#e53e3e' : '#d97706' }}>
+                      {(activeReview.action_type === 'HANDOFF_TO_SETTER' || activeReview.action_type === 'ESCALATE_TO_HUMAN') ? '🚨 Escalated to Human' : '⚠ Review needed'}
                     </span>
                     <span style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>
                       {Math.round((activeReview.confidence || 0) * 100)}% confidence
@@ -611,6 +618,11 @@ export default function Inbox() {
                     {activeReview.conversation_stage && (
                       <span style={{ fontSize: '.68rem', background: 'var(--surf2)', border: '1px solid var(--bdr)', padding: '1px 8px', borderRadius: '999px', color: 'var(--tx3)' }}>
                         {activeReview.conversation_stage}
+                      </span>
+                    )}
+                    {activeReview.escalation_reason && (
+                      <span style={{ fontSize: '.68rem', background: '#fff5f5', border: '1px solid #fed7d7', padding: '1px 8px', borderRadius: '999px', color: '#e53e3e', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={activeReview.escalation_reason}>
+                        Reason: {activeReview.escalation_reason}
                       </span>
                     )}
                     <span style={{ fontSize: '.68rem', background: 'var(--blubg)', border: '1px solid var(--blubd)', padding: '1px 8px', borderRadius: '999px', color: 'var(--blu)' }}>

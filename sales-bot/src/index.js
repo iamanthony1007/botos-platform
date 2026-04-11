@@ -8,11 +8,10 @@ const SUPABASE_URL = "https://rydkwsjwlgnivlwlvqku.supabase.co";
 // FALLBACK PROMPT - only used if Supabase fails
 const FALLBACK_SYSTEM_PROMPT = `You are Coach Shaun responding to golfers via Instagram DMs. You are an expert appointment setter. Your sole responsibility is to determine fit and book Zoom calls. You sort, not sell.`;
 
-// Typing delay calculator
-// Flat 5 second delay per message — natural but not too slow
+// Typing delay calculator - flat 5 second delay per message
 function calcTypingDelay(text) {
-  const variation = (Math.random() - 0.5) * 1000;      // ±0.5s natural variation
-  return Math.round(5000 + variation);                  // ~5s per message
+  const variation = (Math.random() - 0.5) * 1000;
+  return Math.round(5000 + variation);
 }
 __name(calcTypingDelay, "calcTypingDelay");
 
@@ -43,13 +42,17 @@ You MUST respond with ONLY a valid JSON object (no markdown, no explanation) wit
 
 {
   "conversation_stage": "ENTRY / OPEN LOOP|LOCATION ANCHOR|GOAL LOCK|GOAL DEPTH (MAKE IT SPECIFIC)|WHAT THEY'VE TRIED (PAST + CURRENT)|TRANSLATION / PROGRESS CHECK|BODY LINK ACCEPTANCE + MOBILITY HISTORY|PROGRESS CHECK|PRIORITY GATE|COACHING HAT|CALL BOOK BRIDGE|CALL OFFERED|CALL BOOKING|LONG TERM NURTURE",
-  "confidence": 0.0-1.0,
+  "situation_clarity": 0.0,
+  "response_quality": 0.0,
+  "confidence": 0.0,
   "messages": ["first message", "second message (optional)", "third message with question (optional)"],
   "reply": "all messages joined into one string — for logging only",
   "lead_readiness": "COLD|WARM|HOT",
   "lead_intent": "LOW|MEDIUM|HIGH",
   "primary_goal": "Distance|Pain/Injuries|Consistency|Unknown",
-  "next_action": "AUTO_SEND|SEND_TO_SLACK_REVIEW|HANDOFF_TO_SETTER",
+  "emotional_state": "NEUTRAL|ENGAGED|CONFUSED|SKEPTICAL|DISENGAGING|FRUSTRATED|OBJECTING",
+  "next_action": "AUTO_SEND|SEND_TO_INBOX_REVIEW|ESCALATE_TO_HUMAN",
+  "escalation_reason": "only fill this if ESCALATE_TO_HUMAN — brief reason why",
   "tags": ["relevant", "tags", "here"],
   "internal_notes": "your reasoning -- what stage are we at, did any setter corrections apply, what are you trying to achieve with this reply",
   "memory_update": {
@@ -61,104 +64,63 @@ You MUST respond with ONLY a valid JSON object (no markdown, no explanation) wit
       "current_approach_working": "",
       "priority_level": ""
     },
-    "running_summary": "concise summary of conversation so far"
+    "running_summary": "concise summary of conversation so far",
+    "objection_count": 0
   }
 }
 
+=== CONFIDENCE SCORING — FILL ALL THREE ===
+situation_clarity (0.0-1.0): How clearly do you understand the conversation stage and what the lead needs right now?
+response_quality (0.0-1.0): How strong is this reply for moving the lead forward — conversion power, emotional tone, and stage alignment?
+confidence: Leave as 0.0 — the system calculates this automatically as (situation_clarity x 0.4) + (response_quality x 0.6)
+
 LEAD INTENT CLASSIFICATION (you MUST output one of these per response):
 - LOW: Vague, just browsing, avoids answering questions, says maybe later, no pain expressed
-- MEDIUM: Has a goal, some engagement, mild frustration but no urgency, still exploring  
+- MEDIUM: Has a goal, some engagement, mild frustration but no urgency, still exploring
 - HIGH: Clear pain point, time pressure, frustration, uses buyer language, ready to act now
 
+EMOTIONAL STATE CLASSIFICATION:
+- NEUTRAL: Normal engaged conversation
+- ENGAGED: Enthusiastic, expressive, detailed replies
+- CONFUSED: Asking clarifying questions, misunderstanding flow
+- SKEPTICAL: Questioning value, doubting, pushing back on premise
+- DISENGAGING: Was expressive before, now sending short one-word or one-line replies — lead is losing interest
+- FRUSTRATED: Showing irritation, impatience
+- OBJECTING: Raising a specific objection to moving forward
+
+ESCALATION RULES — use next_action: ESCALATE_TO_HUMAN when ANY of these apply:
+1. Lead explicitly asks to speak to a person or real human — do NOT reveal you are AI, transition gracefully
+2. Lead becomes angry or aggressive
+3. An action only a human can perform is needed: sending links, forms, payment collection, calendar booking
+4. Lead asks a complex, specific, or edge-case question you cannot answer accurately from your campaign knowledge — do NOT make things up
+5. Emotional state is CONFUSED or SKEPTICAL and you cannot address it confidently
+6. Emotional state is DISENGAGING — lead was previously expressive and has dropped to one-word replies
+7. OBJECTION ESCALATION: Check memory.profile_facts.objection_count:
+   - If objection_count is 0 (first objection) → set next_action to SEND_TO_INBOX_REVIEW and increment objection_count to 1
+   - If objection_count is 1+ (second objection after AI tried) → ESCALATE_TO_HUMAN
+
+REVIEW RULES — use next_action: SEND_TO_INBOX_REVIEW when:
+- situation_clarity or response_quality are below 0.75
+- lead_intent is LOW
+- This is the first objection from the lead (objection_count was 0)
+- You are about to repeat a question the lead already answered
+- The bot settings say not to auto-send
+
+AUTO-SEND RULES — use next_action: AUTO_SEND only when:
+- lead_intent is HIGH AND weighted confidence >= 0.90
+- lead_intent is MEDIUM AND weighted confidence >= 0.85 AND stage is early (ENTRY/GOAL LOCK/NURTURE)
+- No escalation trigger is present
+
 CRITICAL RULES:
-- Reply must sound like Australian coach -- short, natural, no corporate language
+- Reply must sound like Australian coach — short, natural, no corporate language
 - Acknowledge then brief bridge then question when appropriate
 - NO exclamation points, minimal punctuation
 - One main question per message set (in the last message)
 - Mirror their message length or go shorter
-- If confidence < 0.75, set next_action to SEND_TO_SLACK_REVIEW
-- If lead asks for human or gets angry, set next_action to HANDOFF_TO_SETTER
-- If lead_intent is LOW, always set next_action to SEND_TO_SLACK_REVIEW
-- If lead_intent is HIGH and confidence >= 0.90, set next_action to AUTO_SEND
-- If lead_intent is MEDIUM and confidence >= 0.85 and stage is early (ENTRY/GOAL LOCK/NURTURE), set next_action to AUTO_SEND
-- NEVER set AUTO_SEND if asking a question the lead already answered
-- SETTER CORRECTIONS at the top of the system prompt OVERRIDE your defaults. Check them FIRST before responding.
-- Move through stages based on what has been established, not linearly
-- NEVER mention pricing, program details, or provide coaching advice
-- NEVER give workouts or exercises in DMs
-- NEVER repeat anything already said earlier in this conversation
-- The "reply" field must equal all messages joined with a space (for logging)
-
-Focus on: What do they want. What have they tried. Is it working. Is this a priority now. What have they tried. Is it working. Is this a priority now.`;
+- NEVER reveal you are an AI
+- NEVER make up information you don't have from the campaign knowledge
+- SETTER CORRECTIONS at the top of the system prompt OVERRIDE your defaults. Check them FIRST before responding.`;
 }, "buildDeveloperPrompt");
-
-// Supabase helpers
-
-async function supabaseInsert(env, table, data) {
-  try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-        "apikey": env.SUPABASE_SERVICE_KEY,
-        "Prefer": "return=minimal"
-      },
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) {
-      const error = await response.text();
-      console.error(`Supabase insert error (${table}):`, error);
-    }
-  } catch (error) {
-    console.error(`Supabase insert exception (${table}):`, error);
-  }
-}
-__name(supabaseInsert, "supabaseInsert");
-
-async function supabaseUpsert(env, table, data, onConflict) {
-  try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-        "apikey": env.SUPABASE_SERVICE_KEY,
-        "Prefer": "resolution=merge-duplicates,return=minimal"
-      },
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) {
-      const error = await response.text();
-      console.error(`Supabase upsert error (${table}):`, error);
-    }
-  } catch (error) {
-    console.error(`Supabase upsert exception (${table}):`, error);
-  }
-}
-__name(supabaseUpsert, "supabaseUpsert");
-
-async function getBotSettings(env) {
-  try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar`,
-      {
-        headers: {
-          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-          "apikey": env.SUPABASE_SERVICE_KEY
-        }
-      }
-    );
-    if (!response.ok) return { auto_send_enabled: false, system_prompt: null };
-    const data = await response.json();
-    if (!data || data.length === 0) return { auto_send_enabled: false, system_prompt: null };
-    return data[0];
-  } catch (error) {
-    console.error("Error fetching bot settings:", error);
-    return { auto_send_enabled: false, system_prompt: null };
-  }
-}
-__name(getBotSettings, "getBotSettings");
 
 // Stages that are safe to auto-send for MEDIUM intent leads
 const MEDIUM_INTENT_AUTO_STAGES = [
@@ -169,7 +131,6 @@ const MEDIUM_INTENT_AUTO_STAGES = [
 ];
 
 // Profile fact keys mapped to conversation stages
-// If the fact is already known, skip auto-sending that stage
 const STAGE_FACT_REQUIREMENTS = {
   "GOAL LOCK":                     "primary_goal",
   "GOAL DEPTH (MAKE IT SPECIFIC)": "primary_goal",
@@ -183,42 +144,52 @@ const STAGE_FACT_REQUIREMENTS = {
 
 function profileFactAlreadyKnown(stage, profileFacts) {
   const requiredFact = STAGE_FACT_REQUIREMENTS[stage];
-  if (!requiredFact) return false; // no requirement for this stage
+  if (!requiredFact) return false;
   const value = profileFacts?.[requiredFact];
   return value && value !== "" && value !== "Unknown" && value !== "unknown";
 }
+__name(profileFactAlreadyKnown, "profileFactAlreadyKnown");
 
 function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}) {
-  // Always honour handoff requests
-  if (botResponse.next_action === "HANDOFF_TO_SETTER") return "HANDOFF_TO_SETTER";
+  // Always honour escalation requests (support both old and new action names)
+  if (botResponse.next_action === "ESCALATE_TO_HUMAN") return "ESCALATE_TO_HUMAN";
+  if (botResponse.next_action === "HANDOFF_TO_SETTER") return "ESCALATE_TO_HUMAN"; // backward compat
 
   // Auto-send must be enabled in settings
-  if (!autoSendEnabled) return "SEND_TO_SLACK_REVIEW";
+  if (!autoSendEnabled) return "SEND_TO_INBOX_REVIEW";
 
-  const confidence = botResponse.confidence || 0;
+  // Calculate weighted confidence from dual scores if available
+  const situationClarity = typeof botResponse.situation_clarity === "number" ? botResponse.situation_clarity : (botResponse.confidence || 0);
+  const responseQuality = typeof botResponse.response_quality === "number" ? botResponse.response_quality : (botResponse.confidence || 0);
+  const weightedConfidence = (situationClarity * 0.4) + (responseQuality * 0.6);
+
   const stage = botResponse.conversation_stage || "";
   const intent = botResponse.lead_intent || "LOW";
 
-  // LOW intent — always send to review, never auto-send
-  if (intent === "LOW") return "SEND_TO_SLACK_REVIEW";
+  // LOW intent — always send to review
+  if (intent === "LOW") return "SEND_TO_INBOX_REVIEW";
+
+  // Emotional state escalation
+  const emotionalState = botResponse.emotional_state || "NEUTRAL";
+  if (["DISENGAGING", "CONFUSED", "SKEPTICAL"].includes(emotionalState) && weightedConfidence < 0.85) {
+    return "SEND_TO_INBOX_REVIEW";
+  }
 
   // Context check — if the info this message collects is already known, send to review
-  // so a human can decide the correct next step instead of repeating a question
-  if (profileFactAlreadyKnown(stage, profileFacts)) return "SEND_TO_SLACK_REVIEW";
+  if (profileFactAlreadyKnown(stage, profileFacts)) return "SEND_TO_INBOX_REVIEW";
 
-  // HIGH intent — auto-send if confidence is 90%+
-  if (intent === "HIGH" && confidence >= 0.90) return "AUTO_SEND";
+  // HIGH intent — auto-send if weighted confidence is 90%+
+  if (intent === "HIGH" && weightedConfidence >= 0.90) return "AUTO_SEND";
 
-  // MEDIUM intent — auto-send only safe early stages at 85%+ confidence
-  if (intent === "MEDIUM" && confidence >= 0.85 && MEDIUM_INTENT_AUTO_STAGES.includes(stage)) return "AUTO_SEND";
+  // MEDIUM intent — auto-send only safe early stages at 85%+ weighted confidence
+  if (intent === "MEDIUM" && weightedConfidence >= 0.85 && MEDIUM_INTENT_AUTO_STAGES.includes(stage)) return "AUTO_SEND";
 
   // Everything else — send to review
-  return "SEND_TO_SLACK_REVIEW";
+  return "SEND_TO_INBOX_REVIEW";
 }
 __name(resolveNextAction, "resolveNextAction");
 
 // Main Worker
-
 var index_default = {
   async fetch(request, env, ctx) {
     const corsHeaders = {
@@ -240,8 +211,7 @@ var index_default = {
         const { customer_id, message, channel = "instagram", username = null, profile_name = null } = body;
         if (!customer_id || !message) {
           return new Response(JSON.stringify({ error: "Missing customer_id or message" }), {
-            status: 400,
-            headers: { ...corsHeaders, "Content-Type": "application/json" }
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
 
@@ -269,7 +239,6 @@ var index_default = {
 
         const memory = memoryData || { messages: [], running_summary: "", profile_facts: {} };
 
-        // Handle tester init — don't add the trigger to memory, just get opening message
         const isTesterInit = message === "__tester_init__";
         if (!isTesterInit) {
           memory.messages.push({ role: "user", content: message, timestamp: Date.now() });
@@ -284,25 +253,18 @@ var index_default = {
         const botResponse = await callOpenAI(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
         if (!botResponse || (!botResponse.reply && !botResponse.messages)) throw new Error("Invalid bot response structure");
 
-        // ── Multi-message normalisation ────────────────────────────────────
-        // Use messages array if provided, otherwise fall back to single reply
         const rawMessages = Array.isArray(botResponse.messages) && botResponse.messages.length > 0
           ? botResponse.messages
           : [botResponse.reply];
 
-        // Deduplicate — safety net for the glitch where bot repeats itself
         const dedupedMessages = rawMessages.filter((msg, idx, arr) =>
           arr.findIndex(m => m.trim().toLowerCase() === msg.trim().toLowerCase()) === idx
         );
 
-        // Calculate typing delay per message
         const typingDelays = dedupedMessages.map(msg => calcTypingDelay(msg));
         const totalDelay = typingDelays.reduce((a, b) => a + b, 0);
-
-        // Primary reply = all messages joined (for memory + logging)
         const joinedReply = dedupedMessages.join(" ");
 
-        // ── Memory update ──────────────────────────────────────────────────
         const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts);
 
@@ -322,6 +284,10 @@ var index_default = {
           }
           if (botResponse.memory_update.running_summary) {
             memory.running_summary = botResponse.memory_update.running_summary;
+          }
+          // Track objection count for escalation logic
+          if (typeof botResponse.memory_update.objection_count === "number") {
+            memory.profile_facts.objection_count = botResponse.memory_update.objection_count;
           }
         }
 
@@ -344,25 +310,17 @@ var index_default = {
           ...(profile_name ? { profile_name: String(profile_name) } : {})
         }, "bot_id,customer_id"));
 
-        if (finalAction === "SEND_TO_SLACK_REVIEW" || finalAction === "HANDOFF_TO_SETTER") {
-          await sendToSlack(env, {
-            customer_id, action: finalAction,
-            conversation_stage: botResponse.conversation_stage,
-            confidence: botResponse.confidence,
-            last_messages: memory.messages.slice(-5),
-            bot_messages: dedupedMessages,
-            typing_delays: typingDelays,
-            bot_reply: joinedReply,
-            internal_notes: botResponse.internal_notes,
-            review_id, auto_send_enabled: autoSendEnabled
-          });
-
+        if (finalAction === "SEND_TO_INBOX_REVIEW" || finalAction === "ESCALATE_TO_HUMAN") {
           ctx.waitUntil(supabaseInsert(env, "reviews", {
             id: review_id, bot_id: BOT_ID,
             customer_id: String(customer_id),
             action_type: finalAction,
             conversation_stage: botResponse.conversation_stage || null,
             confidence: botResponse.confidence || null,
+            situation_clarity: botResponse.situation_clarity || null,
+            response_quality: botResponse.response_quality || null,
+            emotional_state: botResponse.emotional_state || null,
+            escalation_reason: botResponse.escalation_reason || null,
             bot_reply: joinedReply,
             bot_messages: dedupedMessages,
             typing_delays: typingDelays,
@@ -379,22 +337,20 @@ var index_default = {
           review_id,
           customer_id,
           user_message: message,
-
-          // Multi-message fields — use these in Make/Zapier
           messages: dedupedMessages,
           typing_delays_ms: typingDelays,
           total_delay_ms: totalDelay,
           message_count: dedupedMessages.length,
-
-          // Full response for Tester and integrations
           bot_reply: joinedReply,
-
           conversation_stage: botResponse.conversation_stage,
-          decision_type: botResponse.decision_type || null,
           confidence: botResponse.confidence,
+          situation_clarity: botResponse.situation_clarity,
+          response_quality: botResponse.response_quality,
+          emotional_state: botResponse.emotional_state,
           lead_readiness: botResponse.lead_readiness,
           lead_intent: botResponse.lead_intent || "LOW",
           next_action: finalAction,
+          escalation_reason: botResponse.escalation_reason || null,
           auto_send_enabled: autoSendEnabled,
           progression_goal: botResponse.progression_goal || null,
           tags: botResponse.tags || [],
@@ -439,8 +395,6 @@ var index_default = {
           feedback_key: feedbackKey, stage: conversation_stage, timestamp: Date.now()
         }), { expirationTtl: 90 * 24 * 60 * 60 });
 
-        await sendFeedbackToSlack(env, feedbackData);
-
         ctx.waitUntil(supabaseInsert(env, "learnings", {
           bot_id: BOT_ID, customer_id: String(customer_id), review_id,
           conversation_stage: conversation_stage || "UNKNOWN",
@@ -484,11 +438,12 @@ var index_default = {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
+        const botModel = 'gpt-5.4-mini';
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
           body: JSON.stringify({
-            model: model,
+            model: botModel,
             messages: [
               { role: "system", content: `You are a prompt engineering assistant for an AI appointment setter bot. The user will give you a plain English instruction to update the bot's system prompt. Your job: 1. Identify exactly which section(s) of the prompt need to change 2. Make ONLY the requested change 3. Preserve all existing structure, formatting, and sections 4. If the instruction is vague, ask for clarification. Return ONLY valid JSON: { "updated_prompt": "full updated prompt", "explanation": "what changed and why", "changes": ["change 1"], "needs_clarification": false }. If clarification needed: { "needs_clarification": true, "question": "your question" }` },
               { role: "user", content: `Current system prompt:\n\n${current_prompt}\n\n---\n\nInstruction: ${instruction}` }
@@ -517,14 +472,15 @@ var index_default = {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
+        const botModel = 'gpt-5.4-mini';
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
           body: JSON.stringify({
-            model: model,
+            model: botModel,
             messages: [
-              { role: "system", content: `You are a sales psychology expert analysing corrections made to an AI appointment setter for a golf fitness coaching business. Explain the psychological reasoning behind the correction so the AI can learn the pattern. Your explanation should: identify the psychological mistake in the original, explain what the corrected version does better, state the pattern for future situations, be 2-4 sentences, focus on NEPQ principles. Return ONLY valid JSON: { "reason": "your explanation" }` },
-              { role: "user", content: `Stage: ${conversation_stage || "Unknown"}\nContext:\n${recent_context || "Not provided"}\nOriginal: "${original_reply}"\nCorrected: "${corrected_reply}"` }
+              { role: "system", content: `You are a sales psychology expert analysing corrections made to an AI appointment setter for a golf fitness coaching business. Explain the psychological reasoning behind the correction so the AI can learn the pattern. Your explanation should: identify the psychological mistake in the original, explain what the corrected version does better, state the pattern for future situations, be 2-4 sentences, focus on conversion psychology principles. Return ONLY valid JSON: { "explanation": "your psychological explanation", "pattern": "the reusable pattern learned", "tags": ["tag1", "tag2"] }` },
+              { role: "user", content: `Stage: ${conversation_stage || "Unknown"}\n\nContext: ${recent_context || "Not provided"}\n\nOriginal reply: "${original_reply}"\n\nCorrected reply: "${corrected_reply}"` }
             ],
             temperature: 0.4,
             response_format: { type: "json_object" }
@@ -535,75 +491,33 @@ var index_default = {
         const parsed = JSON.parse(data.choices[0].message.content);
         return new Response(JSON.stringify(parsed), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (error) {
-        console.error("Explain-learning error:", error);
+        console.error("Explain error:", error);
         return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }
 
-    // /extract-document
-    if (url.pathname === "/extract-document" && request.method === "POST") {
+    // /approve
+    if (url.pathname === "/approve" && request.method === "POST") {
       try {
         const body = await request.json();
-        const { file_type, file_data } = body;
-        if (!file_data || !file_type) {
-          return new Response(JSON.stringify({ error: "Missing file_data or file_type" }), {
+        const { review_id, customer_id, final_reply } = body;
+        if (!review_id || !customer_id) {
+          return new Response(JSON.stringify({ error: "Missing required fields" }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
-
-        const binaryStr = atob(file_data);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-
-        let content = "";
-
-        if (file_type === "txt") {
-          content = new TextDecoder().decode(bytes);
-        } else if (file_type === "pdf") {
-          const text = new TextDecoder("latin1").decode(bytes);
-          const matches = text.match(/\(([^)]{2,200})\)\s*Tj/g) || [];
-          const extracted = matches
-            .map(m => m.replace(/^\(/, "").replace(/\)\s*Tj$/, ""))
-            .map(s => s.replace(/\\n/g, "\n").replace(/\\r/g, "").replace(/\\\(/g, "(").replace(/\\\)/g, ")"))
-            .join(" ");
-          if (extracted.length < 100) {
-            const fallback = text.match(/[^\x00-\x1F\x7F-\xFF]{4,}/g) || [];
-            content = fallback.filter(s => s.length > 4 && !/^[0-9\s.]+$/.test(s)).join(" ");
-          } else {
-            content = extracted;
-          }
-        } else if (file_type === "docx") {
-          const text = new TextDecoder("latin1").decode(bytes);
-          const textRuns = text.match(/<w:t[^>]*>([^<]+)<\/w:t>/g) || [];
-          if (textRuns.length > 0) {
-            content = textRuns.map(t => t.replace(/<w:t[^>]*>/, "").replace(/<\/w:t>/, "")).join(" ");
-          } else {
-            content = text.match(/[a-zA-Z0-9\s,.'"\-!?:;()]{10,}/g)?.join(" ") || "";
-          }
-        } else if (file_type === "xlsx") {
-          const text = new TextDecoder("latin1").decode(bytes);
-          const sharedStrings = text.match(/<t[^>]*>([^<]+)<\/t>/g) || [];
-          if (sharedStrings.length > 0) {
-            content = sharedStrings.map(t => t.replace(/<t[^>]*>/, "").replace(/<\/t>/, "")).filter(s => s.trim()).join(" | ");
-          } else {
-            content = text.match(/[a-zA-Z0-9\s,.'"\-!?:;()]{6,}/g)?.join(" ") || "";
-          }
-        }
-
-        content = content.replace(/\s{3,}/g, " ").replace(/[^\x20-\x7E\n\r\t]/g, " ").trim();
-
-        if (!content || content.length < 20) {
-          return new Response(JSON.stringify({ error: "Could not extract readable text. Try saving as TXT." }), {
-            status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" }
-          });
-        }
-
-        return new Response(JSON.stringify({ content, word_count: content.split(/\s+/).length }), {
-          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        await fetch(`${SUPABASE_URL}/rest/v1/reviews?id=eq.${review_id}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+            "apikey": env.SUPABASE_SERVICE_KEY,
+            "Prefer": "return=minimal"
+          },
+          body: JSON.stringify({ status: "approved", final_reply: final_reply || "", resolved_at: new Date().toISOString() })
         });
-
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (error) {
-        console.error("Extract-document error:", error);
         return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }
@@ -620,7 +534,6 @@ var index_default = {
       }
     }
 
-
     // /health
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ status: "ok", learning_enabled: true, supabase_connected: true, documents_enabled: true, multi_message: true }), {
@@ -633,6 +546,58 @@ var index_default = {
 };
 
 // Helpers
+
+async function supabaseInsert(env, table, data) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      "apikey": env.SUPABASE_SERVICE_KEY,
+      "Prefer": "return=minimal"
+    },
+    body: JSON.stringify(data)
+  });
+  if (!response.ok) console.error(`Supabase insert error on ${table}:`, await response.text());
+}
+__name(supabaseInsert, "supabaseInsert");
+
+async function supabaseUpsert(env, table, data, onConflict) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      "apikey": env.SUPABASE_SERVICE_KEY,
+      "Prefer": "resolution=merge-duplicates,return=minimal"
+    },
+    body: JSON.stringify(data)
+  });
+  if (!response.ok) console.error(`Supabase upsert error on ${table}:`, await response.text());
+}
+__name(supabaseUpsert, "supabaseUpsert");
+
+async function getBotSettings(env) {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar`,
+      {
+        headers: {
+          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          "apikey": env.SUPABASE_SERVICE_KEY
+        }
+      }
+    );
+    if (!response.ok) return { auto_send_enabled: false, system_prompt: null };
+    const data = await response.json();
+    if (!data || data.length === 0) return { auto_send_enabled: false, system_prompt: null };
+    return data[0];
+  } catch (error) {
+    console.error("Error fetching bot settings:", error);
+    return { auto_send_enabled: false, system_prompt: null };
+  }
+}
+__name(getBotSettings, "getBotSettings");
 
 async function fetchRelevantLearnings(env, memory, limit = 30) {
   try {
@@ -690,9 +655,9 @@ async function callOpenAI(env, memory, learnings = [], documents = [], systemPro
   const lastMessages = (memory.messages || []).slice(-10);
 
   const learningsSection = learnings && learnings.length > 0 ? `
-═══════════════════════════════════════
-🚨 SETTER CORRECTIONS - HIGHEST PRIORITY 🚨
-═══════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+\uD83D\uDEA8 SETTER CORRECTIONS - HIGHEST PRIORITY \uD83D\uDEA8
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 CRITICAL: These are REAL corrections made by human setters who reviewed your previous responses.
 Before writing ANY reply, check if this situation matches ANY of these corrections.
@@ -703,38 +668,37 @@ Setter corrections OVERRIDE all default behaviors below.
 ${learnings.map((l, i) => `
 CORRECTION ${i + 1} | Stage: ${l.conversation_stage || "General"}
 Situation: ${l.situation_context || "General conversation"}
-❌ WRONG: "${l.original_reply}"
-✅ RIGHT: "${l.edited_reply}"
-🧠 WHY: ${l.reason}
+\u274C WRONG: "${l.original_reply}"
+\u2705 RIGHT: "${l.edited_reply}"
+\uD83E\uDDE0 WHY: ${l.reason}
 Tags: ${l.tags && l.tags.length > 0 ? l.tags.join(", ") : "None"}
 ---`).join("\n")}
 
 PATTERNS TO LOOK FOR:
-- If setter shortened reply → you were too long
-- If setter added empathy → you were too clinical
-- If setter removed question → you were moving too fast
-- If setter changed question style → yours was too robotic or salesy
-- If setter split into multiple messages → do the same in similar situations
+- If setter shortened reply \u2192 you were too long
+- If setter added empathy \u2192 you were too clinical
+- If setter removed question \u2192 you were moving too fast
+- If setter changed question style \u2192 yours was too robotic or salesy
+- If setter split into multiple messages \u2192 do the same in similar situations
 
 These corrections define what good looks like. They are LAW.
-═══════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 ` : "";
 
   const documentSection = documents.length > 0
-    ? `\n\n═══════════════════════════════════════
+    ? `\n\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 KNOWLEDGE BASE DOCUMENTS - USE AS REFERENCE
-═══════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 The following documents contain information about the coaching program. Reference them when relevant.
 Do NOT quote verbatim. Use natural language.
 
 ${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").slice(0, 2000)}${(d.content || "").length > 2000 ? "\n[...truncated]" : ""}`).join("\n\n---\n\n")}
 
-═══════════════════════════════════════\n\n`
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\n`
     : "";
 
-  // Campaign config injection
   const buyerDesc = campaignConfig.buyerType === 'Emotional'
     ? 'validate feelings first, then facts. Empathy drives action.'
     : campaignConfig.buyerType === 'Logical'
@@ -748,8 +712,6 @@ ${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").sli
     : 'balance warmth with directness. Read the lead and adapt.';
 
   const avatarLine = campaignConfig.avatar ? 'Target Avatar: ' + campaignConfig.avatar : '';
-
-  // Only inject campaign config if it has been explicitly set (non-default values exist)
   const hasCustomCampaignConfig = campaignConfig.avatar && campaignConfig.avatar.length > 5;
   const campaignSection = hasCustomCampaignConfig
     ? '\n=== CAMPAIGN CONFIGURATION ===\n'
@@ -787,7 +749,6 @@ ${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").sli
   try { parsed = JSON.parse(content); }
   catch (e) { throw new Error(`Failed to parse OpenAI response as JSON: ${content}`); }
 
-  // Support both old (reply only) and new (messages array) response formats
   if (!parsed.messages && !parsed.reply) {
     throw new Error("OpenAI response missing required fields");
   }
@@ -795,11 +756,22 @@ ${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").sli
     throw new Error("OpenAI response missing conversation_stage or next_action");
   }
 
-  // Normalise — ensure both fields always exist
+  // Normalise messages/reply
   if (!parsed.messages) parsed.messages = [parsed.reply];
   if (!parsed.reply) parsed.reply = parsed.messages.join(" ");
 
-  // Increment usage_count (fire and forget)
+  // Calculate weighted confidence from dual scores
+  const situationClarity = typeof parsed.situation_clarity === "number" ? parsed.situation_clarity : (parsed.confidence || 0);
+  const responseQuality = typeof parsed.response_quality === "number" ? parsed.response_quality : (parsed.confidence || 0);
+  parsed.situation_clarity = situationClarity;
+  parsed.response_quality = responseQuality;
+  parsed.confidence = Math.round(((situationClarity * 0.4) + (responseQuality * 0.6)) * 100) / 100;
+
+  // Normalize old action names for backward compat
+  if (parsed.next_action === "HANDOFF_TO_SETTER") parsed.next_action = "ESCALATE_TO_HUMAN";
+  if (parsed.next_action === "SEND_TO_SLACK_REVIEW") parsed.next_action = "SEND_TO_INBOX_REVIEW";
+
+  // Increment usage_count on documents (fire and forget)
   if (documents.length > 0) {
     for (const doc of documents) {
       fetch(`${SUPABASE_URL}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&name=eq.${encodeURIComponent(doc.name)}`, {
@@ -819,67 +791,4 @@ ${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").sli
 }
 __name(callOpenAI, "callOpenAI");
 
-async function sendToSlack(env, data) {
-  if (!env.SLACK_WEBHOOK_URL) return;
-  const actionEmoji = data.action === "HANDOFF_TO_SETTER" ? "🚨" : "⚠️";
-  const autoLabel = data.auto_send_enabled
-    ? `Auto-send ON -- confidence ${(data.confidence * 100).toFixed(0)}% | intent ${data.lead_intent || 'unknown'}`
-    : `Auto-send OFF -- all messages routed to review`;
-
-  // Show each message separately in Slack with its delay
-  const messagesPreview = data.bot_messages && data.bot_messages.length > 1
-    ? data.bot_messages.map((msg, i) =>
-        `*Message ${i + 1}* _(send after ${(data.typing_delays[i] / 1000).toFixed(1)}s)_:\n${msg}`
-      ).join("\n\n")
-    : data.bot_reply;
-
-  await fetch(env.SLACK_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: `${actionEmoji} Review Needed - ${data.action}`,
-      blocks: [
-        { type: "header", text: { type: "plain_text", text: `${actionEmoji} ${data.action}` } },
-        { type: "section", fields: [
-          { type: "mrkdwn", text: `*Customer:*\n${data.customer_id}` },
-          { type: "mrkdwn", text: `*Stage:*\n${data.conversation_stage}` },
-          { type: "mrkdwn", text: `*Confidence:*\n${(data.confidence * 100).toFixed(0)}%` },
-          { type: "mrkdwn", text: `*Messages:*\n${data.bot_messages?.length || 1} message(s)` }
-        ]},
-        { type: "section", text: { type: "mrkdwn", text: `*Routing reason:*\n${autoLabel}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*Recent Messages:*\n${data.last_messages.map(m => `${m.role === "user" ? "👤" : "🤖"} ${m.content}`).join("\n")}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*Bot Reply Draft:*\n${messagesPreview}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*Internal Notes:*\n${data.internal_notes || "None"}` } }
-      ]
-    })
-  });
-}
-__name(sendToSlack, "sendToSlack");
-
-async function sendFeedbackToSlack(env, data) {
-  if (!env.SLACK_WEBHOOK_URL) return;
-  await fetch(env.SLACK_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: "🧠 Bot Training - New Learning Captured",
-      blocks: [
-        { type: "header", text: { type: "plain_text", text: "🧠 Bot Learned Something New!" } },
-        { type: "section", fields: [
-          { type: "mrkdwn", text: `*Learning ID:*\n${data.review_id}` },
-          { type: "mrkdwn", text: `*Customer:*\n${data.customer_id}` },
-          { type: "mrkdwn", text: `*Stage:*\n${data.conversation_stage}` }
-        ]},
-        { type: "section", text: { type: "mrkdwn", text: `*Situation:*\n${data.situation_context || "General conversation"}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*❌ Original Reply:*\n${data.original_reply}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*✅ Corrected Reply:*\n${data.edited_reply}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*🧠 Why This Matters:*\n${data.reason}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*Tags:*\n${data.tags?.length > 0 ? data.tags.join(", ") : "None"}` } }
-      ]
-    })
-  });
-}
-__name(sendFeedbackToSlack, "sendFeedbackToSlack");
-
 export { index_default as default };
-//# sourceMappingURL=index.js.map
