@@ -128,8 +128,8 @@ export default function Documents() {
 
       <div className="page-header">
         <div>
-          <div className="page-title">Documents</div>
-          <div className="page-sub">Bot knowledge base - {activeDocs.length} active {activeDocs.length === 1 ? 'file' : 'files'}</div>
+          <div className="page-title">Knowledge Base</div>
+          <div className="page-sub">Add and manage information the AI uses to respond accurately in conversations.</div>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>+ Upload File</button>
         <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.txt,.xlsx" style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />

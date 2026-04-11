@@ -164,8 +164,8 @@ export default function UserManagement() {
 
       <div className="page-header">
         <div>
-          <div className="page-title">User Management</div>
-          <div className="page-sub">{users.length} active · {invites.length} pending invites</div>
+          <div className="page-title">Team</div>
+          <div className="page-sub">Manage users and control access to your workspace.</div>
         </div>
         {canSendInvites && (
           <button className="btn btn-primary" onClick={() => setShowInviteModal(true)}>+ Invite User</button>

@@ -1,27 +1,15 @@
 ﻿import { useState, useEffect, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 
-const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved']
-
-const STAGE_ORDER = [
-  'CALL BOOKING', 'CALL OFFERED', 'CALL BOOK BRIDGE', 'COACHING HAT',
-  'PRIORITY GATE', 'PROGRESS CHECK', 'BODY LINK ACCEPTANCE + MOBILITY HISTORY',
-  'TRANSLATION / PROGRESS CHECK', "WHAT THEY'VE TRIED (PAST + CURRENT)",
-  'GOAL DEPTH (MAKE IT SPECIFIC)', 'GOAL LOCK', 'LOCATION ANCHOR',
-  'OPEN LOOP', 'ENTRY', 'LONG TERM NURTURE'
-]
-
-const READINESS_ORDER = { HOT: 0, WARM: 1, COLD: 2 }
+const FILTERS = ['All', 'Pending', 'Handoff', 'Resolved']
 
 export default function Inbox() {
   const { profile } = useAuth()
   const [leads, setLeads] = useState([])
   const [filter, setFilter] = useState('All')
   const [search, setSearch] = useState('')
-  const [sortBy, setSortBy] = useState('recent')
   const [selectedLead, setSelectedLead] = useState(null)
   const [conversation, setConversation] = useState(null)
   const [reviews, setReviews] = useState([])
@@ -39,7 +27,6 @@ export default function Inbox() {
   const channelRef = useRef(null)
   const msgEndRef = useRef(null)
   const searchRef = useRef(null)
-  const location = useLocation()
 
   useEffect(() => {
     if (!profile) return
@@ -50,13 +37,6 @@ export default function Inbox() {
   useEffect(() => {
     msgEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [conversation, reviews, activeReview])
-
-  // Auto-open a specific lead when navigated from Dashboard
-  useEffect(() => {
-    if (!location.state?.openLead || !leads.length || !botId) return
-    const target = leads.find(l => String(l.customer_id) === String(location.state.openLead))
-    if (target) selectLead(target)
-  }, [location.state, leads, botId])
 
   async function loadData() {
     setLoading(true)
@@ -94,20 +74,22 @@ export default function Inbox() {
       }
       leadsMap[r.customer_id].all_reviews.push(r)
       if (r.status === 'pending') leadsMap[r.customer_id].pending_count++
-      if ((r.action_type === 'HANDOFF_TO_SETTER' || r.action_type === 'ESCALATE_TO_HUMAN') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
+      if (r.action_type === 'HANDOFF_TO_SETTER' && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
       if (!leadsMap[r.customer_id].latest_preview) leadsMap[r.customer_id].latest_preview = r.bot_reply || ''
     })
 
-    // Handoffs and pending always float to top, rest sorted by recency by default
-    const allLeads = Object.values(leadsMap)
-    const handoffs = allLeads.filter(l => l.handoff_count > 0)
-    const pending = allLeads.filter(l => l.handoff_count === 0 && l.pending_count > 0)
-    const rest = allLeads.filter(l => l.handoff_count === 0 && l.pending_count === 0)
-    rest.sort((a, b) => new Date(b.last_activity) - new Date(a.last_activity))
+    const sorted = Object.values(leadsMap).sort((a, b) => {
+      if (a.handoff_count > 0 && b.handoff_count === 0) return -1
+      if (b.handoff_count > 0 && a.handoff_count === 0) return 1
+      if (a.pending_count > 0 && b.pending_count === 0) return -1
+      if (b.pending_count > 0 && a.pending_count === 0) return 1
+      return new Date(b.last_activity) - new Date(a.last_activity)
+    })
 
-    setLeads([...handoffs, ...pending, ...rest])
+    setLeads(sorted)
     setLoading(false)
 
+    // Realtime
     if (channelRef.current) supabase.removeChannel(channelRef.current)
     const ch = supabase.channel(`inbox-${bot.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => loadData())
@@ -154,12 +136,18 @@ export default function Inbox() {
   }
 
   function getReviewMessages(review) {
-    if (Array.isArray(review.bot_messages) && review.bot_messages.length > 0) return review.bot_messages
+    if (Array.isArray(review.bot_messages) && review.bot_messages.length > 0) {
+      return review.bot_messages
+    }
     return [review.bot_reply || '']
   }
 
   function updateReplyMessage(idx, val) {
-    setReplyMessages(prev => { const n = [...prev]; n[idx] = val; return n })
+    setReplyMessages(prev => {
+      const newMsgs = [...prev]
+      newMsgs[idx] = val
+      return newMsgs
+    })
   }
 
   function addReplyMessage() {
@@ -177,10 +165,14 @@ export default function Inbox() {
     setSending(true)
     const validMessages = replyMessages.filter(m => m.trim())
     const joinedReply = validMessages.join(' ')
+    
     await supabase.from('reviews').update({
-      status: 'approved', final_reply: joinedReply, final_messages: validMessages,
+      status: 'approved',
+      final_reply: joinedReply,
+      final_messages: validMessages,
       resolved_at: new Date().toISOString()
     }).eq('id', activeReview.id)
+    
     showToast('✓ Approved and sent', 'success')
     setSending(false)
     setActiveReview(null)
@@ -192,18 +184,30 @@ export default function Inbox() {
   async function saveTraining() {
     if (!trainReason.trim()) { showToast('Please add a reason', 'error'); return }
     setSending(true)
+    
     const validMessages = replyMessages.filter(m => m.trim())
     const joinedReply = validMessages.join(' ')
     const originalJoined = activeReview.bot_reply || ''
+    
     await supabase.from('reviews').update({
-      status: 'edited', final_reply: joinedReply, final_messages: validMessages,
+      status: 'edited',
+      final_reply: joinedReply,
+      final_messages: validMessages,
       resolved_at: new Date().toISOString()
     }).eq('id', activeReview.id)
+    
     await supabase.from('learnings').insert({
-      bot_id: botId, customer_id: activeReview.customer_id, review_id: activeReview.id,
-      conversation_stage: activeReview.conversation_stage, original_reply: originalJoined,
-      corrected_reply: joinedReply, corrected_messages: validMessages, reason: trainReason, source: 'inbox'
+      bot_id: botId,
+      customer_id: activeReview.customer_id,
+      review_id: activeReview.id,
+      conversation_stage: activeReview.conversation_stage,
+      original_reply: originalJoined,
+      corrected_reply: joinedReply,
+      corrected_messages: validMessages,
+      reason: trainReason,
+      source: 'inbox'
     })
+    
     setShowTrainModal(false)
     showToast('🧠 Learning saved and sent', 'success')
     setSending(false)
@@ -234,14 +238,7 @@ export default function Inbox() {
     if (lead.username) return `@${lead.username}`
     if (lead.profile_name) return lead.profile_name
     if (lead.identity) return lead.identity
-    // Channel-based fallback instead of raw ID
-    const ch = (lead.channel || '').toLowerCase()
-    if (ch.includes('instagram') || ch === 'manychat') return 'Instagram Lead'
-    if (ch.includes('facebook')) return 'Facebook Lead'
-    if (ch.includes('whatsapp')) return 'WhatsApp Lead'
-    if (ch.includes('sms') || ch.includes('text')) return 'SMS Lead'
-    if (ch.includes('email')) return 'Email Lead'
-    return 'Unknown Lead'
+    return `Lead ${lead.customer_id}`
   }
 
   function intentStyle(i) {
@@ -250,30 +247,11 @@ export default function Inbox() {
     return { color: 'var(--tx3)', background: 'var(--surf2)', border: '1px solid var(--bdr)' }
   }
 
-  function readinessStyle(r) {
-    if (r === 'HOT') return { color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7' }
-    if (r === 'WARM') return { color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }
-    return { color: 'var(--tx3)', background: 'var(--surf2)', border: '1px solid var(--bdr)' }
-  }
-
-  function readinessInfo(r, stage) {
-    if (stage === 'CALL BOOKING') return { emoji: '✅', label: 'Call Booked', color: '#16a34a', bg: '#f0fdf4', border: '1px solid #bbf7d0' }
-    if (r === 'HOT') return { emoji: '🔥', label: 'HOT', color: '#e53e3e', bg: '#fff5f5', border: '1px solid #fed7d7' }
-    if (r === 'WARM') return { emoji: '🟡', label: 'WARM', color: '#d97706', bg: '#fffbeb', border: '1px solid #fde68a' }
-    return { emoji: '🔵', label: 'COLD', color: '#3b82f6', bg: '#eff6ff', border: '1px solid #bfdbfe' }
-  }
-
   function fmtTime(ts) {
     if (!ts) return ''
     const d = new Date(ts), now = new Date(), diff = now - d
-    const mins = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
-    if (mins < 1) return 'Just now'
-    if (mins < 60) return `${mins}m ago`
-    if (hours < 24) return `${hours}h ago`
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-    if (today - msgDay === 86400000) return 'Yesterday'
+    if (diff < 86400000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    if (diff < 604800000) return d.toLocaleDateString([], { weekday: 'short' })
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
   }
 
@@ -288,10 +266,17 @@ export default function Inbox() {
     return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
   }
 
+  function readinessStyle(r) {
+    if (r === 'HOT') return { color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7' }
+    if (r === 'WARM') return { color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }
+    return { color: 'var(--tx3)', background: 'var(--surf2)', border: '1px solid var(--bdr)' }
+  }
+
   function buildTimeline() {
     const messages = conversation?.messages || []
     const reviewMap = {}
     reviews.forEach(r => { if (r.id) reviewMap[r.id] = r })
+
     const items = []
     let lastDate = null
     messages.forEach((m, i) => {
@@ -303,7 +288,10 @@ export default function Inbox() {
       }
       const botMessages = m.bot_messages || (m.content ? [m.content] : [])
       items.push({
-        type: 'message', ...m, botMessages, _index: i,
+        type: 'message',
+        ...m,
+        botMessages,
+        _index: i,
         _review: m.review_id ? reviewMap[m.review_id] : null,
         key: `msg-${i}`
       })
@@ -316,23 +304,9 @@ export default function Inbox() {
     const matchesFilter =
       filter === 'All' ? true :
       filter === 'Pending' ? l.pending_count > 0 :
-      filter === 'Escalated' ? l.handoff_count > 0 :
+      filter === 'Handoff' ? l.handoff_count > 0 :
       filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0 : true
     return matchesSearch && matchesFilter
-  }).sort((a, b) => {
-    if (a.handoff_count > 0 && b.handoff_count === 0) return -1
-    if (b.handoff_count > 0 && a.handoff_count === 0) return 1
-    if (sortBy === 'readiness') {
-      const ra = READINESS_ORDER[a.lead_readiness] ?? 3
-      const rb = READINESS_ORDER[b.lead_readiness] ?? 3
-      return ra - rb
-    }
-    if (sortBy === 'stage') {
-      const ia = STAGE_ORDER.indexOf(a.conversation_stage)
-      const ib = STAGE_ORDER.indexOf(b.conversation_stage)
-      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-    }
-    return new Date(b.last_activity) - new Date(a.last_activity)
   })
 
   const totalPending = leads.reduce((a, l) => a + l.pending_count, 0)
@@ -344,10 +318,14 @@ export default function Inbox() {
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden', background: 'var(--bg)' }}>
       {toast.msg && <div className={`toast ${toast.type === 'error' ? 'toast-error' : ''}`}>{toast.msg}</div>}
 
-      {/* ══ LEFT PANEL ══ */}
-      <div style={{
-        width: '320px', flexShrink: 0, borderRight: '1px solid var(--bdr)',
-        display: selectedLead ? 'none' : 'flex', flexDirection: 'column', background: 'var(--surf)'
+      {/* ══ LEFT PANEL - LEADS LIST ══ */}
+      <div style={{ 
+        width: '320px', 
+        flexShrink: 0, 
+        borderRight: '1px solid var(--bdr)', 
+        display: selectedLead ? 'none' : 'flex',  // Hide on mobile when thread is open
+        flexDirection: 'column', 
+        background: 'var(--surf)'
       }} className="inbox-list">
 
         {/* Search */}
@@ -355,9 +333,16 @@ export default function Inbox() {
           <div style={{ position: 'relative' }}>
             <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--tx3)', fontSize: '.84rem', pointerEvents: 'none' }}>🔍</span>
             <input
-              ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
+              ref={searchRef}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
               placeholder="Search leads..."
-              style={{ width: '100%', padding: '8px 10px 8px 32px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '20px', fontSize: '.83rem', color: 'var(--tx)', outline: 'none', boxSizing: 'border-box', fontFamily: 'var(--fn)' }}
+              style={{
+                width: '100%', padding: '8px 10px 8px 32px', background: 'var(--surf2)',
+                border: '1px solid var(--bdr)', borderRadius: '20px', fontSize: '.83rem',
+                color: 'var(--tx)', outline: 'none', boxSizing: 'border-box',
+                fontFamily: 'var(--fn)'
+              }}
             />
             {search && (
               <button onClick={() => setSearch('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '.8rem', padding: 0 }}>✕</button>
@@ -366,16 +351,17 @@ export default function Inbox() {
         </div>
 
         {/* Filter tabs */}
-        <div style={{ display: 'flex', padding: '0 10px 8px', gap: '4px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', padding: '0 10px 10px', gap: '4px', flexShrink: 0 }}>
           {FILTERS.map(f => {
-            const count = f === 'Pending' ? totalPending : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0) : null
+            const count = f === 'Pending' ? totalPending : f === 'Handoff' ? leads.reduce((a, l) => a + l.handoff_count, 0) : null
             return (
               <button key={f} onClick={() => setFilter(f)} style={{
                 flex: 1, padding: '5px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
                 fontSize: '.72rem', fontWeight: filter === f ? 600 : 400,
                 background: filter === f ? 'var(--acc)' : 'var(--surf2)',
                 color: filter === f ? '#fff' : 'var(--tx2)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all .15s'
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+                transition: 'all .15s'
               }}>
                 {f}
                 {count > 0 && (
@@ -384,19 +370,6 @@ export default function Inbox() {
               </button>
             )
           })}
-        </div>
-
-        {/* Sort bar */}
-        <div style={{ padding: '0 12px 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontSize: '.7rem', color: 'var(--tx3)', flexShrink: 0 }}>Sort:</span>
-          <select
-            value={sortBy} onChange={e => setSortBy(e.target.value)}
-            style={{ flex: 1, fontSize: '.72rem', padding: '4px 8px', borderRadius: '8px', border: '1px solid var(--bdr)', background: 'var(--surf2)', color: 'var(--tx2)', cursor: 'pointer', outline: 'none', fontFamily: 'var(--fn)' }}
-          >
-            <option value="recent">Last Interaction — Most Recent</option>
-            <option value="readiness">Readiness — HOT to COLD</option>
-            <option value="stage">Stage — Latest to Earliest</option>
-          </select>
         </div>
 
         {/* Lead list */}
@@ -428,13 +401,7 @@ export default function Inbox() {
                       {lead.latest_preview || lead.conversation_stage || 'No messages yet'}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px', flexShrink: 0 }}>
-                    <div style={{ fontSize: '.68rem', color: 'var(--tx3)' }}>{fmtTime(lead.last_activity)}</div>
-                    {lead.lead_readiness && (() => {
-                      const ri = readinessInfo(lead.lead_readiness, lead.conversation_stage)
-                      return <span style={{ fontSize: '.75rem' }} title={ri.label}>{ri.emoji}</span>
-                    })()}
-                  </div>
+                  <div style={{ fontSize: '.68rem', color: 'var(--tx3)', flexShrink: 0 }}>{fmtTime(lead.last_activity)}</div>
                 </div>
               </div>
             )
@@ -442,10 +409,13 @@ export default function Inbox() {
         </div>
       </div>
 
-      {/* ══ RIGHT PANEL ══ */}
-      <div style={{
-        flex: 1, display: selectedLead ? 'flex' : 'none', flexDirection: 'column',
-        overflow: 'hidden', background: 'var(--bg)'
+      {/* ══ RIGHT PANEL - CONVERSATION ══ */}
+      <div style={{ 
+        flex: 1, 
+        display: selectedLead ? 'flex' : 'none',  // Only show when lead is selected
+        flexDirection: 'column', 
+        overflow: 'hidden', 
+        background: 'var(--bg)' 
       }} className="inbox-thread">
         {!selectedLead ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx3)', fontSize: '.9rem' }}>
@@ -453,11 +423,25 @@ export default function Inbox() {
           </div>
         ) : (
           <>
-            {/* Thread header */}
+            {/* Header with BACK BUTTON */}
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--bdr)', display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--surf)', flexShrink: 0 }}>
-              <button
-                onClick={goBackToList}
-                style={{ background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '1rem', color: 'var(--tx2)', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '4px', transition: 'all .15s' }}
+              
+              {/* Back Button */}
+              <button 
+                onClick={goBackToList} 
+                style={{ 
+                  background: 'var(--surf2)', 
+                  border: '1px solid var(--bdr)', 
+                  borderRadius: '8px',
+                  cursor: 'pointer', 
+                  fontSize: '1rem', 
+                  color: 'var(--tx2)', 
+                  padding: '6px 10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  transition: 'all .15s'
+                }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--accl)'; e.currentTarget.style.color = 'var(--acc)' }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'var(--surf2)'; e.currentTarget.style.color = 'var(--tx2)' }}
               >
@@ -472,14 +456,11 @@ export default function Inbox() {
                 <div style={{ fontSize: '.73rem', color: 'var(--tx3)' }}>{selectedLead.conversation_stage || 'Unknown stage'}</div>
               </div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                {selectedLead.lead_readiness && (() => {
-                  const ri = readinessInfo(selectedLead.lead_readiness, selectedLead.conversation_stage)
-                  return (
-                    <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', color: ri.color, background: ri.bg, border: ri.border }}>
-                      {ri.emoji} {ri.label}
-                    </span>
-                  )
-                })()}
+                {selectedLead.lead_readiness && (
+                  <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', ...readinessStyle(selectedLead.lead_readiness) }}>
+                    {selectedLead.lead_readiness}
+                  </span>
+                )}
                 {selectedLead.lead_intent && (
                   <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', ...intentStyle(selectedLead.lead_intent) }}>
                     {selectedLead.lead_intent}
@@ -503,47 +484,62 @@ export default function Inbox() {
                 {threadLoading ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}><div className="spinner" /></div>
                 ) : timeline.length === 0 ? (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx3)', fontSize: '.84rem' }}>No messages yet</div>
+                  <div style={{ textAlign: 'center', color: 'var(--tx3)', fontSize: '.84rem', padding: '60px 0' }}>No conversation history yet.</div>
                 ) : timeline.map(item => {
-                  if (item.type === 'separator') {
-                    return (
-                      <div key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '12px 0' }}>
-                        <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
-                        <span style={{ fontSize: '.7rem', color: 'var(--tx3)', whiteSpace: 'nowrap' }}>{item.label}</span>
-                        <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
-                      </div>
-                    )
-                  }
-                  const isLead = item.role === 'user'
-                  const botMessages = item.botMessages || []
+                  if (item.type === 'separator') return (
+                    <div key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '14px 0 10px' }}>
+                      <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
+                      <span style={{ fontSize: '.69rem', color: 'var(--tx3)', background: '#e8ede8', padding: '3px 10px', borderRadius: '999px', fontWeight: 500, whiteSpace: 'nowrap' }}>{item.label}</span>
+                      <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
+                    </div>
+                  )
+
+                  const isLead = item.role === 'user' || item.role === 'Lead'
                   const review = item._review
-                  const isSent = review?.status === 'approved' || review?.status === 'edited' || (!review && !isLead)
                   const isPending = review?.status === 'pending'
+                  const isActive = activeReview?.id === review?.id
+                  const isSent = review && (review.status === 'approved' || review.status === 'edited')
+                  const botMessages = item.botMessages || [item.content]
+                  const showMultiple = !isLead && botMessages.length > 1
 
                   return (
                     <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', marginBottom: '6px' }}>
-                      <div style={{ maxWidth: '75%', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                        {isLead ? (
-                          <div style={{ padding: '10px 14px', borderRadius: '16px 16px 16px 4px', background: 'var(--surf)', border: '1px solid var(--bdr)', fontSize: '.87rem', lineHeight: 1.55, color: 'var(--tx)' }}>
+                      <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', gap: showMultiple ? '4px' : 0 }}>
+                        
+                        {isLead && (
+                          <div style={{
+                            padding: '9px 13px',
+                            borderRadius: '2px 16px 16px 16px',
+                            fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            background: '#fff',
+                            color: 'var(--tx)',
+                            border: '1px solid rgba(0,0,0,.06)',
+                            boxShadow: '0 1px 2px rgba(0,0,0,.08)'
+                          }}>
                             {item.content}
                           </div>
-                        ) : (
-                          botMessages.map((bubble, bi) => (
-                            <div key={bi}
-                              onClick={() => { if (isPending && review) { setActiveReview(review); setReplyMessages(getReviewMessages(review)) } }}
-                              style={{
-                                padding: '10px 14px',
-                                borderRadius: bi === 0 ? '16px 16px 4px 16px' : bi === botMessages.length - 1 ? '4px 16px 16px 16px' : '4px 16px',
-                                background: isPending ? '#fffbeb' : isSent ? 'var(--accp)' : 'var(--surf2)',
-                                border: isPending ? '1px solid #fde68a' : isSent ? '1px solid var(--accl)' : '1px solid var(--bdr)',
-                                fontSize: '.87rem', lineHeight: 1.55, color: 'var(--tx)',
-                                cursor: isPending ? 'pointer' : 'default', transition: 'all .15s'
-                              }}>
-                              {isPending && bi === 0 && '⚠ '}{bubble}
-                            </div>
-                          ))
                         )}
+
+                        {!isLead && botMessages.map((bubble, bi) => (
+                          <div
+                            key={bi}
+                            onClick={() => isPending ? (setActiveReview(review), setReplyMessages(getReviewMessages(review))) : null}
+                            style={{
+                              padding: '9px 13px',
+                              borderRadius: '16px 2px 16px 16px',
+                              fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                              background: isPending ? '#fffbeb' : 'var(--acc)',
+                              color: isPending ? '#78350f' : '#e8f7ed',
+                              border: isActive ? '2px solid var(--acc)' : isPending ? '1.5px solid #fcd34d' : 'none',
+                              boxShadow: '0 1px 2px rgba(0,0,0,.08)',
+                              cursor: isPending ? 'pointer' : 'default',
+                              transition: 'all .15s'
+                            }}>
+                            {isPending && bi === 0 && '⚠ '}{bubble}
+                          </div>
+                        ))}
                       </div>
+
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
                         <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>
                           {item.timestamp ? fmtTime(new Date(item.timestamp)) : ''}
@@ -559,7 +555,7 @@ export default function Inbox() {
                 <div ref={msgEndRef} />
               </div>
 
-              {/* Profile sidebar */}
+              {/* Lead Profile Sidebar */}
               {showProfile && selectedLead && (
                 <div style={{ width: '260px', flexShrink: 0, borderLeft: '1px solid var(--bdr)', background: 'var(--surf)', overflowY: 'auto', padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -572,17 +568,12 @@ export default function Inbox() {
                       {getLeadName(selectedLead).charAt(0).toUpperCase()}
                     </div>
                     <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center' }}>{getLeadName(selectedLead)}</div>
-                    {selectedLead.username && (
-                      <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>@{selectedLead.username}</div>
+                    <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>ID: {selectedLead.customer_id}</div>
+                    {selectedLead.lead_readiness && (
+                      <span style={{ fontSize: '.7rem', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', ...readinessStyle(selectedLead.lead_readiness) }}>
+                        {selectedLead.lead_readiness}
+                      </span>
                     )}
-                    {selectedLead.lead_readiness && (() => {
-                      const ri = readinessInfo(selectedLead.lead_readiness, selectedLead.conversation_stage)
-                      return (
-                        <span style={{ fontSize: '.75rem', fontWeight: 700, padding: '3px 12px', borderRadius: '999px', color: ri.color, background: ri.bg, border: ri.border }}>
-                          {ri.emoji} {ri.label}
-                        </span>
-                      )
-                    })()}
                   </div>
 
                   {[
@@ -592,7 +583,7 @@ export default function Inbox() {
                     { label: 'Channel', value: selectedLead.channel },
                     { label: 'Golf Identity', value: selectedLead.profile_facts?.golf_identity },
                     { label: 'Timeframe', value: selectedLead.profile_facts?.timeframe },
-                    { label: "What They've Tried", value: selectedLead.profile_facts?.what_theyve_tried },
+                    { label: 'What They\'ve Tried', value: selectedLead.profile_facts?.what_theyve_tried },
                     { label: 'Current Approach', value: selectedLead.profile_facts?.current_approach_working },
                     { label: 'Priority Level', value: selectedLead.profile_facts?.priority_level },
                   ].filter(f => f.value && f.value !== '').map(f => (
@@ -618,8 +609,8 @@ export default function Inbox() {
 
                 <div style={{ padding: '10px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '.8rem', fontWeight: 600, color: (activeReview.action_type === 'HANDOFF_TO_SETTER' || activeReview.action_type === 'ESCALATE_TO_HUMAN') ? '#e53e3e' : '#d97706' }}>
-                      {(activeReview.action_type === 'HANDOFF_TO_SETTER' || activeReview.action_type === 'ESCALATE_TO_HUMAN') ? '🚨 Escalated to Human' : '⚠ Review needed'}
+                    <span style={{ fontSize: '.8rem', fontWeight: 600, color: activeReview.action_type === 'HANDOFF_TO_SETTER' ? '#e53e3e' : '#d97706' }}>
+                      {activeReview.action_type === 'HANDOFF_TO_SETTER' ? '🚨 Handoff' : '⚠ Review needed'}
                     </span>
                     <span style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>
                       {Math.round((activeReview.confidence || 0) * 100)}% confidence
@@ -627,11 +618,6 @@ export default function Inbox() {
                     {activeReview.conversation_stage && (
                       <span style={{ fontSize: '.68rem', background: 'var(--surf2)', border: '1px solid var(--bdr)', padding: '1px 8px', borderRadius: '999px', color: 'var(--tx3)' }}>
                         {activeReview.conversation_stage}
-                      </span>
-                    )}
-                    {activeReview.escalation_reason && (
-                      <span style={{ fontSize: '.68rem', background: '#fff5f5', border: '1px solid #fed7d7', padding: '1px 8px', borderRadius: '999px', color: '#e53e3e', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={activeReview.escalation_reason}>
-                        Reason: {activeReview.escalation_reason}
                       </span>
                     )}
                     <span style={{ fontSize: '.68rem', background: 'var(--blubg)', border: '1px solid var(--blubd)', padding: '1px 8px', borderRadius: '999px', color: 'var(--blu)' }}>
@@ -645,20 +631,36 @@ export default function Inbox() {
                   {replyMessages.map((msg, idx) => (
                     <div key={idx} style={{ position: 'relative' }}>
                       <textarea
-                        value={msg} onChange={e => updateReplyMessage(idx, e.target.value)} rows={2}
-                        style={{ width: '100%', background: 'var(--surf2)', border: '1.5px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.85rem', padding: '10px 40px 10px 13px', borderRadius: '12px', resize: 'none', outline: 'none', lineHeight: 1.6, boxSizing: 'border-box', transition: 'border-color .15s' }}
+                        value={msg}
+                        onChange={e => updateReplyMessage(idx, e.target.value)}
+                        rows={2}
+                        style={{
+                          width: '100%', background: 'var(--surf2)', border: '1.5px solid var(--bdr)',
+                          color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.85rem',
+                          padding: '10px 40px 10px 13px', borderRadius: '12px', resize: 'none', outline: 'none',
+                          lineHeight: 1.6, boxSizing: 'border-box', transition: 'border-color .15s'
+                        }}
                         onFocus={e => e.target.style.borderColor = 'var(--accm)'}
                         onBlur={e => e.target.style.borderColor = 'var(--bdr)'}
                         placeholder={`Message ${idx + 1}...`}
                       />
                       {replyMessages.length > 1 && (
-                        <button onClick={() => removeReplyMessage(idx)} style={{ position: 'absolute', top: '8px', right: '8px', width: '24px', height: '24px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.75rem', color: '#e53e3e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+                        <button
+                          onClick={() => removeReplyMessage(idx)}
+                          style={{ position: 'absolute', top: '8px', right: '8px', width: '24px', height: '24px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.75rem', color: '#e53e3e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                        >×</button>
                       )}
-                      <div style={{ position: 'absolute', bottom: '8px', left: '13px', fontSize: '.65rem', color: 'var(--tx3)' }}>Msg {idx + 1}</div>
+                      <div style={{ position: 'absolute', bottom: '8px', left: '13px', fontSize: '.65rem', color: 'var(--tx3)' }}>
+                        Msg {idx + 1}
+                      </div>
                     </div>
                   ))}
+                  
                   {replyMessages.length < 3 && (
-                    <button onClick={addReplyMessage} style={{ alignSelf: 'flex-start', padding: '4px 12px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}>+ Add another message</button>
+                    <button
+                      onClick={addReplyMessage}
+                      style={{ alignSelf: 'flex-start', padding: '4px 12px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}
+                    >+ Add another message</button>
                   )}
                 </div>
 
@@ -671,7 +673,10 @@ export default function Inbox() {
                   >
                     ✏ Edit &amp; Train
                   </button>
-                  <button onClick={discard} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '10px', cursor: 'pointer', fontSize: '.8rem', color: '#e53e3e', fontWeight: 500 }}>
+                  <button
+                    onClick={discard}
+                    style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '10px', cursor: 'pointer', fontSize: '.8rem', color: '#e53e3e', fontWeight: 500 }}
+                  >
                     ✕ Discard
                   </button>
                   <button
@@ -709,18 +714,26 @@ export default function Inbox() {
                 {replyMessages.map((msg, idx) => (
                   <div key={idx} style={{ position: 'relative' }}>
                     <textarea
-                      className="form-input" rows={2} value={msg}
+                      className="form-input"
+                      rows={2}
+                      value={msg}
                       onChange={e => updateReplyMessage(idx, e.target.value)}
                       style={{ borderRadius: '10px', paddingRight: '36px' }}
                       placeholder={`Message ${idx + 1}...`}
                     />
                     {replyMessages.length > 1 && (
-                      <button onClick={() => removeReplyMessage(idx)} style={{ position: 'absolute', top: '8px', right: '8px', width: '22px', height: '22px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.7rem', color: '#e53e3e' }}>×</button>
+                      <button
+                        onClick={() => removeReplyMessage(idx)}
+                        style={{ position: 'absolute', top: '8px', right: '8px', width: '22px', height: '22px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.7rem', color: '#e53e3e' }}
+                      >×</button>
                     )}
                   </div>
                 ))}
                 {replyMessages.length < 3 && (
-                  <button onClick={addReplyMessage} style={{ alignSelf: 'flex-start', padding: '4px 12px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}>+ Add message</button>
+                  <button
+                    onClick={addReplyMessage}
+                    style={{ alignSelf: 'flex-start', padding: '4px 12px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}
+                  >+ Add message</button>
                 )}
               </div>
             </div>
@@ -733,7 +746,8 @@ export default function Inbox() {
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button className="btn btn-ghost" onClick={() => setShowTrainModal(false)} style={{ borderRadius: '10px' }}>Cancel</button>
               <button
-                onClick={saveTraining} disabled={sending || !trainReason.trim()}
+                onClick={saveTraining}
+                disabled={sending || !trainReason.trim()}
                 style={{ padding: '9px 20px', background: 'var(--acc)', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '.84rem', color: '#fff', fontWeight: 600, opacity: sending || !trainReason.trim() ? .6 : 1 }}
               >
                 {sending ? 'Saving...' : '💾 Save & Send'}
@@ -743,6 +757,7 @@ export default function Inbox() {
         </div>
       )}
 
+      {/* CSS for responsive behavior */}
       <style>{`
         @media (min-width: 768px) {
           .inbox-list { display: flex !important; }

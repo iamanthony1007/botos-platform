@@ -118,7 +118,7 @@ export default function Layout() {
         display: 'flex', alignItems: 'center', padding: '0 20px', gap: '14px',
         flexShrink: 0, boxShadow: '0 1px 4px rgba(0,0,0,.06)', zIndex: 100
       }}>
-        <img src={LOGO_HORIZONTAL} alt="MU AI" onClick={() => navigate('/dashboard')} style={{ height: '90px', width: 'auto', cursor: 'pointer' }} />
+        <img src={LOGO_HORIZONTAL} alt="MU AI" style={{ height: '90px', width: 'auto' }} />
         <div style={{ width: '1px', height: '20px', background: '#E8E6DE' }} />
         <span style={{ fontSize: '.78rem', color: '#A0A090', flex: 1, letterSpacing: '.04em' }}>Intelligence in Motion</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -144,16 +144,17 @@ export default function Layout() {
         }}>
           <div style={sectionHeader}>Main</div>
           <SideLink to="/dashboard"           label="Dashboard"      icon={Icons.dashboard} end />
-          {can('inbox')           && <SideLink to="/dashboard/inbox"     label="Setter Inbox"   icon={Icons.inbox}     badge={unreadCount} />}
-          {can('bot_tester')      && <SideLink to="/dashboard/tester"    label="Bot Tester"     icon={Icons.tester} />}
+          <div style={sectionHeader}>Live</div>
+          {can('inbox')           && <SideLink to="/dashboard/inbox"     label="Active Conversations"   icon={Icons.inbox}     badge={unreadCount} />}
+          {can('bot_tester')      && <SideLink to="/dashboard/tester"    label="Conversation Simulator"     icon={Icons.tester} />}
 
-          {(can('train_bot') || can('learnings')) && <div style={sectionHeader}>Bot Training</div>}
-          {can('train_bot')       && <SideLink to="/dashboard/train"     label="Train Bot"      icon={Icons.train} />}
-          {can('learnings')       && <SideLink to="/dashboard/learnings" label="Learnings"      icon={Icons.learnings} />}
+          {(can('train_bot') || can('learnings')) && <div style={sectionHeader}>Improve AI</div>}
+          {can('train_bot')       && <SideLink to="/dashboard/train"     label="AI Behavior"      icon={Icons.train} />}
+          {can('learnings')       && <SideLink to="/dashboard/learnings" label="AI Learning Log"      icon={Icons.learnings} />}
 
-          {(can('prompt_editor') || can('documents')) && <div style={sectionHeader}>Bot Config</div>}
-          {can('prompt_editor')   && <SideLink to="/dashboard/prompt"    label="Prompt Editor"  icon={Icons.prompt} />}
-          {can('documents')       && <SideLink to="/dashboard/documents" label="Documents"      icon={Icons.documents} />}
+          {(can('prompt_editor') || can('documents')) && <div style={sectionHeader}>Knowledge</div>}
+          {can('prompt_editor')   && <SideLink to="/dashboard/prompt"    label="AI Behavior"  icon={Icons.prompt} />}
+          {can('documents')       && <SideLink to="/dashboard/documents" label="Knowledge Base"      icon={Icons.documents} />}
 
           {can('analytics') && (
             <>
@@ -164,8 +165,8 @@ export default function Layout() {
 
           {can('user_management') && (
             <>
-              <div style={sectionHeader}>Management</div>
-              <SideLink to="/dashboard/users" label="User Management" icon={Icons.users} />
+              <div style={sectionHeader}>Team</div>
+              <SideLink to="/dashboard/users" label="Team" icon={Icons.users} />
             </>
           )}
 

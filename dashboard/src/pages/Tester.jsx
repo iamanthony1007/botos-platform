@@ -366,8 +366,8 @@ export default function Tester() {
 
       <div className="page-header">
         <div>
-          <div className="page-title">Bot Tester</div>
-          <div className="page-sub">Chat with the bot. Edit responses to save as training data.</div>
+          <div className="page-title">Conversation Simulator</div>
+          <div className="page-sub">Test conversations and refine AI responses before they go live. Edits made here help improve future responses.</div>
         </div>
         <button className="btn btn-ghost btn-sm" onClick={clearChat}>🗑 Clear chat</button>
       </div>

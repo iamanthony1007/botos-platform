@@ -95,8 +95,8 @@ export default function TrainBot() {
 
       <div className="page-header">
         <div>
-          <div className="page-title">Train Bot</div>
-          <div className="page-sub">Tell the bot how to behave in plain English. It updates itself.</div>
+          <div className="page-title">AI Behavior</div>
+          <div className="page-sub">Define how the AI should respond and behave across all conversations.</div>
         </div>
         <span className="badge badge-green" style={{ fontSize: '.7rem' }}>🤖 {bot?.name || 'Bot'}</span>
       </div>

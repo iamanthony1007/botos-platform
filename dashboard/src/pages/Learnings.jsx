@@ -29,8 +29,8 @@ export default function Learnings() {
     <div className="page">
       <div className="page-header">
         <div>
-          <div className="page-title">Learning Log</div>
-          <div className="page-sub">{learnings.length} corrections — applied to every conversation</div>
+          <div className="page-title">AI Learning Log</div>
+          <div className="page-sub">Track updates and review how the AI's behavior has evolved over time.</div>
         </div>
         <select className="form-input" style={{ width: 'auto', padding: '7px 12px', fontSize: '.8rem' }} value={filter} onChange={e => setFilter(e.target.value)}>
           {stages.map(s => <option key={s} value={s}>{s === 'all' ? 'All stages' : s}</option>)}

@@ -11,7 +11,6 @@ export default function Settings() {
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState(true)
 
-  // Campaign config
   const [leadType, setLeadType] = useState('Cold')
   const [buyerType, setBuyerType] = useState('Emotional')
   const [commStyle, setCommStyle] = useState('Hybrid')
@@ -76,85 +75,104 @@ export default function Settings() {
         </button>
       </div>
 
-      {/* AUTO-SEND TOGGLE */}
-      <div className="card" style={{ border: autoSend ? '2px solid var(--accm)' : '2px solid var(--bdr2)' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' }}>
+      {/* ══ AI MODE — PROMINENT TOP SECTION ══ */}
+      <div style={{
+        background: autoSend
+          ? 'linear-gradient(135deg, #faf6e8 0%, #fff9ed 100%)'
+          : 'linear-gradient(135deg, #f8f8f5 0%, #f2f1ec 100%)',
+        border: autoSend ? '2px solid var(--accm)' : '2px solid var(--bdr2)',
+        borderRadius: 'var(--rlg)', padding: '24px 28px', transition: 'all .3s'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '24px' }}>
           <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-              <div style={{ fontSize: '1rem', fontWeight: 600 }}>Auto-Send Mode</div>
-              <span className={`badge ${autoSend ? 'badge-green' : 'badge-amber'}`}>
-                {autoSend ? 'ON' : 'OFF — Training Mode'}
-              </span>
+            <div style={{ fontSize: '.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: autoSend ? 'var(--acc)' : 'var(--tx3)', marginBottom: '8px' }}>
+              AI Mode
             </div>
-            <div style={{ fontSize: '.84rem', color: 'var(--tx2)', lineHeight: 1.65, marginBottom: '14px' }}>
+            <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--tx)', marginBottom: '6px' }}>
+              {autoSend ? 'Auto Mode' : 'Training Mode'}
+            </div>
+            <div style={{ fontSize: '.86rem', color: 'var(--tx2)', lineHeight: 1.65, maxWidth: '520px' }}>
               {autoSend
-                ? <><strong style={{ color: 'var(--acc)' }}>Auto-send is ON.</strong> The bot sends replies directly to leads when confidence and intent thresholds are met.</>
-                : <><strong style={{ color: 'var(--amb)' }}>Training mode is ON.</strong> Every bot reply goes to the setter inbox before being sent — regardless of confidence.</>
-              }
+                ? 'The AI sends messages automatically when it is confident in its response. Monitor the inbox regularly to ensure quality.'
+                : 'All AI responses are reviewed by you before being sent to leads. Use this mode while training the AI or when you want full control.'}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              <div style={{
-                padding: '12px 14px', borderRadius: 'var(--rsm)',
-                background: !autoSend ? 'var(--accp)' : 'var(--surf2)',
-                border: !autoSend ? '1.5px solid var(--accl)' : '1px solid var(--bdr)'
-              }}>
-                <div style={{ fontSize: '.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: !autoSend ? 'var(--acc)' : 'var(--tx3)', marginBottom: '5px' }}>
-                  {!autoSend ? 'Active now' : 'Training Mode'}
+
+            {/* Mode cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '20px' }}>
+              {/* Training Mode card */}
+              <div
+                onClick={() => setAutoSend(false)}
+                style={{
+                  padding: '16px', borderRadius: 'var(--r)', cursor: 'pointer', transition: 'all .2s',
+                  background: !autoSend ? 'var(--surf)' : 'transparent',
+                  border: !autoSend ? '2px solid var(--bdr2)' : '2px solid transparent',
+                  opacity: autoSend ? 0.6 : 1
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: !autoSend ? '#2d6a4f' : 'var(--bdr2)', flexShrink: 0 }} />
+                  <div style={{ fontSize: '.82rem', fontWeight: 600, color: 'var(--tx)' }}>Training Mode</div>
                 </div>
-                <div style={{ fontSize: '.8rem', color: 'var(--tx2)', lineHeight: 1.5 }}>
-                  All replies go to setter inbox<br />
-                  Setter reviews every message<br />
-                  Bot learns from every correction
+                <div style={{ fontSize: '.76rem', color: 'var(--tx3)', lineHeight: 1.55 }}>
+                  All responses are reviewed before being sent. Best for teaching the AI your style.
                 </div>
               </div>
-              <div style={{
-                padding: '12px 14px', borderRadius: 'var(--rsm)',
-                background: autoSend ? 'var(--accp)' : 'var(--surf2)',
-                border: autoSend ? '1.5px solid var(--accl)' : '1px solid var(--bdr)'
-              }}>
-                <div style={{ fontSize: '.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: autoSend ? 'var(--acc)' : 'var(--tx3)', marginBottom: '5px' }}>
-                  {autoSend ? 'Active now' : 'Auto-Send Mode'}
+
+              {/* Auto Mode card */}
+              <div
+                onClick={() => setAutoSend(true)}
+                style={{
+                  padding: '16px', borderRadius: 'var(--r)', cursor: 'pointer', transition: 'all .2s',
+                  background: autoSend ? 'var(--accp)' : 'transparent',
+                  border: autoSend ? '2px solid var(--accl)' : '2px solid transparent',
+                  opacity: !autoSend ? 0.6 : 1
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: autoSend ? 'var(--acc)' : 'var(--bdr2)', flexShrink: 0 }} />
+                  <div style={{ fontSize: '.82rem', fontWeight: 600, color: 'var(--tx)' }}>Auto Mode</div>
                 </div>
-                <div style={{ fontSize: '.8rem', color: 'var(--tx2)', lineHeight: 1.5 }}>
-                  HIGH intent + 90% confidence → auto<br />
-                  MEDIUM intent + 85% early stage → auto<br />
-                  LOW intent always goes to inbox
+                <div style={{ fontSize: '.76rem', color: 'var(--tx3)', lineHeight: 1.55 }}>
+                  AI sends messages automatically when confident. Best when the AI is well trained.
                 </div>
               </div>
             </div>
+
+            {autoSend && (
+              <div style={{
+                marginTop: '14px', padding: '10px 14px', borderRadius: 'var(--rsm)',
+                background: 'var(--ambbg)', border: '1px solid var(--ambbd)',
+                fontSize: '.79rem', color: 'var(--amb)', lineHeight: 1.55
+              }}>
+                ⚠ Make sure the AI has been well trained before enabling Auto Mode. Monitor the inbox for a few days after switching.
+              </div>
+            )}
           </div>
 
           {/* Toggle */}
-          <div style={{ flexShrink: 0, paddingTop: '4px' }}>
+          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', paddingTop: '28px' }}>
             <button
               onClick={() => setAutoSend(!autoSend)}
               style={{
-                position: 'relative', width: '52px', height: '28px',
+                position: 'relative', width: '56px', height: '30px',
                 borderRadius: '100px', border: 'none', cursor: 'pointer',
                 background: autoSend ? 'var(--acc)' : 'var(--bdr2)',
                 transition: 'background .2s', padding: 0
               }}
             >
               <div style={{
-                position: 'absolute', top: '3px',
-                left: autoSend ? '27px' : '3px',
+                position: 'absolute', top: '4px',
+                left: autoSend ? '29px' : '4px',
                 width: '22px', height: '22px', borderRadius: '50%',
                 background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.2)',
                 transition: 'left .2s'
               }} />
             </button>
+            <div style={{ fontSize: '.7rem', color: 'var(--tx3)', fontWeight: 500 }}>
+              {autoSend ? 'ON' : 'OFF'}
+            </div>
           </div>
         </div>
-
-        {autoSend && (
-          <div style={{
-            marginTop: '14px', padding: '10px 14px', borderRadius: 'var(--rsm)',
-            background: 'var(--ambbg)', border: '1px solid var(--ambbd)',
-            fontSize: '.79rem', color: 'var(--amb)', lineHeight: 1.55
-          }}>
-            Make sure the bot has been well trained before enabling this. Monitor the inbox for a few days after enabling.
-          </div>
-        )}
       </div>
 
       {/* CAMPAIGN CONFIG */}
@@ -163,157 +181,83 @@ export default function Settings() {
         <div style={{ fontSize: '.82rem', color: 'var(--tx3)', marginBottom: '18px', lineHeight: 1.6 }}>
           Define how this bot should approach leads. These settings are injected into the bot's system prompt to tailor its tone and strategy per campaign.
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-
-          {/* Row 1 — Lead type + Buyer type */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-            <div className="form-group">
-              <label className="form-label">Lead Type</label>
-              <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginBottom: '6px' }}>How warm are the leads coming in?</div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {['Cold', 'Warm', 'Hot'].map(opt => (
-                  <button key={opt} onClick={() => setLeadType(opt)} style={{
-                    flex: 1, padding: '8px 6px', borderRadius: '8px', border: 'none',
-                    cursor: 'pointer', fontSize: '.8rem', fontWeight: 600,
-                    background: leadType === opt ? 'var(--acc)' : 'var(--surf2)',
-                    color: leadType === opt ? '#fff' : 'var(--tx2)',
-                    transition: 'all .15s'
-                  }}>{opt}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Buyer Type</label>
-              <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginBottom: '6px' }}>How do leads make decisions?</div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {['Emotional', 'Logical', 'Transactional'].map(opt => (
-                  <button key={opt} onClick={() => setBuyerType(opt)} style={{
-                    flex: 1, padding: '8px 6px', borderRadius: '8px', border: 'none',
-                    cursor: 'pointer', fontSize: '.78rem', fontWeight: 600,
-                    background: buyerType === opt ? 'var(--acc)' : 'var(--surf2)',
-                    color: buyerType === opt ? '#fff' : 'var(--tx2)',
-                    transition: 'all .15s'
-                  }}>{opt}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Row 2 — Communication style + Campaign goal */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-            <div className="form-group">
-              <label className="form-label">Communication Style</label>
-              <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginBottom: '6px' }}>How should the bot communicate?</div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {['Soft', 'Direct', 'Hybrid'].map(opt => (
-                  <button key={opt} onClick={() => setCommStyle(opt)} style={{
-                    flex: 1, padding: '8px 6px', borderRadius: '8px', border: 'none',
-                    cursor: 'pointer', fontSize: '.8rem', fontWeight: 600,
-                    background: commStyle === opt ? 'var(--acc)' : 'var(--surf2)',
-                    color: commStyle === opt ? '#fff' : 'var(--tx2)',
-                    transition: 'all .15s'
-                  }}>{opt}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Primary Campaign Goal</label>
-              <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginBottom: '6px' }}>What is this campaign trying to achieve?</div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                {['Book Call', 'Qualify Lead', 'Nurture', 'General'].map(opt => (
-                  <button key={opt} onClick={() => setCampaignGoal(opt)} style={{
-                    flex: 1, padding: '8px 6px', borderRadius: '8px', border: 'none',
-                    cursor: 'pointer', fontSize: '.78rem', fontWeight: 600,
-                    background: campaignGoal === opt ? 'var(--acc)' : 'var(--surf2)',
-                    color: campaignGoal === opt ? '#fff' : 'var(--tx2)',
-                    transition: 'all .15s'
-                  }}>{opt}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Target avatar */}
           <div className="form-group">
-            <label className="form-label">Target Avatar</label>
-            <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginBottom: '6px' }}>Describe the ideal lead for this campaign</div>
-            <textarea
-              className="form-input"
-              rows={3}
-              placeholder="e.g. 40-55 year old male golfer, busy professional, family man. Frustrated by losing distance and nagging aches. Has tried generic programs but nothing golf-specific."
-              value={targetAvatar}
-              onChange={e => setTargetAvatar(e.target.value)}
-              style={{ resize: 'none', lineHeight: 1.6 }}
-            />
+            <label className="form-label">Lead Type</label>
+            <select className="form-input" value={leadType} onChange={e => setLeadType(e.target.value)}>
+              <option value="Cold">Cold</option>
+              <option value="Warm">Warm</option>
+              <option value="Hot">Hot</option>
+            </select>
+            <div className="form-hint">How familiar are leads with your offer when they first message?</div>
           </div>
 
-          {/* Live preview */}
-          {(leadType || buyerType || commStyle) && (
-            <div style={{
-              padding: '12px 14px', borderRadius: 'var(--rsm)',
-              background: 'var(--accp)', border: '1px solid var(--accl)'
-            }}>
-              <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--acc)', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: '6px' }}>
-                Bot Approach Preview
-              </div>
-              <div style={{ fontSize: '.81rem', color: 'var(--tx2)', lineHeight: 1.65 }}>
-                {leadType === 'Cold' && buyerType === 'Emotional' && commStyle === 'Soft' &&
-                  'Slow-build rapport first. Validate emotions, go deep on pain before any pivot to solution.'}
-                {leadType === 'Cold' && buyerType === 'Logical' && commStyle === 'Direct' &&
-                  'Short, value-driven messages. Lead with outcomes and structure. Skip the small talk.'}
-                {leadType === 'Warm' && buyerType === 'Emotional' && commStyle === 'Hybrid' &&
-                  'Balanced approach. Acknowledge, bridge, question. Medium pace. Build on existing interest.'}
-                {leadType === 'Hot' && commStyle === 'Direct' &&
-                  'Move fast. They\'re ready. Confirm pain, confirm priority, get to the call bridge quickly.'}
-                {leadType === 'Hot' && commStyle !== 'Direct' &&
-                  'High intent detected. Confirm urgency and pivot to call booking efficiently.'}
-                {leadType === 'Cold' && buyerType === 'Transactional' &&
-                  'Keep it short and value-focused. They want to know what\'s in it for them quickly.'}
-                {leadType === 'Warm' && buyerType === 'Logical' &&
-                  'Structured questioning. Show you understand their situation with data and outcomes.'}
-                {leadType === 'Warm' && buyerType === 'Transactional' &&
-                  'They\'re interested but need a clear reason to move. Make the value obvious and fast.'}
-                {!['Cold','Warm','Hot'].includes(leadType) || (!['Emotional','Logical','Transactional'].includes(buyerType)) &&
-                  'Select lead type, buyer type and communication style to see the approach preview.'}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+          <div className="form-group">
+            <label className="form-label">Buyer Type</label>
+            <select className="form-input" value={buyerType} onChange={e => setBuyerType(e.target.value)}>
+              <option value="Emotional">Emotional</option>
+              <option value="Logical">Logical</option>
+              <option value="Transactional">Transactional</option>
+            </select>
+            <div className="form-hint">How do your leads typically make decisions?</div>
+          </div>
 
-      {/* BOT CONFIGURATION */}
-      <div className="card">
-        <div className="card-title">Bot Configuration</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div className="form-group">
-            <label className="form-label">Bot Name</label>
-            <input className="form-input" value={bot?.name || ''} readOnly style={{ background: 'var(--surf2)', color: 'var(--tx3)' }} />
+            <label className="form-label">Communication Style</label>
+            <select className="form-input" value={commStyle} onChange={e => setCommStyle(e.target.value)}>
+              <option value="Soft">Soft</option>
+              <option value="Hybrid">Hybrid</option>
+              <option value="Direct">Direct</option>
+            </select>
+            <div className="form-hint">How should the bot communicate with leads?</div>
           </div>
+
           <div className="form-group">
-            <label className="form-label">AI Model</label>
-            <input className="form-input" value={bot?.model || 'gpt-5.4'} readOnly style={{ background: 'var(--surf2)', color: 'var(--tx3)', fontFamily: 'monospace' }} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Webhook Endpoint</label>
-            <input className="form-input" value={bot?.webhook_url || 'https://sales-bot.nellakuate.workers.dev/webhook'} readOnly style={{ background: 'var(--surf2)', color: 'var(--tx3)', fontFamily: 'monospace', fontSize: '.8rem' }} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Bot Status</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '2px' }}>
-              <span className={`badge ${bot?.status === 'active' ? 'badge-green' : 'badge-gray'}`}>{bot?.status || 'active'}</span>
-            </div>
+            <label className="form-label">Campaign Goal</label>
+            <select className="form-input" value={campaignGoal} onChange={e => setCampaignGoal(e.target.value)}>
+              <option value="General">General</option>
+              <option value="Book a Call">Book a Call</option>
+              <option value="Qualify Leads">Qualify Leads</option>
+              <option value="Nurture">Nurture</option>
+            </select>
+            <div className="form-hint">What is the primary outcome you want from conversations?</div>
           </div>
         </div>
-      </div>
 
-      <div style={{ background: 'var(--accp)', border: '1px solid var(--accl)', borderRadius: 'var(--r)', padding: '14px 16px' }}>
-        <div style={{ fontSize: '.78rem', fontWeight: 600, color: 'var(--acc)', marginBottom: '5px' }}>When to enable Auto-Send</div>
-        <div style={{ fontSize: '.78rem', color: 'var(--tx2)', lineHeight: 1.65 }}>
-          A good rule of thumb: once the setter has reviewed 50–100 messages without major edits, the bot is ready. Check the Learnings page — if corrections are getting smaller and less frequent, confidence is building. Monitor for a few days after enabling.
+        <div className="form-group" style={{ marginTop: '8px' }}>
+          <label className="form-label">Target Avatar</label>
+          <textarea
+            className="form-input"
+            rows={3}
+            placeholder="e.g. 40-55 year old male golfer, busy professional, family man. Frustrated by losing distance and nagging aches. Has tried generic programs but nothing golf-specific."
+            value={targetAvatar}
+            onChange={e => setTargetAvatar(e.target.value)}
+            style={{ resize: 'none', lineHeight: 1.6 }}
+          />
+          <div className="form-hint">Describe your ideal lead so the bot can tailor its approach.</div>
         </div>
+
+        {(leadType || buyerType || commStyle) && (
+          <div style={{
+            padding: '12px 14px', borderRadius: 'var(--rsm)',
+            background: 'var(--accp)', border: '1px solid var(--accl)'
+          }}>
+            <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--acc)', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: '6px' }}>
+              Bot Approach Preview
+            </div>
+            <div style={{ fontSize: '.81rem', color: 'var(--tx2)', lineHeight: 1.65 }}>
+              {leadType === 'Cold' && buyerType === 'Emotional' && commStyle === 'Soft' && 'Slow-build rapport first. Validate emotions, go deep on pain before any pivot to solution.'}
+              {leadType === 'Cold' && buyerType === 'Logical' && commStyle === 'Direct' && 'Short, value-driven messages. Lead with outcomes and structure. Skip the small talk.'}
+              {leadType === 'Warm' && buyerType === 'Emotional' && commStyle === 'Hybrid' && 'Balanced approach. Acknowledge, bridge, question. Medium pace. Build on existing interest.'}
+              {leadType === 'Hot' && commStyle === 'Direct' && "Move fast. They're ready. Confirm pain, confirm priority, get to the call bridge quickly."}
+              {leadType === 'Hot' && commStyle !== 'Direct' && 'High intent detected. Confirm urgency and pivot to call booking efficiently.'}
+              {leadType === 'Cold' && buyerType === 'Transactional' && "Keep it short and value-focused. They want to know what's in it for them quickly."}
+              {leadType === 'Warm' && buyerType === 'Logical' && 'Structured questioning. Show you understand their situation with data and outcomes.'}
+              {leadType === 'Warm' && buyerType === 'Transactional' && "They're interested but need a clear reason to move. Make the value obvious and fast."}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
