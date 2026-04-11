@@ -1,25 +1,35 @@
 ﻿import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 
 const TIME_RANGES = ['Today', 'Last 7 Days', 'Last 30 Days']
 
-const STAGE_ORDER = [
+// Strict sequential stage order - each stage can only have <= leads than the previous
+const STAGE_SEQUENCE = [
   'ENTRY / OPEN LOOP', 'ENTRY', 'OPEN LOOP',
-  'LOCATION ANCHOR', 'GOAL LOCK', 'GOAL DEPTH (MAKE IT SPECIFIC)',
-  "WHAT THEY'VE TRIED (PAST + CURRENT)", 'TRANSLATION / PROGRESS CHECK',
-  'BODY LINK ACCEPTANCE + MOBILITY HISTORY', 'PROGRESS CHECK',
-  'PRIORITY GATE', 'COACHING HAT', 'CALL BOOK BRIDGE', 'CALL OFFERED',
-  'CALL BOOKING', 'LONG TERM NURTURE'
+  'LOCATION ANCHOR',
+  'GOAL LOCK',
+  'GOAL DEPTH (MAKE IT SPECIFIC)',
+  "WHAT THEY'VE TRIED (PAST + CURRENT)",
+  'TRANSLATION / PROGRESS CHECK',
+  'BODY LINK ACCEPTANCE + MOBILITY HISTORY',
+  'PROGRESS CHECK',
+  'PRIORITY GATE',
+  'COACHING HAT',
+  'CALL BOOK BRIDGE',
+  'CALL OFFERED',
+  'CALL BOOKING',
+  'LONG TERM NURTURE'
 ]
 
 export default function Analytics() {
   const { profile } = useAuth()
+  const adminRole = profile?.role === 'admin' || profile?.role === 'superadmin'
   const [timeRange, setTimeRange] = useState('Last 7 Days')
   const [stats, setStats] = useState({ active: 0, qualified: 0, qualifiedPct: 0, aiAssisted: 0, booked: 0, conversionRate: 0 })
+  const [funnelData, setFunnelData] = useState([])
   const [stageData, setStageData] = useState([])
-  const [systemPerf, setSystemPerf] = useState({ bookingRate: 0, reviewsSent: 0, autoSendRate: 0 })
+  const [systemPerf, setSystemPerf] = useState({ bookingRate: 0, reviewsSent: 0 })
   const [loading, setLoading] = useState(true)
   const [botName, setBotName] = useState('Bombers Blueprint')
 
@@ -36,9 +46,9 @@ export default function Analytics() {
     if (!profile) return
     setLoading(true)
     try {
-      const adminRole = profile.role === 'admin' || profile.role === 'superadmin'
+      const isAdmin = profile.role === 'admin' || profile.role === 'superadmin'
       let botQuery = supabase.from('bots').select('id, name')
-      if (adminRole && profile.organization_id) botQuery = botQuery.eq('organization_id', profile.organization_id)
+      if (isAdmin && profile.organization_id) botQuery = botQuery.eq('organization_id', profile.organization_id)
       else if (profile.assigned_bot_id) botQuery = botQuery.eq('id', profile.assigned_bot_id)
       else { setLoading(false); return }
 
@@ -71,31 +81,48 @@ export default function Analytics() {
       const qualifiedPct = active > 0 ? Math.round((qualified / active) * 100) : 0
       const conversionRate = qualified > 0 ? Math.round((booked / qualified) * 100) : 0
       const reviewsSent = allReviews.length
-      const autoSent = allReviews.filter(r => r.status === 'approved').length
-      const autoSendRate = reviewsSent > 0 ? Math.round((autoSent / reviewsSent) * 100) : 0
       const bookingRate = active > 0 ? parseFloat(((booked / active) * 100).toFixed(1)) : 0
 
       setStats({ active, qualified, qualifiedPct, aiAssisted, booked, conversionRate })
-      setSystemPerf({ bookingRate, reviewsSent, autoSendRate })
+      setSystemPerf({ bookingRate, reviewsSent })
 
-      // Stage drop-off analysis
+      // Funnel: strict 3-step
+      setFunnelData([
+        { label: 'Conversations Started', value: active },
+        { label: 'Qualified Leads', value: qualified },
+        { label: 'Calls Booked', value: booked },
+      ])
+
+      // Stage drop-off: strict sequential logic
+      // Count leads at each stage
       const stageCounts = {}
       allConvos.forEach(c => {
-        const s = c.conversation_stage || 'ENTRY'
-        stageCounts[s] = (stageCounts[s] || 0) + 1
+        const s = c.conversation_stage
+        if (s) stageCounts[s] = (stageCounts[s] || 0) + 1
       })
 
-      // Build ordered stage data with drop-off
-      const stagesWithData = STAGE_ORDER
-        .filter(s => stageCounts[s] > 0)
-        .map(s => ({ stage: s, count: stageCounts[s] }))
+      // Build sequential stage list, enforce monotonic decrease
+      const rawStages = STAGE_SEQUENCE
+        .map(s => ({ stage: s, rawCount: stageCounts[s] || 0 }))
+        .filter(s => s.rawCount > 0)
 
-      const stageDataWithDropoff = stagesWithData.map((s, i) => {
-        if (i === 0) return { ...s, dropoffPct: null, fromPrev: null }
-        const prev = stagesWithData[i - 1].count
-        const current = s.count
-        const dropoff = prev > 0 ? Math.round(((prev - current) / prev) * 100) : 0
-        return { ...s, dropoffPct: dropoff, fromPrev: prev }
+      // Enforce: each stage count cannot exceed the previous
+      // Use cumulative max from top downward to fix the broken data
+      const strictStages = []
+      let prevCount = active // start with total conversations as ceiling
+      for (const s of rawStages) {
+        const cappedCount = Math.min(s.rawCount, prevCount)
+        strictStages.push({ stage: s.stage, count: cappedCount })
+        prevCount = cappedCount
+      }
+
+      // Calculate drop-off between adjacent stages
+      const stageDataWithDropoff = strictStages.map((s, i) => {
+        if (i === 0) return { ...s, dropoffPct: null, entered: s.count, dropped: 0 }
+        const prev = strictStages[i - 1].count
+        const dropped = Math.max(0, prev - s.count)
+        const dropoff = prev > 0 ? Math.round((dropped / prev) * 100) : 0
+        return { ...s, dropoffPct: dropoff, entered: prev, dropped }
       })
 
       setStageData(stageDataWithDropoff)
@@ -116,11 +143,8 @@ export default function Analytics() {
     </div>
   )
 
-  const funnelSteps = [
-    { label: 'Conversations Started', value: stats.active, prev: null },
-    { label: 'Qualified Leads', value: stats.qualified, prev: stats.active },
-    { label: 'Calls Booked', value: stats.booked, prev: stats.qualified },
-  ]
+  const funnelColors = ['var(--acc)', 'var(--amb)', '#16a34a']
+  const maxVal = funnelData[0]?.value || 1
 
   return (
     <div className="page">
@@ -143,7 +167,7 @@ export default function Analytics() {
       {/* TOP METRICS */}
       <div className="stats-grid">
         <StatCard value={stats.active} label="Active Conversations" sub={timeRange} />
-        <StatCard value={stats.qualified} label="Qualified Leads" sub="Warm or above" color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct} />
+        <StatCard value={stats.qualified} label="Number of Qualified Leads" sub={timeRange} color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct} />
         <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply" color="var(--blu)" border="var(--blu)" />
         <StatCard value={stats.booked} label="Calls Booked" sub={timeRange} color="#16a34a" border="#16a34a" />
         <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked ÷ Qualified" color="var(--acc)" border="var(--acc)" />
@@ -155,40 +179,31 @@ export default function Analytics() {
         <div className="card">
           <div className="card-title">Conversation Funnel</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-            {funnelSteps.map((step, i) => {
-              const pct = step.prev > 0 ? Math.round((step.value / step.prev) * 100) : null
-              const maxVal = funnelSteps[0].value || 1
+            {funnelData.map((step, i) => {
+              const pct = i > 0 && funnelData[i-1].value > 0
+                ? Math.round((step.value / funnelData[i-1].value) * 100) : null
               const barWidth = Math.round((step.value / maxVal) * 100)
-              const colors = ['var(--acc)', 'var(--amb)', '#16a34a']
               return (
-                <div key={step.label}>
-                  <div style={{ padding: '14px 0' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '.82rem', color: 'var(--tx2)', fontWeight: 500 }}>{step.label}</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        {pct !== null && (
-                          <span style={{ fontSize: '.72rem', color: pct >= 50 ? '#16a34a' : pct >= 25 ? '#d97706' : '#e53e3e', fontWeight: 600, background: pct >= 50 ? '#f0fdf4' : pct >= 25 ? '#fffbeb' : '#fff5f5', padding: '1px 8px', borderRadius: '999px' }}>
-                            {pct}% conversion
-                          </span>
-                        )}
-                        <span style={{ fontSize: '.9rem', fontWeight: 700, color: colors[i], minWidth: '30px', textAlign: 'right' }}>{step.value}</span>
-                      </div>
-                    </div>
-                    <div style={{ height: '6px', background: 'var(--surf3)', borderRadius: '100px', overflow: 'hidden', border: '1px solid var(--bdr)' }}>
-                      <div style={{ height: '100%', width: `${barWidth}%`, background: colors[i], borderRadius: '100px', transition: 'width .8s' }} />
-                    </div>
-                  </div>
-                  {i < funnelSteps.length - 1 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 0 4px 0' }}>
-                      <div style={{ flex: 1, height: '1px', background: 'var(--bdr)', marginLeft: '8px' }} />
-                      {funnelSteps[i+1].prev > 0 && (
-                        <span style={{ fontSize: '.69rem', color: 'var(--tx3)', whiteSpace: 'nowrap' }}>
-                          {100 - Math.round((funnelSteps[i+1].value / funnelSteps[i+1].prev) * 100)}% drop-off
+                <div key={step.label} style={{ padding: '14px 0', borderBottom: i < funnelData.length - 1 ? '1px solid var(--bdr)' : 'none' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '.82rem', color: 'var(--tx2)', fontWeight: 500 }}>{step.label}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {pct !== null && (
+                        <span style={{
+                          fontSize: '.72rem', fontWeight: 600,
+                          color: pct >= 50 ? '#16a34a' : pct >= 25 ? '#d97706' : '#e53e3e',
+                          background: pct >= 50 ? '#f0fdf4' : pct >= 25 ? '#fffbeb' : '#fff5f5',
+                          padding: '1px 8px', borderRadius: '999px'
+                        }}>
+                          {pct}% conversion
                         </span>
                       )}
-                      <div style={{ flex: 1, height: '1px', background: 'var(--bdr)', marginRight: '8px' }} />
+                      <span style={{ fontSize: '.9rem', fontWeight: 700, color: funnelColors[i], minWidth: '30px', textAlign: 'right' }}>{step.value}</span>
                     </div>
-                  )}
+                  </div>
+                  <div style={{ height: '6px', background: 'var(--surf3)', borderRadius: '100px', overflow: 'hidden', border: '1px solid var(--bdr)' }}>
+                    <div style={{ height: '100%', width: `${barWidth}%`, background: funnelColors[i], borderRadius: '100px', transition: 'width .8s' }} />
+                  </div>
                 </div>
               )
             })}
@@ -211,19 +226,12 @@ export default function Analytics() {
                 </div>
                 <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--acc)' }}>{systemPerf.bookingRate}%</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px', background: 'var(--surf2)', borderRadius: 'var(--rsm)', border: '1px solid var(--bdr)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px', background: '#fff5f5', borderRadius: 'var(--rsm)', border: '1px solid #fed7d7' }}>
                 <div>
-                  <div style={{ fontSize: '.82rem', color: 'var(--tx2)', fontWeight: 500 }}>Reviews Sent to Setter</div>
-                  <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>Messages flagged for human review</div>
+                  <div style={{ fontSize: '.82rem', color: 'var(--tx2)', fontWeight: 500 }}>Escalate to Human</div>
+                  <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>Conversations flagged for human review</div>
                 </div>
-                <span style={{ fontSize: '1.2rem', fontWeight: 700 }}>{systemPerf.reviewsSent}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px', background: 'var(--blubg)', borderRadius: 'var(--rsm)', border: '1px solid var(--blubd)' }}>
-                <div>
-                  <div style={{ fontSize: '.82rem', color: 'var(--tx2)', fontWeight: 500 }}>AI Auto-Send Rate</div>
-                  <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>Approved ÷ Total reviews</div>
-                </div>
-                <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--blu)' }}>{systemPerf.autoSendRate}%</span>
+                <span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#e53e3e' }}>{systemPerf.reviewsSent}</span>
               </div>
             </div>
           )}
@@ -239,12 +247,17 @@ export default function Analytics() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {stageData.map((s, i) => (
-              <div key={s.stage} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: i === 0 ? 'var(--surf2)' : s.dropoffPct >= 50 ? '#fff5f5' : s.dropoffPct >= 30 ? '#fffbeb' : 'var(--surf2)', borderRadius: 'var(--rsm)', border: `1px solid ${s.dropoffPct >= 50 ? '#fed7d7' : s.dropoffPct >= 30 ? '#fde68a' : 'var(--bdr)'}` }}>
+              <div key={s.stage} style={{
+                display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px',
+                background: i === 0 ? 'var(--surf2)' : s.dropoffPct >= 50 ? '#fff5f5' : s.dropoffPct >= 30 ? '#fffbeb' : 'var(--surf2)',
+                borderRadius: 'var(--rsm)',
+                border: `1px solid ${s.dropoffPct >= 50 ? '#fed7d7' : s.dropoffPct >= 30 ? '#fde68a' : 'var(--bdr)'}`
+              }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '.82rem', fontWeight: 500, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.stage}</div>
                   {s.dropoffPct !== null && (
                     <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>
-                      {s.count} of {s.fromPrev} leads reached this stage
+                      {s.count} of {s.entered} leads reached this stage
                     </div>
                   )}
                 </div>
@@ -255,7 +268,7 @@ export default function Analytics() {
                         {s.dropoffPct}% drop-off
                       </div>
                       <div style={{ fontSize: '.7rem', color: 'var(--tx3)' }}>
-                        ({s.fromPrev - s.count} / {s.fromPrev})
+                        ({s.dropped} / {s.entered})
                       </div>
                     </div>
                   ) : (

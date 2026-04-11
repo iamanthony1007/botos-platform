@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
@@ -38,6 +39,7 @@ export default function Inbox() {
   const channelRef = useRef(null)
   const msgEndRef = useRef(null)
   const searchRef = useRef(null)
+  const location = useLocation()
 
   useEffect(() => {
     if (!profile) return
@@ -48,6 +50,13 @@ export default function Inbox() {
   useEffect(() => {
     msgEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [conversation, reviews, activeReview])
+
+  // Auto-open a specific lead when navigated from Dashboard
+  useEffect(() => {
+    if (!location.state?.openLead || !leads.length || !botId) return
+    const target = leads.find(l => String(l.customer_id) === String(location.state.openLead))
+    if (target) selectLead(target)
+  }, [location.state, leads, botId])
 
   async function loadData() {
     setLoading(true)
