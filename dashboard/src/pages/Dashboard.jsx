@@ -3,22 +3,41 @@ import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 
+const STAGE_PRIORITY = {
+  'CALL BOOKING': 14, 'CALL OFFERED': 13, 'CALL BOOK BRIDGE': 12,
+  'COACHING HAT': 11, 'PRIORITY GATE': 10, 'PROGRESS CHECK': 9,
+  'BODY LINK ACCEPTANCE + MOBILITY HISTORY': 8, 'TRANSLATION / PROGRESS CHECK': 7,
+  "WHAT THEY'VE TRIED (PAST + CURRENT)": 6, 'GOAL DEPTH (MAKE IT SPECIFIC)': 5,
+  'GOAL LOCK': 4, 'LOCATION ANCHOR': 3, 'OPEN LOOP': 2, 'ENTRY / OPEN LOOP': 2,
+  'ENTRY': 1, 'LONG TERM NURTURE': 0
+}
+const READINESS_SCORE = { HOT: 3, WARM: 2, COLD: 1 }
+const TIME_RANGES = ['Today', 'Last 7 Days', 'Last 30 Days']
+
 export default function Dashboard() {
   const { profile, isAdmin } = useAuth()
-  const [stats, setStats] = useState({ conversations: 0, autoSend: 0, callsBooked: 0, learnings: 0 })
-  const [conversations, setConversations] = useState([])
+  const [timeRange, setTimeRange] = useState('Last 7 Days')
+  const [stats, setStats] = useState({ active: 0, qualified: 0, aiAssisted: 0, booked: 0, conversionRate: 0, qualifiedPct: 0 })
+  const [closestToBooking, setClosestToBooking] = useState([])
   const [bots, setBots] = useState([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => { loadData() }, [profile])
+  useEffect(() => { loadData() }, [profile, timeRange])
+
+  function getDateFilter() {
+    const now = new Date()
+    if (timeRange === 'Today') { const d = new Date(now); d.setHours(0,0,0,0); return d.toISOString() }
+    if (timeRange === 'Last 7 Days') { const d = new Date(now); d.setDate(d.getDate()-7); return d.toISOString() }
+    const d = new Date(now); d.setDate(d.getDate()-30); return d.toISOString()
+  }
 
   async function loadData() {
     if (!profile) return
     setLoading(true)
     try {
       let botsData = []
-      const isAdmin = profile.role === 'admin' || profile.role === 'superadmin'
-      if (isAdmin && profile.organization_id) {
+      const adminRole = profile.role === 'admin' || profile.role === 'superadmin'
+      if (adminRole && profile.organization_id) {
         const { data } = await supabase.from('bots').select('*').eq('organization_id', profile.organization_id)
         botsData = data || []
       } else if (profile.assigned_bot_id) {
@@ -26,40 +45,50 @@ export default function Dashboard() {
         botsData = data || []
       }
       setBots(botsData)
+      const botIds = botsData.map(b => b.id)
+      if (!botIds.length) { setLoading(false); return }
 
-      const botIds = (botsData || []).map(b => b.id)
-      if (botIds.length === 0) { setLoading(false); return }
+      const since = getDateFilter()
 
+      // All conversations in range
       const { data: convos } = await supabase
         .from('conversations')
-        .select('*')
+        .select('customer_id, channel, lead_readiness, lead_intent, conversation_stage, username, profile_name, updated_at, status')
         .in('bot_id', botIds)
-        .order('updated_at', { ascending: false })
-        .limit(10)
-      setConversations(convos || [])
+        .gte('updated_at', since)
+      const allConvos = convos || []
 
-      const { count: totalConvos } = await supabase
-        .from('conversations')
-        .select('*', { count: 'exact', head: true })
+      // AI-assisted = conversations that have at least one review (bot generated a message)
+      const { data: reviewConvos } = await supabase
+        .from('reviews')
+        .select('customer_id')
         .in('bot_id', botIds)
+        .gte('created_at', since)
+      const aiAssistedIds = new Set((reviewConvos || []).map(r => r.customer_id))
 
-      const { count: totalLearnings } = await supabase
-        .from('learnings')
-        .select('*', { count: 'exact', head: true })
-        .in('bot_id', botIds)
+      const active = allConvos.length
+      const qualified = allConvos.filter(c => c.lead_readiness === 'HOT' || c.lead_readiness === 'WARM').length
+      const booked = allConvos.filter(c => c.status === 'booked').length
+      const aiAssisted = aiAssistedIds.size
+      const qualifiedPct = active > 0 ? Math.round((qualified / active) * 100) : 0
+      const conversionRate = qualified > 0 ? Math.round((booked / qualified) * 100) : 0
 
-      const { count: bookedCount } = await supabase
-        .from('conversations')
-        .select('*', { count: 'exact', head: true })
-        .in('bot_id', botIds)
-        .eq('status', 'booked')
+      setStats({ active, qualified, aiAssisted, booked, conversionRate, qualifiedPct })
 
-      setStats({
-        conversations: totalConvos || 0,
-        autoSend: totalConvos > 0 ? Math.round((bookedCount || 0) / totalConvos * 100) : 0,
-        callsBooked: bookedCount || 0,
-        learnings: totalLearnings || 0,
-      })
+      // Closest to booking: score each lead
+      const scored = allConvos
+        .filter(c => c.status !== 'booked')
+        .map(c => {
+          const stageScore = STAGE_PRIORITY[c.conversation_stage] ?? 0
+          const readinessScore = READINESS_SCORE[c.lead_readiness] ?? 0
+          const hoursAgo = (Date.now() - new Date(c.updated_at).getTime()) / 3600000
+          const recencyScore = hoursAgo < 1 ? 3 : hoursAgo < 24 ? 2 : hoursAgo < 72 ? 1 : 0
+          return { ...c, _score: (stageScore * 3) + (readinessScore * 2) + recencyScore }
+        })
+        .sort((a, b) => b._score - a._score)
+        .slice(0, 7)
+
+      setClosestToBooking(scored)
     } catch (e) { console.error(e) }
     setLoading(false)
   }
@@ -68,12 +97,11 @@ export default function Dashboard() {
     if (!c) return ''
     if (c.username) return `@${c.username}`
     if (c.profile_name) return c.profile_name
-    // Channel-based fallback
     const ch = (c.channel || '').toLowerCase()
     if (ch.includes('instagram') || ch === 'manychat') return 'Instagram Lead'
     if (ch.includes('facebook')) return 'Facebook Lead'
     if (ch.includes('whatsapp')) return 'WhatsApp Lead'
-    if (ch.includes('sms') || ch.includes('text')) return 'SMS Lead'
+    if (ch.includes('sms')) return 'SMS Lead'
     if (ch.includes('email')) return 'Email Lead'
     return 'Unknown Lead'
   }
@@ -102,13 +130,20 @@ export default function Dashboard() {
   function stageColor(stage) {
     if (!stage) return '#829082'
     if (stage.includes('CALL')) return '#1a4d8a'
-    if (stage.includes('READY') || stage.includes('REALITY')) return '#a06800'
+    if (stage.includes('PRIORITY') || stage.includes('COACHING')) return '#a06800'
     return '#2d6a4f'
   }
 
-  if (loading) return (
-    <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}>
-      <div className="spinner" />
+  if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
+
+  const StatCard = ({ value, label, sub, color, border, pct }) => (
+    <div className="stat-card" style={{ borderLeftColor: border || 'var(--acc)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+        <div className="stat-num" style={{ color: color || 'var(--acc)' }}>{value}</div>
+        {pct !== undefined && <div style={{ fontSize: '.82rem', fontWeight: 600, color: color || 'var(--acc)' }}>{pct}%</div>}
+      </div>
+      <div className="stat-label">{label}</div>
+      <div className="stat-change" style={{ color: color || 'var(--acc)' }}>{sub}</div>
     </div>
   )
 
@@ -119,39 +154,39 @@ export default function Dashboard() {
           <div className="page-title">Dashboard</div>
           <div className="page-sub">{profile?.organizations?.name || 'Platform'} · All bots</div>
         </div>
-        <button className="btn btn-primary btn-sm">+ New Bot</button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '10px', overflow: 'hidden' }}>
+            {TIME_RANGES.map(t => (
+              <button key={t} onClick={() => setTimeRange(t)} style={{
+                padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: '.76rem', fontWeight: timeRange === t ? 600 : 400,
+                background: timeRange === t ? 'var(--acc)' : 'transparent',
+                color: timeRange === t ? '#fff' : 'var(--tx2)', transition: 'all .15s', fontFamily: 'var(--fn)'
+              }}>{t}</button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* STATS */}
       <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-num">{stats.conversations}</div>
-          <div className="stat-label">Total Conversations</div>
-          <div className="stat-change">All time</div>
-        </div>
-        <div className="stat-card" style={{ borderLeftColor: 'var(--blu)' }}>
-          <div className="stat-num" style={{ color: 'var(--blu)' }}>{stats.autoSend}%</div>
-          <div className="stat-label">Auto-Send Rate</div>
-          <div className="stat-change" style={{ color: 'var(--blu)' }}>Estimated</div>
-        </div>
-        <div className="stat-card" style={{ borderLeftColor: 'var(--amb)' }}>
-          <div className="stat-num" style={{ color: 'var(--amb)' }}>{stats.callsBooked}</div>
-          <div className="stat-label">Calls Booked</div>
-          <div className="stat-change" style={{ color: 'var(--amb)' }}>All time</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-num">{stats.learnings}</div>
-          <div className="stat-label">Bot Learnings</div>
-          <div className="stat-change">All corrections</div>
-        </div>
+        <StatCard value={stats.active} label="Active Conversations" sub={timeRange} />
+        <StatCard value={stats.qualified} label="Qualified Leads" sub="Warm or above" color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct} />
+        <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply" color="var(--blu)" border="var(--blu)" />
+        <StatCard value={stats.booked} label="Calls Booked" sub={timeRange} color="#16a34a" border="#16a34a" />
+        <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked ÷ Qualified" color="var(--acc)" border="var(--acc)" />
       </div>
 
-      {/* RECENT CONVERSATIONS */}
+      {/* CLOSEST TO BOOKING */}
       <div className="card">
-        <div className="card-title">Recent Conversations</div>
-        {conversations.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+          <div>
+            <div className="card-title" style={{ margin: 0 }}>Closest to Booking</div>
+            <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginTop: '2px' }}>Top leads ranked by readiness, stage, and recent activity</div>
+          </div>
+        </div>
+        {closestToBooking.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '32px', color: 'var(--tx3)', fontSize: '.84rem' }}>
-            No conversations yet. Once leads start messaging, they will appear here.
+            No active leads in this time range.
           </div>
         ) : (
           <div className="table-wrap">
@@ -161,16 +196,22 @@ export default function Dashboard() {
                   <th>Lead</th>
                   <th>Stage</th>
                   <th>Readiness</th>
-                  <th>Status</th>
                   <th>Last Interaction</th>
                 </tr>
               </thead>
               <tbody>
-                {conversations.map(c => {
+                {closestToBooking.map((c, i) => {
                   const ri = readinessInfo(c.lead_readiness, c.conversation_stage)
                   return (
-                    <tr key={c.id}>
-                      <td style={{ fontWeight: 500, fontSize: '.85rem' }}>{getLeadName(c)}</td>
+                    <tr key={c.customer_id}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: i === 0 ? 'var(--acc)' : 'var(--surf3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.65rem', fontWeight: 700, color: i === 0 ? '#fff' : 'var(--tx3)', flexShrink: 0 }}>
+                            {i + 1}
+                          </div>
+                          <span style={{ fontWeight: 500, fontSize: '.85rem' }}>{getLeadName(c)}</span>
+                        </div>
+                      </td>
                       <td>
                         <span style={{ fontSize: '.78rem', color: stageColor(c.conversation_stage) }}>
                           {c.conversation_stage || 'Entry'}
@@ -179,11 +220,6 @@ export default function Dashboard() {
                       <td>
                         <span style={{ fontSize: '.78rem', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', color: ri.color, background: ri.bg, border: ri.border }}>
                           {ri.emoji} {ri.label}
-                        </span>
-                      </td>
-                      <td>
-                        <span className={`badge ${c.status === 'booked' ? 'badge-blue' : c.status === 'active' ? 'badge-green' : 'badge-gray'}`}>
-                          {c.status || 'active'}
                         </span>
                       </td>
                       <td style={{ fontSize: '.78rem', color: 'var(--tx3)' }}>{fmtTime(c.updated_at)}</td>
@@ -197,26 +233,28 @@ export default function Dashboard() {
       </div>
 
       {/* BOTS TABLE - admin only */}
-      {isAdmin && <div className="card">
-        <div className="card-title">Your Bots</div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr><th>Bot Name</th><th>Model</th><th>Status</th><th>Created</th></tr>
-            </thead>
-            <tbody>
-              {bots.map(b => (
-                <tr key={b.id}>
-                  <td>{b.name}</td>
-                  <td style={{ fontSize: '.78rem', color: 'var(--tx3)', fontFamily: 'monospace' }}>{b.model}</td>
-                  <td><span className={`badge ${b.status === 'active' ? 'badge-green' : b.status === 'trial' ? 'badge-blue' : 'badge-gray'}`}>{b.status}</span></td>
-                  <td style={{ fontSize: '.78rem', color: 'var(--tx3)' }}>{new Date(b.created_at).toLocaleDateString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {isAdmin && bots.length > 0 && (
+        <div className="card">
+          <div className="card-title">Your Bots</div>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr><th>Bot Name</th><th>Model</th><th>Status</th><th>Created</th></tr>
+              </thead>
+              <tbody>
+                {bots.map(b => (
+                  <tr key={b.id}>
+                    <td>{b.name}</td>
+                    <td style={{ fontSize: '.78rem', color: 'var(--tx3)', fontFamily: 'monospace' }}>{b.model}</td>
+                    <td><span className={`badge ${b.status === 'active' ? 'badge-green' : b.status === 'trial' ? 'badge-blue' : 'badge-gray'}`}>{b.status}</span></td>
+                    <td style={{ fontSize: '.78rem', color: 'var(--tx3)' }}>{new Date(b.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>}
+      )}
     </div>
   )
 }
