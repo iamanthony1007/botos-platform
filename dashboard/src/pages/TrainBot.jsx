@@ -101,7 +101,7 @@ export default function TrainBot() {
         <span className="badge badge-green" style={{ fontSize: '.7rem' }}>🤖 {bot?.name || 'Bot'}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: '14px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div className="grid-sidebar" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
         <div style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: 'var(--sh)' }}>
           <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)', display: 'flex', alignItems: 'center', gap: '10px' }}>
