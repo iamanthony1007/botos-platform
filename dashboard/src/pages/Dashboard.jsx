@@ -61,7 +61,7 @@ export default function Dashboard() {
       const [
         { data: convos },
         { data: allReviews },
-        { data: pendingReviews }
+        { count: pendingReviewsCount }      
       ] = await Promise.all([
         supabase.from('conversations')
           .select('customer_id, channel, lead_readiness, lead_intent, conversation_stage, username, profile_name, updated_at, status')
@@ -81,7 +81,7 @@ export default function Dashboard() {
       const reviews = allReviews || []
 
       const newConversations = allConvos.length
-      const needsReply = pendingReviews?.count || 0
+      const needsReply = pendingReviewsCount || 0
       const highIntent = allConvos.filter(c => c.lead_intent === 'HIGH').length
       const aiMessagesSent = reviews.filter(r => r.status === 'approved').length + reviews.filter(r => r.status === 'auto_sent').length
       const booked = allConvos.filter(c => c.status === 'booked').length
