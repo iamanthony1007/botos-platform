@@ -48,46 +48,6 @@ export default function Tester() {
     }])
   }
 
-  // Animate messages appearing one by one
-  async function animateMessages(botMsgs, metadata) {
-    // Add placeholder message
-    const msgIndex = messages.length + 1 // +1 for user message we just added
-    
-    for (let i = 0; i < botMsgs.length; i++) {
-      const msg = botMsgs[i]
-      const delay = calcTypingDelay(msg)
-      
-      // Show typing
-      setIsTyping(true)
-      
-      // Wait for typing delay
-      await new Promise(resolve => setTimeout(resolve, delay))
-      
-      // Add this message bubble
-      setMessages(prev => {
-        const lastMsg = prev[prev.length - 1]
-        
-        // If last message is our bot response, add to it
-        if (lastMsg && lastMsg.role === 'assistant' && lastMsg._tempId === metadata._tempId) {
-          const updated = [...prev]
-          updated[updated.length - 1] = {
-            ...lastMsg,
-            botMessages: [...lastMsg.botMessages, msg]
-          }
-          return updated
-        }
-        
-        // Otherwise create new bot message group
-        return [...prev, {
-          ...metadata,
-          botMessages: [msg]
-        }]
-      })
-      
-      setIsTyping(false)
-    }
-  }
-
   async function send() {
     if (!input.trim() || loading || !bot || isTyping) return
     const userMsg = input.trim()
@@ -104,9 +64,8 @@ export default function Tester() {
       })
       const data = await res.json()
       
-      console.log('Bot response:', data) // Debug log
+      console.log('Bot response:', data)
       
-      // Get messages array
       let botMsgs = []
       if (Array.isArray(data.messages) && data.messages.length > 0) {
         botMsgs = data.messages.filter(m => m && m.trim())
@@ -116,7 +75,6 @@ export default function Tester() {
         botMsgs = [data.reply]
       }
       
-      // Fallback if nothing found
       if (botMsgs.length === 0) {
         botMsgs = ['No reply received']
         console.error('No valid messages in response:', data)
@@ -139,10 +97,8 @@ export default function Tester() {
         _tempId: tempId
       }
       
-      // Add empty placeholder first
       setMessages(prev => [...prev, metadata])
       
-      // Animate messages one by one
       for (let i = 0; i < botMsgs.length; i++) {
         const msg = botMsgs[i]
         const delay = calcTypingDelay(msg)
@@ -164,7 +120,6 @@ export default function Tester() {
         
         setIsTyping(false)
         
-        // Small gap between messages
         if (i < botMsgs.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 300))
         }
@@ -227,7 +182,7 @@ export default function Tester() {
     setModal({ idx, msg, step: 'loading', reason: '', editReason: '' })
 
     try {
-      const res = await fetch(`${WORKER_URL}/ai/explain`, {
+      const res = await fetch(`${WORKER_URL}/explain-learning`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -387,14 +342,12 @@ export default function Tester() {
             {messages.map((m, idx) => (
               <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                 
-                {/* User message */}
                 {m.role === 'user' && (
                   <div style={{ padding: '10px 13px', borderRadius: 'var(--r)', maxWidth: '80%', fontSize: '.84rem', lineHeight: 1.65, boxShadow: 'var(--sh)', background: 'var(--blubg)', color: 'var(--blu)', border: '1px solid var(--blubd)' }}>
                     {m.text}
                   </div>
                 )}
 
-                {/* Bot message - multiple bubbles */}
                 {m.role === 'assistant' && !m.editing && m.botMessages && m.botMessages.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxWidth: '80%' }}>
                     {m.botMessages.map((bubble, bi) => (
@@ -405,7 +358,6 @@ export default function Tester() {
                   </div>
                 )}
 
-                {/* Bot message - editing mode */}
                 {m.role === 'assistant' && m.editing && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '85%', width: '100%' }}>
                     {(m.editMessages || []).map((bubble, bi) => (
@@ -438,7 +390,6 @@ export default function Tester() {
                   </div>
                 )}
 
-                {/* Metadata badges */}
                 {m.role === 'assistant' && m.botMessages && m.botMessages.length > 0 && !m.editing && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     {m.stage && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: 'var(--accl)', color: 'var(--acc)', fontWeight: 500 }}>{m.stage}</span>}
@@ -450,7 +401,6 @@ export default function Tester() {
               </div>
             ))}
 
-            {/* Typing indicator */}
             {(loading || isTyping) && (
               <div style={{ alignSelf: 'flex-start' }}>
                 <div style={{ padding: '12px 16px', background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--r)', display: 'flex', gap: '5px', alignItems: 'center', boxShadow: 'var(--sh)' }}>
