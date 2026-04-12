@@ -44,10 +44,15 @@ export function AuthProvider({ children }) {
   }, [])
 
   async function fetchProfile(userId) {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    setProfile(data || null)
+  const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
+  if (data?.disabled) {
+    await supabase.auth.signOut()
     setLoading(false)
+    return
   }
+  setProfile(data || null)
+  setLoading(false)
+}
 
   const isFullAccess = (role) => role === 'admin' || role === 'superadmin'
 

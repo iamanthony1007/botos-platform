@@ -28,9 +28,10 @@ export default function UserManagement() {
 
     // Load users — clients only see setters on their bot
     let usersQuery = supabase
-      .from('profiles')
-      .select('id, name, email, role, assigned_bot_id, permissions, created_at, invited_by')
-      .order('created_at', { ascending: false })
+  .from('profiles')
+  .select('id, name, email, role, assigned_bot_id, permissions, created_at, invited_by')
+  .eq('disabled', false)
+  .order('created_at', { ascending: false })
 
     if (profile?.role === 'client') {
       usersQuery = usersQuery
@@ -131,15 +132,13 @@ export default function UserManagement() {
   }
 
   async function removeUser(u) {
-    if (!confirm(`Remove ${u.name || u.email}? This will delete their account and access.`)) return
-    // Delete profile (auth user deletion requires service role — we just remove the profile + mark invites)
-    const { error } = await supabase.from('profiles').delete().eq('id', u.id)
+    if (!confirm(`Remove ${u.name || u.email}? They will lose all access immediately.`)) return
+    const { error } = await supabase.from('profiles').update({ disabled: true }).eq('id', u.id)
     if (error) { showToast('Failed to remove user', 'error'); return }
-    // Also expire any pending invites for this email
     await supabase.from('invites').update({ status: 'expired' }).eq('email', u.email).eq('status', 'pending')
     showToast(`${u.name || u.email} removed`, 'success')
     loadData()
-  }
+ }
 
   async function cancelInvite(id) {
     if (!confirm('Cancel this invite?')) return
