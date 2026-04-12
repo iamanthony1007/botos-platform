@@ -468,11 +468,8 @@ export default function Inbox() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <span style={{ fontWeight: 600, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(lead)}</span>
-{lead.lead_readiness === 'HOT' && <span style={{ fontSize: '.75rem' }}>🔥</span>}
-{lead.lead_readiness === 'WARM' && <span style={{ fontSize: '.75rem' }}>🟡</span>}
-{lead.lead_readiness === 'COLD' && <span style={{ fontSize: '.75rem' }}>🔵</span>}
-{lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px' }}>🚨</span>}
-{lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px' }}>{lead.pending_count}</span>}
+                      {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px' }}>🚨</span>}
+                      {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px' }}>{lead.pending_count}</span>}
                     </div>
                     <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>
                       {lead.latest_preview || lead.conversation_stage || 'No messages yet'}
@@ -522,11 +519,11 @@ export default function Inbox() {
               <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
                 {getLeadName(selectedLead).charAt(0).toUpperCase()}
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: '.92rem' }}>{getLeadName(selectedLead)}</div>
-                <div style={{ fontSize: '.73rem', color: 'var(--tx3)' }}>{selectedLead.conversation_stage || 'Unknown stage'}</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: '.92rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(selectedLead)}</div>
+                <div style={{ fontSize: '.73rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedLead.conversation_stage || 'Unknown stage'}</div>
               </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflow: 'hidden', flexShrink: 0 }}>
                 {selectedLead.lead_readiness && (
                   <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', ...readinessStyle(selectedLead.lead_readiness, selectedLead.conversation_stage) }}>
                     {readinessEmoji(selectedLead.lead_readiness, selectedLead.conversation_stage)} {selectedLead.conversation_stage === 'CALL BOOKING' ? 'Call Booked' : selectedLead.lead_readiness}
@@ -617,7 +614,7 @@ export default function Inbox() {
                         </span>
                         {!isLead && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
                         {!isLead && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>✓✓</span>}
-                        {!isLead && isPending && <span style={{ fontSize: '.65rem', color: '#d97706' }}>⏱ Pending</span>}
+                        {null}
                         {!isLead && review?.status === 'discarded' && <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>✕ Discarded</span>}
                       </div>
                     </div>
