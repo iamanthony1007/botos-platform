@@ -466,10 +466,13 @@ export default function Inbox() {
                     {getLeadName(lead).charAt(0).toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                       <span style={{ fontWeight: 600, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(lead)}</span>
-                      {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px' }}>🚨</span>}
-                      {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px' }}>{lead.pending_count}</span>}
+                      {lead.lead_readiness === 'HOT' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>🔥</span>}
+                      {lead.lead_readiness === 'WARM' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>🟡</span>}
+                      {lead.lead_readiness === 'COLD' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>🔵</span>}
+                      {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>🚨</span>}
+                      {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                     </div>
                     <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>
                       {lead.latest_preview || lead.conversation_stage || 'No messages yet'}
