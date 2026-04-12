@@ -158,7 +158,7 @@ export default function Layout() {
           {can('learnings')       && <SideLink to="/dashboard/learnings" label="AI Learning Log"      icon={Icons.learnings} />}
 
           {(can('prompt_editor') || can('documents')) && <div style={sectionHeader}>Knowledge</div>}
-          {can('prompt_editor')   && <SideLink to="/dashboard/prompt"    label="AI Behavior"  icon={Icons.prompt} />}
+          {can('prompt_editor')   && <SideLink to="/dashboard/prompt"    label="Prompt Editor"  icon={Icons.prompt} />}
           {can('documents')       && <SideLink to="/dashboard/documents" label="Knowledge Base"      icon={Icons.documents} />}
 
           {can('analytics') && (
