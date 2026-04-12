@@ -24,6 +24,8 @@ export default function Inbox() {
   const [toast, setToast] = useState({ msg: '', type: '' })
   const [showTrainModal, setShowTrainModal] = useState(false)
   const [trainReason, setTrainReason] = useState('')
+  const [correctedStage, setCorrectedStage] = useState(null)
+  const [correctedIntent, setCorrectedIntent] = useState(null)
   const [showProfile, setShowProfile] = useState(false)
   const [botId, setBotId] = useState(null)
   const [showMobileThread, setShowMobileThread] = useState(false)
@@ -37,11 +39,22 @@ export default function Inbox() {
     return () => { if (channelRef.current) supabase.removeChannel(channelRef.current) }
   }, [profile])
 
-useEffect(() => {
-  if (!location.state?.openLead || !leads.length || !botId) return
-  const target = leads.find(l => String(l.customer_id) === String(location.state.openLead))
-  if (target) selectLead(target)
-}, [location.state?.openLead, leads.length, botId])
+  useEffect(() => {
+    msgEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [conversation, reviews, activeReview])
+
+  useEffect(() => {
+    if (activeReview) {
+      setCorrectedStage(activeReview.conversation_stage || null)
+      setCorrectedIntent(activeReview.lead_intent || null)
+    }
+  }, [activeReview?.id])
+
+  useEffect(() => {
+    if (!location.state?.openLead || !leads.length || !botId) return
+    const target = leads.find(l => String(l.customer_id) === String(location.state.openLead))
+    if (target) selectLead(target)
+  }, [location.state?.openLead, leads.length, botId])
 
   async function loadData() {
     setLoading(true)
@@ -175,8 +188,16 @@ useEffect(() => {
       status: 'approved',
       final_reply: joinedReply,
       final_messages: validMessages,
-      resolved_at: new Date().toISOString()
+      resolved_at: new Date().toISOString(),
+      ...(correctedStage ? { conversation_stage: correctedStage } : {}),
+      ...(correctedIntent ? { lead_intent: correctedIntent } : {})
     }).eq('id', activeReview.id)
+    if (correctedStage || correctedIntent) {
+      await supabase.from('conversations').update({
+        ...(correctedStage ? { conversation_stage: correctedStage } : {}),
+        ...(correctedIntent ? { lead_intent: correctedIntent } : {})
+      }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
+    }
     
     showToast('✓ Approved and sent', 'success')
     setSending(false)
@@ -205,7 +226,7 @@ useEffect(() => {
       bot_id: botId,
       customer_id: activeReview.customer_id,
       review_id: activeReview.id,
-      conversation_stage: activeReview.conversation_stage,
+      conversation_stage: correctedStage || activeReview.conversation_stage,
       original_reply: originalJoined,
       corrected_reply: joinedReply,
       corrected_messages: validMessages,
@@ -213,6 +234,12 @@ useEffect(() => {
       source: 'inbox'
     })
     
+    if (correctedStage || correctedIntent) {
+      await supabase.from('conversations').update({
+        ...(correctedStage ? { conversation_stage: correctedStage } : {}),
+        ...(correctedIntent ? { lead_intent: correctedIntent } : {})
+      }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
+    }
     setShowTrainModal(false)
     showToast('🧠 Learning saved and sent', 'success')
     setSending(false)
@@ -243,14 +270,14 @@ useEffect(() => {
     if (lead.username) return `@${lead.username}`
     if (lead.profile_name) return lead.profile_name
     if (lead.identity) return lead.identity
-const ch = (lead.channel || '').toLowerCase()
-if (ch.includes('instagram') || ch === 'manychat' || ch === 'ig') return 'Instagram Lead'
-if (ch.includes('facebook') || ch === 'fb') return 'Facebook Lead'
-if (ch.includes('whatsapp') || ch === 'wa') return 'WhatsApp Lead'
-if (ch.includes('sms')) return 'SMS Lead'
-if (ch.includes('email')) return 'Email Lead'
-if (ch === 'tester') return 'Bot Tester'
-return 'Instagram Lead' // default fallback — most leads come from Instagram
+    const ch = (lead.channel || '').toLowerCase()
+    if (ch.includes('instagram') || ch === 'manychat' || ch === 'ig') return 'Instagram Lead'
+    if (ch.includes('facebook') || ch === 'fb') return 'Facebook Lead'
+    if (ch.includes('whatsapp') || ch === 'wa') return 'WhatsApp Lead'
+    if (ch.includes('sms')) return 'SMS Lead'
+    if (ch.includes('email')) return 'Email Lead'
+    if (ch === 'tester') return 'Bot Tester'
+    return 'Instagram Lead' // default
   }
 
   function timeAgo(dateStr) {
@@ -672,6 +699,30 @@ return 'Instagram Lead' // default fallback — most leads come from Instagram
                         {activeReview.escalation_reason}
                       </span>
                     )}
+                  </div>
+
+                  {/* ── Setter Correction Bar ── */}
+                  <div style={{ padding: '7px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf2)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '.65rem', fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.07em', flexShrink: 0 }}>Correct AI:</span>
+                    <select
+                      value={correctedStage || ''}
+                      onChange={e => setCorrectedStage(e.target.value)}
+                      style={{ fontSize: '.71rem', padding: '3px 6px', borderRadius: '6px', border: correctedStage !== activeReview.conversation_stage ? '1.5px solid var(--acc)' : '1px solid var(--bdr)', background: correctedStage !== activeReview.conversation_stage ? 'var(--accp)' : 'var(--surf)', color: 'var(--tx)', cursor: 'pointer', fontFamily: 'var(--fn)', maxWidth: '195px' }}
+                    >
+                      {['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE'].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    <div style={{ display: 'flex', gap: '3px' }}>
+                      {['LOW','MEDIUM','HIGH'].map(i => (
+                        <button key={i} onClick={() => setCorrectedIntent(i)} style={{ fontSize: '.67rem', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all .15s', background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf)', color: correctedIntent === i ? '#fff' : 'var(--tx3)', outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)' }}>{i}</button>
+                      ))}
+                    </div>
+                    {(correctedStage !== activeReview.conversation_stage || correctedIntent !== (activeReview.lead_intent || null)) && (
+                      <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>✎ Correction saved on approve</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px 0' }}>
                     <span style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>
                       {Math.round((activeReview.confidence || 0) * 100)}% confidence
                     </span>
@@ -762,12 +813,15 @@ return 'Instagram Lead' // default fallback — most leads come from Instagram
       {/* ══ TRAIN MODAL ══ */}
       {showTrainModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: 'var(--surf)', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '520px', boxShadow: '0 20px 60px rgba(0,0,0,.2)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ background: 'var(--surf)', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.2)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+            {/* Header */}
             <div>
               <div style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '4px' }}>Edit &amp; Save as Training</div>
-              <div style={{ fontSize: '.81rem', color: 'var(--tx3)' }}>Your correction will teach the bot to respond better next time.</div>
+              <div style={{ fontSize: '.81rem', color: 'var(--tx3)' }}>Your corrections teach the bot to respond better next time.</div>
             </div>
 
+            {/* Corrected Reply */}
             <div className="form-group">
               <label className="form-label">Corrected Reply ({replyMessages.filter(m => m.trim()).length} message{replyMessages.filter(m => m.trim()).length > 1 ? 's' : ''})</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -798,11 +852,70 @@ return 'Instagram Lead' // default fallback — most leads come from Instagram
               </div>
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Why did you change this? <span style={{ color: '#e53e3e' }}>*</span></label>
-              <textarea className="form-input" rows={3} placeholder="e.g. Bot skipped acknowledging frustration..." value={trainReason} onChange={e => setTrainReason(e.target.value)} style={{ borderRadius: '10px' }} />
+            {/* AI Corrections — Stage + Intent */}
+            <div style={{ background: 'var(--surf2)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Correct AI Classification</div>
+
+              {/* Stage */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Conversation Stage</label>
+                <select
+                  value={correctedStage || ''}
+                  onChange={e => setCorrectedStage(e.target.value)}
+                  className="form-input"
+                  style={{ fontSize: '.8rem', padding: '6px 10px', borderRadius: '8px', border: correctedStage !== activeReview?.conversation_stage ? '1.5px solid var(--acc)' : '1px solid var(--bdr)', background: correctedStage !== activeReview?.conversation_stage ? 'var(--accp)' : 'var(--surf)' }}
+                >
+                  {['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE'].map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                {correctedStage !== activeReview?.conversation_stage && (
+                  <div style={{ fontSize: '.71rem', color: 'var(--tx3)' }}>
+                    Changed from <span style={{ fontWeight: 600, color: 'var(--tx2)' }}>{activeReview?.conversation_stage}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Intent */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Lead Intent</label>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {['LOW', 'MEDIUM', 'HIGH'].map(i => (
+                    <button
+                      key={i}
+                      onClick={() => setCorrectedIntent(i)}
+                      style={{
+                        flex: 1, padding: '7px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600, transition: 'all .15s',
+                        background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf)',
+                        color: correctedIntent === i ? '#fff' : 'var(--tx3)',
+                        outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)'
+                      }}
+                    >{i}</button>
+                  ))}
+                </div>
+                {correctedIntent !== (activeReview?.lead_intent || null) && (
+                  <div style={{ fontSize: '.71rem', color: 'var(--tx3)' }}>
+                    Changed from <span style={{ fontWeight: 600, color: 'var(--tx2)' }}>{activeReview?.lead_intent || 'unknown'}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
+            {/* Why did you change this */}
+            <div className="form-group">
+              <label className="form-label">Why did you make these changes? <span style={{ color: '#e53e3e' }}>*</span></label>
+              <textarea
+                className="form-input"
+                rows={3}
+                placeholder="e.g. Bot classified this as GOAL LOCK but the lead already stated their goal — should be GOAL DEPTH. Intent is MEDIUM not LOW because they showed genuine interest."
+                value={trainReason}
+                onChange={e => setTrainReason(e.target.value)}
+                style={{ borderRadius: '10px' }}
+              />
+              <div className="form-hint">The more detail you give, the faster the AI learns.</div>
+            </div>
+
+            {/* Actions */}
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button className="btn btn-ghost" onClick={() => setShowTrainModal(false)} style={{ borderRadius: '10px' }}>Cancel</button>
               <button
@@ -810,7 +923,7 @@ return 'Instagram Lead' // default fallback — most leads come from Instagram
                 disabled={sending || !trainReason.trim()}
                 style={{ padding: '9px 20px', background: 'var(--acc)', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '.84rem', color: '#fff', fontWeight: 600, opacity: sending || !trainReason.trim() ? .6 : 1 }}
               >
-                {sending ? 'Saving...' : '💾 Save & Send'}
+                {sending ? 'Saving...' : '💾 Save & Train'}
               </button>
             </div>
           </div>
