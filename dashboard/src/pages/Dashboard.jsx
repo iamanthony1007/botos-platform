@@ -15,10 +15,17 @@ const READINESS_SCORE = { HOT: 3, WARM: 2, COLD: 1 }
 const TIME_RANGES = ['Today', 'Last 7 Days', 'Last 30 Days']
 
 export default function Dashboard() {
-  const { profile, isAdmin } = useAuth()
+  const { profile } = useAuth()
   const navigate = useNavigate()
   const [timeRange, setTimeRange] = useState('Last 7 Days')
-  const [stats, setStats] = useState({ active: 0, qualified: 0, aiAssisted: 0, booked: 0, conversionRate: 0, qualifiedPct: 0 })
+  const [stats, setStats] = useState({
+    newConversations: 0,
+    needsReply: 0,
+    highIntent: 0,
+    aiMessagesSent: 0,
+    booked: 0,
+    conversionRate: 0
+  })
   const [closestToBooking, setClosestToBooking] = useState([])
   const [bots, setBots] = useState([])
   const [loading, setLoading] = useState(true)
@@ -51,28 +58,37 @@ export default function Dashboard() {
 
       const since = getDateFilter()
 
-      const { data: convos } = await supabase
-        .from('conversations')
-        .select('customer_id, channel, lead_readiness, lead_intent, conversation_stage, username, profile_name, updated_at, status')
-        .in('bot_id', botIds)
-        .gte('updated_at', since)
+      const [
+        { data: convos },
+        { data: allReviews },
+        { data: pendingReviews }
+      ] = await Promise.all([
+        supabase.from('conversations')
+          .select('customer_id, channel, lead_readiness, lead_intent, conversation_stage, username, profile_name, updated_at, status')
+          .in('bot_id', botIds)
+          .gte('updated_at', since),
+        supabase.from('reviews')
+          .select('id, status')
+          .in('bot_id', botIds)
+          .gte('created_at', since),
+        supabase.from('reviews')
+          .select('id', { count: 'exact', head: true })
+          .in('bot_id', botIds)
+          .eq('status', 'pending')
+      ])
+
       const allConvos = convos || []
+      const reviews = allReviews || []
 
-      const { data: reviewConvos } = await supabase
-        .from('reviews')
-        .select('customer_id')
-        .in('bot_id', botIds)
-        .gte('created_at', since)
-      const aiAssistedIds = new Set((reviewConvos || []).map(r => r.customer_id))
-
-      const active = allConvos.length
-      const qualified = allConvos.filter(c => c.lead_readiness === 'HOT' || c.lead_readiness === 'WARM').length
+      const newConversations = allConvos.length
+      const needsReply = pendingReviews?.count || 0
+      const highIntent = allConvos.filter(c => c.lead_intent === 'HIGH').length
+      const aiMessagesSent = reviews.filter(r => r.status === 'approved').length + reviews.filter(r => r.status === 'auto_sent').length
       const booked = allConvos.filter(c => c.status === 'booked').length
-      const aiAssisted = aiAssistedIds.size
-      const qualifiedPct = active > 0 ? Math.round((qualified / active) * 100) : 0
+      const qualified = allConvos.filter(c => c.lead_readiness === 'HOT' || c.lead_readiness === 'WARM').length
       const conversionRate = qualified > 0 ? Math.round((booked / qualified) * 100) : 0
 
-      setStats({ active, qualified, aiAssisted, booked, conversionRate, qualifiedPct })
+      setStats({ newConversations, needsReply, highIntent, aiMessagesSent, booked, conversionRate })
 
       const scored = allConvos
         .filter(c => c.status !== 'booked')
@@ -101,7 +117,7 @@ export default function Dashboard() {
     if (ch.includes('whatsapp')) return 'WhatsApp Lead'
     if (ch.includes('sms')) return 'SMS Lead'
     if (ch.includes('email')) return 'Email Lead'
-    return 'Unknown Lead'
+    return 'Instagram Lead'
   }
 
   function readinessInfo(r, stage) {
@@ -134,19 +150,20 @@ export default function Dashboard() {
 
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
 
-  const StatCard = ({ value, label, sub, color, border, pct }) => (
-    <div className="stat-card" style={{ borderLeftColor: border || 'var(--acc)' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-        <div className="stat-num" style={{ color: color || 'var(--acc)' }}>{value}</div>
-        {pct !== undefined && <div style={{ fontSize: '.82rem', fontWeight: 600, color: color || 'var(--acc)' }}>{pct}%</div>}
-      </div>
-      <div className="stat-label">{label}</div>
-      <div className="stat-change" style={{ color: color || 'var(--acc)' }}>{sub}</div>
+  const StatCard = ({ value, label, sub, color, border, urgent }) => (
+    <div className="stat-card" style={{
+      borderLeftColor: border || 'var(--acc)',
+      ...(urgent ? { background: '#fff9f0', borderLeftColor: '#e53e3e' } : {})
+    }}>
+      <div className="stat-num" style={{ color: urgent ? '#e53e3e' : (color || 'var(--acc)') }}>{value}</div>
+      <div className="stat-label" style={{ fontSize: '.8rem', marginTop: '6px', fontWeight: 500, color: 'var(--tx2)' }}>{label}</div>
+      {sub && <div className="stat-change" style={{ color: urgent ? '#e53e3e' : (color || 'var(--acc)') }}>{sub}</div>}
     </div>
   )
 
   return (
     <div className="page">
+      {/* Header */}
       <div className="page-header">
         <div>
           <div className="page-title">Dashboard</div>
@@ -155,44 +172,84 @@ export default function Dashboard() {
         <div style={{ display: 'flex', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '10px', overflow: 'hidden' }}>
           {TIME_RANGES.map(t => (
             <button key={t} onClick={() => setTimeRange(t)} style={{
-              padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: '.76rem', fontWeight: timeRange === t ? 600 : 400,
+              padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: '.76rem',
+              fontWeight: timeRange === t ? 600 : 400,
               background: timeRange === t ? 'var(--acc)' : 'transparent',
-              color: timeRange === t ? '#fff' : 'var(--tx2)', transition: 'all .15s', fontFamily: 'var(--fn)'
+              color: timeRange === t ? '#fff' : 'var(--tx2)',
+              transition: 'all .15s', fontFamily: 'var(--fn)'
             }}>{t}</button>
           ))}
         </div>
       </div>
 
-      {/* STATS — AI-Assisted only visible to admin/superadmin */}
-      <div className="stats-grid">
-        <StatCard value={stats.active} label="Active Conversations" sub={timeRange} />
-        <StatCard value={stats.qualified} label="Number of Qualified Leads" sub={timeRange} color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct} />
-        {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply" color="var(--blu)" border="var(--blu)" />}
-        <StatCard value={stats.booked} label="Calls Booked" sub={timeRange} color="#16a34a" border="#16a34a" />
-        <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked ÷ Qualified" color="var(--acc)" border="var(--acc)" />
+      {/* ── ACTIVITY SECTION ── */}
+      <div>
+        <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>
+          Activity
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+          <StatCard
+            value={stats.newConversations}
+            label="New Conversations"
+            sub={timeRange}
+          />
+          <StatCard
+            value={stats.needsReply}
+            label="Needs Reply"
+            sub="Pending in inbox"
+            color="#e53e3e"
+            border="#e53e3e"
+            urgent={stats.needsReply > 0}
+          />
+          <StatCard
+            value={stats.highIntent}
+            label="High Intent Leads"
+            sub="Ready to book"
+            color="var(--amb)"
+            border="var(--amb)"
+          />
+          <StatCard
+            value={stats.aiMessagesSent}
+            label="AI Messages Sent"
+            sub="Auto-approved"
+            color="var(--blu)"
+            border="var(--blu)"
+          />
+          <StatCard
+            value={stats.booked}
+            label="Calls Booked"
+            sub={timeRange}
+            color="#16a34a"
+            border="#16a34a"
+          />
+          <StatCard
+            value={`${stats.conversionRate}%`}
+            label="Conversion Rate"
+            sub="Booked ÷ Qualified"
+            color="var(--acc)"
+            border="var(--acc)"
+          />
+        </div>
       </div>
 
-      {/* CLOSEST TO BOOKING */}
+      {/* ── CLOSEST TO BOOKING ── */}
       <div className="card">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-          <div>
-            <div className="card-title" style={{ margin: 0 }}>Closest to Booking</div>
-            <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginTop: '2px' }}>Top leads ranked by readiness, stage, and recent activity</div>
-          </div>
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--tx)', letterSpacing: '-.01em' }}>Closest to Booking</div>
+          <div style={{ fontSize: '.82rem', color: 'var(--tx3)', marginTop: '3px' }}>Top leads ranked by readiness, stage, and recent activity</div>
         </div>
         {closestToBooking.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '32px', color: 'var(--tx3)', fontSize: '.84rem' }}>
+          <div style={{ textAlign: 'center', padding: '32px', color: 'var(--tx3)', fontSize: '.9rem' }}>
             No active leads in this time range.
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="data-table">
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '480px' }}>
               <thead>
                 <tr>
-                  <th>Lead</th>
-                  <th>Stage</th>
-                  <th>Readiness</th>
-                  <th>Last Interaction</th>
+                  {['Lead', 'Stage', 'Readiness', 'Last Interaction'].map(h => (
+                    <th key={h} style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.07em', padding: '10px 16px', borderBottom: '2px solid var(--bdr)', textAlign: 'left', background: 'var(--surf2)', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -202,27 +259,31 @@ export default function Dashboard() {
                     <tr
                       key={c.customer_id}
                       onClick={() => navigate('/dashboard/inbox', { state: { openLead: c.customer_id } })}
-                      style={{ cursor: 'pointer' }}
+                      style={{ cursor: 'pointer', transition: 'background .12s' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--accp)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                     >
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: i === 0 ? 'var(--acc)' : 'var(--surf3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.65rem', fontWeight: 700, color: i === 0 ? '#fff' : 'var(--tx3)', flexShrink: 0 }}>
+                      <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: i === 0 ? 'var(--acc)' : 'var(--surf3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.72rem', fontWeight: 700, color: i === 0 ? '#fff' : 'var(--tx3)', flexShrink: 0 }}>
                             {i + 1}
                           </div>
-                          <span style={{ fontWeight: 500, fontSize: '.85rem' }}>{getLeadName(c)}</span>
+                          <span style={{ fontWeight: 600, fontSize: '.95rem', color: 'var(--tx)' }}>{getLeadName(c)}</span>
                         </div>
                       </td>
-                      <td>
-                        <span style={{ fontSize: '.78rem', color: stageColor(c.conversation_stage) }}>
+                      <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
+                        <span style={{ fontSize: '.86rem', fontWeight: 500, color: stageColor(c.conversation_stage) }}>
                           {c.conversation_stage || 'Entry'}
                         </span>
                       </td>
-                      <td>
-                        <span style={{ fontSize: '.78rem', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', color: ri.color, background: ri.bg, border: ri.border }}>
+                      <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
+                        <span style={{ fontSize: '.84rem', fontWeight: 700, padding: '3px 12px', borderRadius: '999px', color: ri.color, background: ri.bg, border: ri.border }}>
                           {ri.emoji} {ri.label}
                         </span>
                       </td>
-                      <td style={{ fontSize: '.78rem', color: 'var(--tx3)' }}>{fmtTime(c.updated_at)}</td>
+                      <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)', fontSize: '.88rem', color: 'var(--tx2)' }}>
+                        {fmtTime(c.updated_at)}
+                      </td>
                     </tr>
                   )
                 })}
@@ -232,7 +293,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* BOTS TABLE - admin only */}
+      {/* Bots table — admin only */}
       {adminRole && bots.length > 0 && (
         <div className="card">
           <div className="card-title">Your Bots</div>
@@ -255,6 +316,12 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <style>{`
+        @media (max-width: 767px) {
+          .activity-grid { grid-template-columns: repeat(2, 1fr) !important; }
+        }
+      `}</style>
     </div>
   )
 }
