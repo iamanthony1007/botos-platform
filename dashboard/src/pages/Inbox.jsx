@@ -37,9 +37,11 @@ export default function Inbox() {
     return () => { if (channelRef.current) supabase.removeChannel(channelRef.current) }
   }, [profile])
 
-  useEffect(() => {
-    msgEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [conversation, reviews, activeReview])
+useEffect(() => {
+  if (!location.state?.openLead || !leads.length || !botId) return
+  const target = leads.find(l => String(l.customer_id) === String(location.state.openLead))
+  if (target) selectLead(target)
+}, [location.state?.openLead, leads.length, botId])
 
   async function loadData() {
     setLoading(true)

@@ -118,7 +118,12 @@ export default function Layout() {
         display: 'flex', alignItems: 'center', padding: '0 20px', gap: '14px',
         flexShrink: 0, boxShadow: '0 1px 4px rgba(0,0,0,.06)', zIndex: 100
       }}>
-        <img src={LOGO_HORIZONTAL} alt="MU AI" style={{ height: '90px', width: 'auto' }} />
+        <img
+  src={LOGO_HORIZONTAL}
+  alt="MU AI"
+  onClick={() => navigate('/dashboard')}
+  style={{ height: '90px', width: 'auto', cursor: 'pointer' }}
+/>
         <div style={{ width: '1px', height: '20px', background: '#E8E6DE' }} />
         <span style={{ fontSize: '.78rem', color: '#A0A090', flex: 1, letterSpacing: '.04em' }}>Intelligence in Motion</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
