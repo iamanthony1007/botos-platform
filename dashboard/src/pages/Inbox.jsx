@@ -385,18 +385,11 @@ export default function Inbox() {
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
 
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', background: 'var(--bg)' }}>
+    <div className="inbox-wrapper">
       {toast.msg && <div className={`toast ${toast.type === 'error' ? 'toast-error' : ''}`}>{toast.msg}</div>}
 
       {/* ══ LEFT PANEL - LEADS LIST ══ */}
-      <div style={{ 
-        width: '320px', 
-        flexShrink: 0, 
-        borderRight: '1px solid var(--bdr)', 
-        display: selectedLead ? 'none' : 'flex',  // Hide on mobile when thread is open
-        flexDirection: 'column', 
-        background: 'var(--surf)'
-      }} className="inbox-list">
+      <div className="inbox-list" style={{ display: selectedLead ? 'none' : 'flex' }}>
 
         {/* Search */}
         <div style={{ padding: '12px 12px 8px' }}>
@@ -491,13 +484,7 @@ export default function Inbox() {
       </div>
 
       {/* ══ RIGHT PANEL - CONVERSATION ══ */}
-      <div style={{ 
-        flex: 1, 
-        display: selectedLead ? 'flex' : 'none',  // Only show when lead is selected
-        flexDirection: 'column', 
-        overflow: 'hidden', 
-        background: 'var(--bg)' 
-      }} className="inbox-thread">
+      <div className="inbox-thread" style={{ display: selectedLead ? 'flex' : 'none' }}>
         {!selectedLead ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx3)', fontSize: '.9rem' }}>
             Select a conversation to view
@@ -585,7 +572,7 @@ export default function Inbox() {
 
                   return (
                     <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', marginBottom: '6px' }}>
-                      <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', gap: showMultiple ? '4px' : 0 }}>
+                      <div style={{ maxWidth: 'min(72%, 520px)', display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', gap: showMultiple ? '4px' : 0 }}>
                         
                         {isLead && (
                           <div style={{
@@ -638,7 +625,7 @@ export default function Inbox() {
 
               {/* Lead Profile Sidebar */}
               {showProfile && selectedLead && (
-                <div style={{ width: '260px', flexShrink: 0, borderLeft: '1px solid var(--bdr)', background: 'var(--surf)', overflowY: 'auto', padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className="profile-panel">
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ fontWeight: 600, fontSize: '.88rem' }}>Lead Profile</div>
                     <button onClick={() => setShowProfile(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem' }}>×</button>
@@ -689,53 +676,50 @@ export default function Inbox() {
             {activeReview && (
               <div style={{ background: 'var(--surf)', borderTop: '1px solid var(--bdr)', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,.08)' }}>
 
-                <div style={{ padding: '10px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '.8rem', fontWeight: 600, color: (activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER') ? '#e53e3e' : '#d97706' }}>
-                      {(activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER') ? '🚨 Escalated to Human' : '⚠ Review needed'}
-                    </span>
-                    {activeReview.escalation_reason && (
-                      <span style={{ fontSize: '.75rem', background: '#fff5f5', color: '#e53e3e', border: '1px solid #fed7d7', borderRadius: '6px', padding: '2px 8px', fontWeight: 500 }}>
-                        {activeReview.escalation_reason}
-                      </span>
-                    )}
-                  </div>
+                <div style={{ padding: '8px 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {(activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER')
+                    ? <span style={{ fontSize: '.74rem', fontWeight: 600, color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '6px', padding: '2px 8px' }}>🚨 Escalated to Human</span>
+                    : <span style={{ fontSize: '.72rem', color: 'var(--tx3)', fontWeight: 500 }}>⚠ Review needed</span>
+                  }
+                  {activeReview.escalation_reason && (
+                    <span style={{ fontSize: '.72rem', color: 'var(--tx3)', fontStyle: 'italic' }}>{activeReview.escalation_reason}</span>
+                  )}
 
-                  {/* ── Setter Correction Bar ── */}
-                  <div style={{ padding: '7px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf2)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', flexShrink: 0 }}><span style={{ fontSize: '.65rem', fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Tag lead:</span><span style={{ fontSize: '.6rem', color: 'var(--tx3)', fontWeight: 400 }}>Based on what the lead said</span></div>
-                    <select
-                      value={correctedStage || ''}
-                      onChange={e => setCorrectedStage(e.target.value)}
-                      style={{ fontSize: '.71rem', padding: '3px 6px', borderRadius: '6px', border: correctedStage !== activeReview.conversation_stage ? '1.5px solid var(--acc)' : '1px solid var(--bdr)', background: correctedStage !== activeReview.conversation_stage ? 'var(--accp)' : 'var(--surf)', color: 'var(--tx)', cursor: 'pointer', fontFamily: 'var(--fn)', maxWidth: '195px' }}
-                    >
-                      {['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE'].map(s => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                    <div style={{ display: 'flex', gap: '3px' }}>
-                      {['LOW','MEDIUM','HIGH'].map(i => (
-                        <button key={i} onClick={() => setCorrectedIntent(i)} style={{ fontSize: '.67rem', fontWeight: 600, padding: '3px 8px', borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all .15s', background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf)', color: correctedIntent === i ? '#fff' : 'var(--tx3)', outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)' }}>{i}</button>
-                      ))}
+                  {/* ── Compact Tag Bar ── */}
+                  <div style={{ padding: '6px 16px 0', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      {/* Lead Intent */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ fontSize: '.71rem', fontWeight: 600, color: 'var(--tx2)', flexShrink: 0 }}>Lead Intent:</span>
+                        <div style={{ display: 'flex', gap: '2px' }}>
+                          {['LOW','MEDIUM','HIGH'].map(i => (
+                            <button key={i} onClick={() => setCorrectedIntent(i)} style={{
+                              fontSize: '.68rem', fontWeight: 600, padding: '2px 8px', borderRadius: '5px', border: 'none', cursor: 'pointer', transition: 'all .15s',
+                              background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf2)',
+                              color: correctedIntent === i ? '#fff' : 'var(--tx3)',
+                              outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)'
+                            }}>{i}</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div style={{ width: '1px', height: '16px', background: 'var(--bdr)', flexShrink: 0 }} />
+                      {/* Convo Stage */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ fontSize: '.71rem', fontWeight: 600, color: 'var(--tx2)', flexShrink: 0 }}>Convo Stage:</span>
+                        <select
+                          value={correctedStage || ''}
+                          onChange={e => setCorrectedStage(e.target.value)}
+                          style={{ fontSize: '.71rem', padding: '2px 6px', borderRadius: '6px', border: correctedStage !== activeReview.conversation_stage ? '1.5px solid var(--acc)' : '1px solid var(--bdr)', background: correctedStage !== activeReview.conversation_stage ? 'var(--accp)' : 'var(--surf2)', color: 'var(--tx)', cursor: 'pointer', fontFamily: 'var(--fn)', maxWidth: '180px' }}
+                        >
+                          {['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE'].map(s => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                    {(correctedStage !== activeReview.conversation_stage || correctedIntent !== (activeReview.lead_intent || null)) && (
-                      <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>✎ Correction saved on approve</span>
-                    )}
+                    <div style={{ fontSize: '.68rem', color: 'var(--tx3)' }}>Shapes how the AI responds and moves the conversation forward</div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px 0' }}>
-                    <span style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>
-                      {Math.round((activeReview.confidence || 0) * 100)}% confidence
-                    </span>
-                    {activeReview.conversation_stage && (
-                      <span style={{ fontSize: '.68rem', background: 'var(--surf2)', border: '1px solid var(--bdr)', padding: '1px 8px', borderRadius: '999px', color: 'var(--tx3)' }}>
-                        {activeReview.conversation_stage}
-                      </span>
-                    )}
-                    <span style={{ fontSize: '.68rem', background: 'var(--blubg)', border: '1px solid var(--blubd)', padding: '1px 8px', borderRadius: '999px', color: 'var(--blu)' }}>
-                      {replyMessages.length} message{replyMessages.length > 1 ? 's' : ''}
-                    </span>
-                  </div>
-                  <button onClick={() => { setActiveReview(null); setReplyMessages([]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem', lineHeight: 1, padding: '4px' }}>×</button>
+                  <button onClick={() => { setActiveReview(null); setReplyMessages([]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem', lineHeight: 1, padding: '4px', marginLeft: 'auto' }}>×</button>
                 </div>
 
                 <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -744,7 +728,7 @@ export default function Inbox() {
                       <textarea
                         value={msg}
                         onChange={e => updateReplyMessage(idx, e.target.value)}
-                        rows={2}
+                        rows={4}
                         style={{
                           width: '100%', background: 'var(--surf2)', border: '1.5px solid var(--bdr)',
                           color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.85rem',
@@ -775,7 +759,7 @@ export default function Inbox() {
                   )}
                 </div>
 
-                <div style={{ padding: '0 16px 14px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div className="review-actions">
                   <button
                     onClick={() => { setTrainReason(''); setShowTrainModal(true) }}
                     style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '10px', cursor: 'pointer', fontSize: '.8rem', color: 'var(--tx2)', fontWeight: 500, transition: 'all .15s' }}
@@ -930,11 +914,99 @@ export default function Inbox() {
         </div>
       )}
 
-      {/* CSS for responsive behavior */}
+      {/* Responsive CSS */}
       <style>{`
+        /* ── Outer wrapper ── */
+        .inbox-wrapper {
+          display: flex;
+          height: 100%;
+          overflow: hidden;
+          background: var(--bg);
+          position: relative;
+        }
+
+        /* ── Left panel ── */
+        .inbox-list {
+          width: 100%;
+          flex-shrink: 0;
+          border-right: 1px solid var(--bdr);
+          flex-direction: column;
+          background: var(--surf);
+          min-height: 0;
+        }
+
+        /* ── Right panel ── */
+        .inbox-thread {
+          flex: 1;
+          flex-direction: column;
+          overflow: hidden;
+          background: var(--bg);
+          min-width: 0;
+        }
+
+        /* ── Profile panel ── */
+        .profile-panel {
+          position: fixed;
+          top: 0; right: 0; bottom: 0;
+          width: min(85vw, 300px);
+          z-index: 200;
+          background: var(--surf);
+          border-left: 1px solid var(--bdr);
+          overflow-y: auto;
+          padding: 20px 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          box-shadow: -4px 0 24px rgba(0,0,0,.18);
+          animation: slideInRight .2s ease;
+        }
+
+        @keyframes slideInRight {
+          from { transform: translateX(100%); }
+          to   { transform: translateX(0); }
+        }
+
+        /* ── Corrections bar ── */
+        .corrections-bar {
+          padding: 8px 16px;
+          border-top: 1px solid var(--bdr);
+          background: var(--surf2);
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        /* ── Review action buttons ── */
+        .review-actions {
+          padding: 0 16px 14px;
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        .review-actions button:last-child {
+          margin-left: auto;
+        }
+
+        /* ── Desktop (≥ 1024px) ── */
+        @media (min-width: 1024px) {
+          .inbox-list {
+            width: 320px;
+          }
+          .profile-panel {
+            position: relative;
+            width: 260px;
+            flex-shrink: 0;
+            box-shadow: none;
+            animation: none;
+          }
+        }
+
+        /* ── Tablet/Desktop: show placeholder on right when no lead selected ── */
         @media (min-width: 768px) {
-          .inbox-list { display: flex !important; }
           .inbox-thread { display: flex !important; }
+          /* inbox-list is controlled purely by JS state - no CSS override */
         }
       `}</style>
     </div>
