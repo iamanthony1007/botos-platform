@@ -176,7 +176,7 @@ export default function Analytics() {
         <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked ÷ Qualified" color="var(--acc)" border="var(--acc)" />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+      <div className='grid-2col'>
 
         {/* CONVERSATION FUNNEL */}
         <div className="card">

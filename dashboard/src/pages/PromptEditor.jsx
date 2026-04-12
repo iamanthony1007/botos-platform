@@ -79,7 +79,7 @@ export default function PromptEditor() {
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: '14px' }}>
+      <div className='grid-sidebar'>
 
         {/* EDITOR */}
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

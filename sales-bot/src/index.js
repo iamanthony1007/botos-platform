@@ -523,7 +523,7 @@ var index_default = {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
           body: JSON.stringify({
-            model: "gpt-4o",
+            model: "gpt-5.4",
             messages: [
               { role: "system", content: `You are a prompt engineering assistant for an AI appointment setter bot. The user will give you a plain English instruction to update the bot's system prompt. Your job: 1. Identify exactly which section(s) of the prompt need to change 2. Make ONLY the requested change 3. Preserve all existing structure, formatting, and sections 4. If the instruction is vague, ask for clarification. Return ONLY valid JSON: { "updated_prompt": "full updated prompt", "explanation": "what changed and why", "changes": ["change 1"], "needs_clarification": false }. If clarification needed: { "needs_clarification": true, "question": "your question" }` },
               { role: "user", content: `Current system prompt:\n\n${current_prompt}\n\n---\n\nInstruction: ${instruction}` }
@@ -556,7 +556,7 @@ var index_default = {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
           body: JSON.stringify({
-            model: "gpt-4o",
+            model: "gpt-5.4",
             messages: [
               { role: "system", content: `You are a sales psychology expert analysing corrections made to an AI appointment setter for a golf fitness coaching business. Explain the psychological reasoning behind the correction so the AI can learn the pattern. Your explanation should: identify the psychological mistake in the original, explain what the corrected version does better, state the pattern for future situations, be 2-4 sentences, focus on NEPQ principles. Return ONLY valid JSON: { "reason": "your explanation" }` },
               { role: "user", content: `Stage: ${conversation_stage || "Unknown"}\nContext:\n${recent_context || "Not provided"}\nOriginal: "${original_reply}"\nCorrected: "${corrected_reply}"` }
