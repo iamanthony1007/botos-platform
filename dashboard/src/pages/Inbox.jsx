@@ -537,12 +537,8 @@ export default function Inbox() {
                     {selectedLead.lead_intent}
                   </span>
                 )}
-                {selectedLead.pending_count > 0 && (
-                  <span style={{ background: '#e53e3e', color: '#fff', borderRadius: '999px', fontSize: '.68rem', fontWeight: 700, padding: '2px 8px' }}>
-                    {selectedLead.pending_count} pending
-                  </span>
-                )}
-                <button onClick={() => setShowProfile(p => !p)} style={{ background: showProfile ? 'var(--accl)' : 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.75rem', color: showProfile ? 'var(--acc)' : 'var(--tx2)', fontWeight: showProfile ? 600 : 400 }}>
+ 
+                  <button onClick={() => setShowProfile(p => !p)} style={{ background: showProfile ? 'var(--accl)' : 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.75rem', color: showProfile ? 'var(--acc)' : 'var(--tx2)', fontWeight: showProfile ? 600 : 400 }}>
                   Profile
                 </button>
               </div>
