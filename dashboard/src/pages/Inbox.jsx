@@ -243,12 +243,14 @@ useEffect(() => {
     if (lead.username) return `@${lead.username}`
     if (lead.profile_name) return lead.profile_name
     if (lead.identity) return lead.identity
-    const channelFallback = {
-      instagram: 'Instagram Lead', facebook: 'Facebook Lead',
-      whatsapp: 'WhatsApp Lead', sms: 'SMS Lead', email: 'Email Lead', tester: 'Bot Tester'
-    }
-    if (lead.channel && channelFallback[lead.channel.toLowerCase()]) return channelFallback[lead.channel.toLowerCase()]
-    return `Lead ${lead.customer_id}`
+const ch = (lead.channel || '').toLowerCase()
+if (ch.includes('instagram') || ch === 'manychat' || ch === 'ig') return 'Instagram Lead'
+if (ch.includes('facebook') || ch === 'fb') return 'Facebook Lead'
+if (ch.includes('whatsapp') || ch === 'wa') return 'WhatsApp Lead'
+if (ch.includes('sms')) return 'SMS Lead'
+if (ch.includes('email')) return 'Email Lead'
+if (ch === 'tester') return 'Bot Tester'
+return 'Instagram Lead' // default fallback — most leads come from Instagram
   }
 
   function timeAgo(dateStr) {
