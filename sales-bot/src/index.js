@@ -49,7 +49,11 @@ You MUST respond with ONLY a valid JSON object (no markdown, no explanation) wit
   "lead_readiness": "COLD|WARM|HOT",
   "lead_intent": "LOW|MEDIUM|HIGH",
   "primary_goal": "Distance|Pain/Injuries|Consistency|Unknown",
-  "next_action": "AUTO_SEND|SEND_TO_SLACK_REVIEW|HANDOFF_TO_SETTER",
+  "next_action": "AUTO_SEND|SEND_TO_INBOX_REVIEW|ESCALATE_TO_HUMAN",
+  "escalation_reason": "only fill if ESCALATE_TO_HUMAN — one sentence why (e.g. lead asked for human, angry, second objection)",
+  "emotional_state": "NEUTRAL|ENGAGED|CONFUSED|SKEPTICAL|DISENGAGING|FRUSTRATED|OBJECTING",
+  "situation_clarity": 0.0,
+  "response_quality": 0.0,
   "tags": ["relevant", "tags", "here"],
   "internal_notes": "your reasoning -- what stage are we at, did any setter corrections apply, what are you trying to achieve with this reply",
   "memory_update": {
@@ -76,11 +80,16 @@ CRITICAL RULES:
 - NO exclamation points, minimal punctuation
 - One main question per message set (in the last message)
 - Mirror their message length or go shorter
-- If confidence < 0.75, set next_action to SEND_TO_SLACK_REVIEW
-- If lead asks for human or gets angry, set next_action to HANDOFF_TO_SETTER
-- If lead_intent is LOW, always set next_action to SEND_TO_SLACK_REVIEW
-- If lead_intent is HIGH and confidence >= 0.90, set next_action to AUTO_SEND
-- If lead_intent is MEDIUM and confidence >= 0.85 and stage is early (ENTRY/GOAL LOCK/NURTURE), set next_action to AUTO_SEND
+- If confidence < 0.75, set next_action to SEND_TO_INBOX_REVIEW
+- If lead explicitly asks for a human, or shows anger/frustration, set next_action to ESCALATE_TO_HUMAN and fill escalation_reason
+- If lead shows second objection in same conversation, set next_action to ESCALATE_TO_HUMAN
+- If lead is DISENGAGING or CONFUSED and confidence < 0.70, set next_action to ESCALATE_TO_HUMAN
+- If lead mentions a link, form, payment, or contract, set next_action to ESCALATE_TO_HUMAN
+- If lead asks a question you do not know the answer to, set next_action to ESCALATE_TO_HUMAN
+- If lead_intent is LOW, always set next_action to SEND_TO_INBOX_REVIEW
+- If lead_intent is HIGH and situation_clarity >= 0.85 and response_quality >= 0.90, set next_action to AUTO_SEND
+- If lead_intent is MEDIUM and situation_clarity >= 0.80 and response_quality >= 0.85 and stage is early (ENTRY/GOAL LOCK/NURTURE), set next_action to AUTO_SEND
+- confidence field = (situation_clarity * 0.4) + (response_quality * 0.6) — calculate this yourself
 - NEVER set AUTO_SEND if asking a question the lead already answered
 - SETTER CORRECTIONS at the top of the system prompt OVERRIDE your defaults. Check them FIRST before responding.
 - Move through stages based on what has been established, not linearly
@@ -188,32 +197,50 @@ function profileFactAlreadyKnown(stage, profileFacts) {
   return value && value !== "" && value !== "Unknown" && value !== "unknown";
 }
 
-function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}) {
-  // Always honour handoff requests
-  if (botResponse.next_action === "HANDOFF_TO_SETTER") return "HANDOFF_TO_SETTER";
+function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}, memory = {}) {
+  const emotionalState = botResponse.emotional_state || "NEUTRAL";
+  const intent = botResponse.lead_intent || "LOW";
+  const stage = botResponse.conversation_stage || "";
+  const situationClarity = botResponse.situation_clarity || 0;
+  const responseQuality = botResponse.response_quality || 0;
+
+  // Compute weighted confidence
+  const confidence = (situationClarity * 0.4) + (responseQuality * 0.6);
+
+  // ── 7 ESCALATION TRIGGERS ──────────────────────────────────────────────────
+  // 1. Bot explicitly decided to escalate
+  if (botResponse.next_action === "ESCALATE_TO_HUMAN") return "ESCALATE_TO_HUMAN";
+  // 2. Lead asked for a human
+  if (botResponse.escalation_reason && botResponse.escalation_reason.toLowerCase().includes("asked for human")) return "ESCALATE_TO_HUMAN";
+  // 3. Lead is angry/frustrated
+  if (emotionalState === "FRUSTRATED") return "ESCALATE_TO_HUMAN";
+  // 4. Second objection detected
+  const objectionCount = memory?.objection_count || 0;
+  if (objectionCount >= 2) return "ESCALATE_TO_HUMAN";
+  // 5. Lead disengaging AND low confidence
+  if (emotionalState === "DISENGAGING" && confidence < 0.70) return "ESCALATE_TO_HUMAN";
+  // 6. Lead confused AND very low confidence
+  if (emotionalState === "CONFUSED" && confidence < 0.60) return "ESCALATE_TO_HUMAN";
+  // 7. Unknown question or link/form/payment mentioned (bot flags this in escalation_reason)
+  if (botResponse.escalation_reason && botResponse.escalation_reason.length > 5) return "ESCALATE_TO_HUMAN";
 
   // Auto-send must be enabled in settings
-  if (!autoSendEnabled) return "SEND_TO_SLACK_REVIEW";
+  if (!autoSendEnabled) return "SEND_TO_INBOX_REVIEW";
 
-  const confidence = botResponse.confidence || 0;
-  const stage = botResponse.conversation_stage || "";
-  const intent = botResponse.lead_intent || "LOW";
+  // LOW intent — always send to review
+  if (intent === "LOW") return "SEND_TO_INBOX_REVIEW";
 
-  // LOW intent — always send to review, never auto-send
-  if (intent === "LOW") return "SEND_TO_SLACK_REVIEW";
+  // Context check — if the info this message collects is already known, review first
+  if (profileFactAlreadyKnown(stage, profileFacts)) return "SEND_TO_INBOX_REVIEW";
 
-  // Context check — if the info this message collects is already known, send to review
-  // so a human can decide the correct next step instead of repeating a question
-  if (profileFactAlreadyKnown(stage, profileFacts)) return "SEND_TO_SLACK_REVIEW";
+  // HIGH intent — auto-send if confidence is high
+  if (intent === "HIGH" && situationClarity >= 0.85 && responseQuality >= 0.90) return "AUTO_SEND";
 
-  // HIGH intent — auto-send if confidence is 90%+
-  if (intent === "HIGH" && confidence >= 0.90) return "AUTO_SEND";
+  // MEDIUM intent — auto-send only safe early stages
+  if (intent === "MEDIUM" && situationClarity >= 0.80 && responseQuality >= 0.85 && MEDIUM_INTENT_AUTO_STAGES.includes(stage)) return "AUTO_SEND";
 
-  // MEDIUM intent — auto-send only safe early stages at 85%+ confidence
-  if (intent === "MEDIUM" && confidence >= 0.85 && MEDIUM_INTENT_AUTO_STAGES.includes(stage)) return "AUTO_SEND";
-
-  // Everything else — send to review
-  return "SEND_TO_SLACK_REVIEW";
+  // Everything else — review
+  return "SEND_TO_INBOX_REVIEW";
 }
 __name(resolveNextAction, "resolveNextAction");
 
@@ -305,7 +332,7 @@ var index_default = {
 
         // ── Memory update ──────────────────────────────────────────────────
         const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts);
+        const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts, memory);
 
         memory.messages.push({
           role: "assistant",
@@ -324,6 +351,11 @@ var index_default = {
           if (botResponse.memory_update.running_summary) {
             memory.running_summary = botResponse.memory_update.running_summary;
           }
+        }
+
+        // Track objection count for escalation trigger #4
+        if (botResponse.emotional_state === "OBJECTING") {
+          memory.objection_count = (memory.objection_count || 0) + 1;
         }
 
         await env.MEMORY_STORE.put(`memory:${customer_id}`, JSON.stringify(memory));
@@ -345,7 +377,7 @@ var index_default = {
           ...(profile_name ? { profile_name: String(profile_name) } : {})
         }, "bot_id,customer_id"));
 
-        if (finalAction === "SEND_TO_SLACK_REVIEW" || finalAction === "HANDOFF_TO_SETTER") {
+        if (finalAction === "SEND_TO_INBOX_REVIEW" || finalAction === "ESCALATE_TO_HUMAN") {
           await sendToSlack(env, {
             customer_id, action: finalAction,
             conversation_stage: botResponse.conversation_stage,
@@ -363,11 +395,13 @@ var index_default = {
             customer_id: String(customer_id),
             action_type: finalAction,
             conversation_stage: botResponse.conversation_stage || null,
-            confidence: botResponse.confidence || null,
+            confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
             bot_reply: joinedReply,
             bot_messages: dedupedMessages,
             typing_delays: typingDelays,
             internal_notes: botResponse.internal_notes || null,
+            escalation_reason: botResponse.escalation_reason || null,
+            emotional_state: botResponse.emotional_state || null,
             last_messages: memory.messages.slice(-5),
             status: "pending",
             created_at: new Date().toISOString(),
@@ -489,7 +523,7 @@ var index_default = {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
           body: JSON.stringify({
-            model: model,
+            model: "gpt-4o",
             messages: [
               { role: "system", content: `You are a prompt engineering assistant for an AI appointment setter bot. The user will give you a plain English instruction to update the bot's system prompt. Your job: 1. Identify exactly which section(s) of the prompt need to change 2. Make ONLY the requested change 3. Preserve all existing structure, formatting, and sections 4. If the instruction is vague, ask for clarification. Return ONLY valid JSON: { "updated_prompt": "full updated prompt", "explanation": "what changed and why", "changes": ["change 1"], "needs_clarification": false }. If clarification needed: { "needs_clarification": true, "question": "your question" }` },
               { role: "user", content: `Current system prompt:\n\n${current_prompt}\n\n---\n\nInstruction: ${instruction}` }
@@ -522,7 +556,7 @@ var index_default = {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
           body: JSON.stringify({
-            model: model,
+            model: "gpt-4o",
             messages: [
               { role: "system", content: `You are a sales psychology expert analysing corrections made to an AI appointment setter for a golf fitness coaching business. Explain the psychological reasoning behind the correction so the AI can learn the pattern. Your explanation should: identify the psychological mistake in the original, explain what the corrected version does better, state the pattern for future situations, be 2-4 sentences, focus on NEPQ principles. Return ONLY valid JSON: { "reason": "your explanation" }` },
               { role: "user", content: `Stage: ${conversation_stage || "Unknown"}\nContext:\n${recent_context || "Not provided"}\nOriginal: "${original_reply}"\nCorrected: "${corrected_reply}"` }
@@ -827,7 +861,7 @@ __name(callOpenAI, "callOpenAI");
 
 async function sendToSlack(env, data) {
   if (!env.SLACK_WEBHOOK_URL) return;
-  const actionEmoji = data.action === "HANDOFF_TO_SETTER" ? "🚨" : "⚠️";
+  const actionEmoji = data.action === "ESCALATE_TO_HUMAN" ? "🚨" : "⚠️";
   const autoLabel = data.auto_send_enabled
     ? `Auto-send ON -- confidence ${(data.confidence * 100).toFixed(0)}% | intent ${data.lead_intent || 'unknown'}`
     : `Auto-send OFF -- all messages routed to review`;

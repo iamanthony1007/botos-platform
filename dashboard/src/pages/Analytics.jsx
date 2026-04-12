@@ -171,7 +171,7 @@ export default function Analytics() {
       <div className="stats-grid">
         <StatCard value={stats.active} label="Active Conversations" sub={timeRange} />
         <StatCard value={stats.qualified} label="Number of Qualified Leads" sub={timeRange} color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct} />
-        <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply" color="var(--blu)" border="var(--blu)" />
+        {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply" color="var(--blu)" border="var(--blu)" />}
         <StatCard value={stats.booked} label="Calls Booked" sub={timeRange} color="#16a34a" border="#16a34a" />
         <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked ÷ Qualified" color="var(--acc)" border="var(--acc)" />
       </div>

@@ -1,14 +1,17 @@
 ﻿import { useState, useEffect, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 
-const FILTERS = ['All', 'Pending', 'Handoff', 'Resolved']
+const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved']
 
 export default function Inbox() {
   const { profile } = useAuth()
   const [leads, setLeads] = useState([])
   const [filter, setFilter] = useState('All')
+  const [sortBy, setSortBy] = useState('lastInteraction')
+  const location = useLocation()
   const [search, setSearch] = useState('')
   const [selectedLead, setSelectedLead] = useState(null)
   const [conversation, setConversation] = useState(null)
@@ -74,7 +77,7 @@ export default function Inbox() {
       }
       leadsMap[r.customer_id].all_reviews.push(r)
       if (r.status === 'pending') leadsMap[r.customer_id].pending_count++
-      if (r.action_type === 'HANDOFF_TO_SETTER' && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
+      if ((r.action_type === 'ESCALATE_TO_HUMAN' || r.action_type === 'HANDOFF_TO_SETTER') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
       if (!leadsMap[r.customer_id].latest_preview) leadsMap[r.customer_id].latest_preview = r.bot_reply || ''
     })
 
@@ -238,7 +241,26 @@ export default function Inbox() {
     if (lead.username) return `@${lead.username}`
     if (lead.profile_name) return lead.profile_name
     if (lead.identity) return lead.identity
+    const channelFallback = {
+      instagram: 'Instagram Lead', facebook: 'Facebook Lead',
+      whatsapp: 'WhatsApp Lead', sms: 'SMS Lead', email: 'Email Lead', tester: 'Bot Tester'
+    }
+    if (lead.channel && channelFallback[lead.channel.toLowerCase()]) return channelFallback[lead.channel.toLowerCase()]
     return `Lead ${lead.customer_id}`
+  }
+
+  function timeAgo(dateStr) {
+    if (!dateStr) return ''
+    const diff = Date.now() - new Date(dateStr).getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'Just now'
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    const days = Math.floor(hrs / 24)
+    if (days === 1) return 'Yesterday'
+    if (days < 7) return `${days}d ago`
+    return new Date(dateStr).toLocaleDateString()
   }
 
   function intentStyle(i) {
@@ -249,10 +271,7 @@ export default function Inbox() {
 
   function fmtTime(ts) {
     if (!ts) return ''
-    const d = new Date(ts), now = new Date(), diff = now - d
-    if (diff < 86400000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    if (diff < 604800000) return d.toLocaleDateString([], { weekday: 'short' })
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+    return timeAgo(ts)
   }
 
   function fmtDate(ts) {
@@ -266,7 +285,15 @@ export default function Inbox() {
     return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
   }
 
-  function readinessStyle(r) {
+  function readinessEmoji(r, stage) {
+    if (stage === 'CALL BOOKING') return '✅'
+    if (r === 'HOT') return '🔥'
+    if (r === 'WARM') return '🟡'
+    return '🔵'
+  }
+
+  function readinessStyle(r, stage) {
+    if (stage === 'CALL BOOKING') return { color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0' }
     if (r === 'HOT') return { color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7' }
     if (r === 'WARM') return { color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }
     return { color: 'var(--tx3)', background: 'var(--surf2)', border: '1px solid var(--bdr)' }
@@ -299,12 +326,24 @@ export default function Inbox() {
     return items
   }
 
-  const filteredLeads = leads.filter(l => {
+  const sortedLeads = [...leads].sort((a, b) => {
+    if (sortBy === 'readiness') {
+      const order = { HOT: 0, WARM: 1, COLD: 2 }
+      return (order[a.lead_readiness] ?? 3) - (order[b.lead_readiness] ?? 3)
+    }
+    if (sortBy === 'stage') {
+      return (a.conversation_stage || '').localeCompare(b.conversation_stage || '')
+    }
+    // default: lastInteraction
+    return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
+  })
+
+  const filteredLeads = sortedLeads.filter(l => {
     const matchesSearch = !search || getLeadName(l).toLowerCase().includes(search.toLowerCase()) || String(l.customer_id).includes(search) || (l.username && l.username.toLowerCase().includes(search.toLowerCase().replace('@', ''))) || (l.profile_name && l.profile_name.toLowerCase().includes(search.toLowerCase()))
     const matchesFilter =
       filter === 'All' ? true :
       filter === 'Pending' ? l.pending_count > 0 :
-      filter === 'Handoff' ? l.handoff_count > 0 :
+      filter === 'Escalated' ? l.handoff_count > 0 :
       filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0 : true
     return matchesSearch && matchesFilter
   })
@@ -350,26 +389,37 @@ export default function Inbox() {
           </div>
         </div>
 
-        {/* Filter tabs */}
-        <div style={{ display: 'flex', padding: '0 10px 10px', gap: '4px', flexShrink: 0 }}>
-          {FILTERS.map(f => {
-            const count = f === 'Pending' ? totalPending : f === 'Handoff' ? leads.reduce((a, l) => a + l.handoff_count, 0) : null
-            return (
-              <button key={f} onClick={() => setFilter(f)} style={{
-                flex: 1, padding: '5px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                fontSize: '.72rem', fontWeight: filter === f ? 600 : 400,
-                background: filter === f ? 'var(--acc)' : 'var(--surf2)',
-                color: filter === f ? '#fff' : 'var(--tx2)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
-                transition: 'all .15s'
-              }}>
-                {f}
-                {count > 0 && (
-                  <span style={{ background: filter === f ? 'rgba(255,255,255,.3)' : '#e53e3e', color: '#fff', borderRadius: '999px', fontSize: '.6rem', minWidth: '14px', height: '14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{count}</span>
-                )}
-              </button>
-            )
-          })}
+        {/* Filter tabs + Sort */}
+        <div style={{ padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            {FILTERS.map(f => {
+              const count = f === 'Pending' ? totalPending : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0) : null
+              return (
+                <button key={f} onClick={() => setFilter(f)} style={{
+                  flex: 1, padding: '5px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                  fontSize: '.72rem', fontWeight: filter === f ? 600 : 400,
+                  background: filter === f ? 'var(--acc)' : 'var(--surf2)',
+                  color: filter === f ? '#fff' : 'var(--tx2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+                  transition: 'all .15s'
+                }}>
+                  {f}
+                  {count > 0 && (
+                    <span style={{ background: filter === f ? 'rgba(255,255,255,.3)' : '#e53e3e', color: '#fff', borderRadius: '999px', fontSize: '.6rem', minWidth: '14px', height: '14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{count}</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{
+            width: '100%', padding: '5px 8px', borderRadius: '8px', border: '1px solid var(--bdr)',
+            background: 'var(--surf2)', color: 'var(--tx2)', fontSize: '.72rem', cursor: 'pointer',
+            fontFamily: 'var(--fn)'
+          }}>
+            <option value="lastInteraction">Sort: Last Interaction</option>
+            <option value="readiness">Sort: Readiness (🔥 first)</option>
+            <option value="stage">Sort: Conversation Stage</option>
+          </select>
         </div>
 
         {/* Lead list */}
@@ -457,8 +507,8 @@ export default function Inbox() {
               </div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                 {selectedLead.lead_readiness && (
-                  <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', ...readinessStyle(selectedLead.lead_readiness) }}>
-                    {selectedLead.lead_readiness}
+                  <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', ...readinessStyle(selectedLead.lead_readiness, selectedLead.conversation_stage) }}>
+                    {readinessEmoji(selectedLead.lead_readiness, selectedLead.conversation_stage)} {selectedLead.conversation_stage === 'CALL BOOKING' ? 'Call Booked' : selectedLead.lead_readiness}
                   </span>
                 )}
                 {selectedLead.lead_intent && (
@@ -570,8 +620,8 @@ export default function Inbox() {
                     <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center' }}>{getLeadName(selectedLead)}</div>
                     <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>ID: {selectedLead.customer_id}</div>
                     {selectedLead.lead_readiness && (
-                      <span style={{ fontSize: '.7rem', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', ...readinessStyle(selectedLead.lead_readiness) }}>
-                        {selectedLead.lead_readiness}
+                      <span style={{ fontSize: '.7rem', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', ...readinessStyle(selectedLead.lead_readiness, selectedLead.conversation_stage) }}>
+                        {readinessEmoji(selectedLead.lead_readiness, selectedLead.conversation_stage)} {selectedLead.conversation_stage === 'CALL BOOKING' ? 'Call Booked' : selectedLead.lead_readiness}
                       </span>
                     )}
                   </div>
@@ -581,6 +631,7 @@ export default function Inbox() {
                     { label: 'Primary Goal', value: selectedLead.primary_goal },
                     { label: 'Stage', value: selectedLead.conversation_stage },
                     { label: 'Channel', value: selectedLead.channel },
+                    { label: 'Last Interaction', value: selectedLead.last_activity ? timeAgo(selectedLead.last_activity) : '—' },
                     { label: 'Golf Identity', value: selectedLead.profile_facts?.golf_identity },
                     { label: 'Timeframe', value: selectedLead.profile_facts?.timeframe },
                     { label: 'What They\'ve Tried', value: selectedLead.profile_facts?.what_theyve_tried },
@@ -609,9 +660,14 @@ export default function Inbox() {
 
                 <div style={{ padding: '10px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '.8rem', fontWeight: 600, color: activeReview.action_type === 'HANDOFF_TO_SETTER' ? '#e53e3e' : '#d97706' }}>
-                      {activeReview.action_type === 'HANDOFF_TO_SETTER' ? '🚨 Handoff' : '⚠ Review needed'}
+                    <span style={{ fontSize: '.8rem', fontWeight: 600, color: (activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER') ? '#e53e3e' : '#d97706' }}>
+                      {(activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER') ? '🚨 Escalated to Human' : '⚠ Review needed'}
                     </span>
+                    {activeReview.escalation_reason && (
+                      <span style={{ fontSize: '.75rem', background: '#fff5f5', color: '#e53e3e', border: '1px solid #fed7d7', borderRadius: '6px', padding: '2px 8px', fontWeight: 500 }}>
+                        {activeReview.escalation_reason}
+                      </span>
+                    )}
                     <span style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>
                       {Math.round((activeReview.confidence || 0) * 100)}% confidence
                     </span>
