@@ -703,7 +703,7 @@ export default function Inbox() {
 
                   {/* ── Setter Correction Bar ── */}
                   <div style={{ padding: '7px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf2)', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '.65rem', fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.07em', flexShrink: 0 }}>Correct AI:</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', flexShrink: 0 }}><span style={{ fontSize: '.65rem', fontWeight: 700, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Tag lead:</span><span style={{ fontSize: '.6rem', color: 'var(--tx3)', fontWeight: 400 }}>Based on what the lead said</span></div>
                     <select
                       value={correctedStage || ''}
                       onChange={e => setCorrectedStage(e.target.value)}
@@ -854,11 +854,11 @@ export default function Inbox() {
 
             {/* AI Corrections — Stage + Intent */}
             <div style={{ background: 'var(--surf2)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Correct AI Classification</div>
+              <div><div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Tag Lead Stage and Intent</div><div style={{ fontSize: '.74rem', color: 'var(--tx3)', marginTop: '3px' }}>Based on what the lead said, not what the AI asked</div></div>
 
               {/* Stage */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Conversation Stage</label>
+                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Conversation Stage <span style={{ fontWeight: 400, color: 'var(--tx3)' }}>(where the lead is, based on their words)</span></label>
                 <select
                   value={correctedStage || ''}
                   onChange={e => setCorrectedStage(e.target.value)}
@@ -878,7 +878,7 @@ export default function Inbox() {
 
               {/* Intent */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Lead Intent</label>
+                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Lead Intent <span style={{ fontWeight: 400, color: 'var(--tx3)' }}>(based on what they expressed)</span></label>
                 <div style={{ display: 'flex', gap: '6px' }}>
                   {['LOW', 'MEDIUM', 'HIGH'].map(i => (
                     <button
