@@ -41,14 +41,14 @@ export default function Layout() {
     if (!bot) return
     const { count } = await supabase
       .from('reviews').select('*', { count: 'exact', head: true })
-      .eq('bot_id', bot.id).eq('status', 'pending')
+      .eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
     setUnreadCount(count || 0)
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
     const channel = supabase.channel(`layout-inbox-${bot.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => {
         supabase.from('reviews').select('*', { count: 'exact', head: true })
-          .eq('bot_id', bot.id).eq('status', 'pending')
+          .eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
           .then(({ count: c }) => setUnreadCount(c || 0))
       })
       .subscribe()
