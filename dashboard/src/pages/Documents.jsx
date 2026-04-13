@@ -179,31 +179,83 @@ export default function Documents() {
 function DocRow({ doc, docIcon, expanded, onToggleExpand, onToggleStatus, onRemove }) {
   const wordCount = doc.content ? doc.content.trim().split(/\s+/).filter(Boolean).length : 0
   const preview = doc.content ? doc.content.slice(0, 400).trim() + (doc.content.length > 400 ? '...' : '') : ''
+
   return (
     <div style={{ borderRadius: 'var(--rsm)', border: '1px solid var(--bdr)', background: doc.status === 'active' ? 'var(--surf)' : 'var(--surf2)', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px' }}>
-        <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--tx3)', flexShrink: 0, minWidth: '28px', textAlign: 'center' }}>{docIcon(doc.name)}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '.85rem', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: doc.status === 'active' ? 'var(--tx)' : 'var(--tx3)' }}>{doc.name}</div>
-          <div style={{ fontSize: '.74rem', color: 'var(--tx3)', marginTop: '2px' }}>
-            {doc.file_size ? Math.round(doc.file_size / 1024) + ' KB - ' : ''}
-            {wordCount > 0 ? wordCount.toLocaleString() + ' words - ' : 'No text extracted - '}
-            Added {new Date(doc.created_at).toLocaleDateString()}
-            {doc.usage_count > 0 ? ' - Used in ' + doc.usage_count + ' responses' : ''}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '12px 14px' }}>
+
+        {/* Icon */}
+        <span style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx3)', flexShrink: 0, minWidth: '28px', textAlign: 'center', paddingTop: '2px' }}>
+          {docIcon(doc.name)}
+        </span>
+
+        {/* Name + meta + buttons stacked */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+
+          {/* Name row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{
+              fontSize: '.85rem', fontWeight: 600,
+              color: doc.status === 'active' ? 'var(--tx)' : 'var(--tx3)',
+              wordBreak: 'break-word', flex: 1, minWidth: 0
+            }}>
+              {doc.name}
+            </span>
+            <span className={'badge ' + (doc.status === 'active' ? 'badge-green' : 'badge-gray')} style={{ flexShrink: 0 }}>
+              {doc.status}
+            </span>
+            {wordCount === 0 && (
+              <span className="badge badge-red" style={{ fontSize: '.67rem', flexShrink: 0 }}>No text</span>
+            )}
           </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-          <span className={'badge ' + (doc.status === 'active' ? 'badge-green' : 'badge-gray')}>{doc.status}</span>
-          {wordCount > 0 && <button className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }} onClick={onToggleExpand}>{expanded ? 'Hide' : 'Preview'}</button>}
-          {wordCount === 0 && <span className="badge badge-red" style={{ fontSize: '.67rem' }}>No text</span>}
-          <button className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }} onClick={onToggleStatus}>{doc.status === 'active' ? 'Disable' : 'Enable'}</button>
-          <button className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px', color: 'var(--red)', borderColor: 'var(--redbd)' }} onClick={onRemove}>Remove</button>
+
+          {/* Meta row */}
+          <div style={{ fontSize: '.74rem', color: 'var(--tx3)', lineHeight: 1.5 }}>
+            {doc.file_size ? Math.round(doc.file_size / 1024) + ' KB · ' : ''}
+            {wordCount > 0 ? wordCount.toLocaleString() + ' words · ' : 'No text extracted · '}
+            Added {new Date(doc.created_at).toLocaleDateString()}
+            {doc.usage_count > 0 ? ' · Used in ' + doc.usage_count + ' responses' : ''}
+          </div>
+
+          {/* Action buttons row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            {wordCount > 0 && (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ fontSize: '.72rem', padding: '4px 10px' }}
+                onClick={onToggleExpand}
+              >
+                {expanded ? 'Hide' : 'Preview'}
+              </button>
+            )}
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: '.72rem', padding: '4px 10px' }}
+              onClick={onToggleStatus}
+            >
+              {doc.status === 'active' ? 'Disable' : 'Enable'}
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: '.72rem', padding: '4px 10px', color: 'var(--red)', borderColor: 'var(--redbd)' }}
+              onClick={onRemove}
+            >
+              Remove
+            </button>
+          </div>
+
         </div>
       </div>
+
+      {/* Expanded preview */}
       {expanded && doc.content && (
         <div style={{ borderTop: '1px solid var(--bdr)', padding: '12px 14px', background: 'var(--surf2)' }}>
-          <div style={{ fontSize: '.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--tx3)', marginBottom: '6px' }}>Extracted content - {wordCount.toLocaleString()} words total</div>
-          <pre style={{ fontSize: '.76rem', fontFamily: 'Monaco, Menlo, monospace', color: 'var(--tx2)', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: '220px', overflow: 'auto' }}>{preview}</pre>
+          <div style={{ fontSize: '.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--tx3)', marginBottom: '6px' }}>
+            Extracted content — {wordCount.toLocaleString()} words total
+          </div>
+          <pre style={{ fontSize: '.76rem', fontFamily: 'Monaco, Menlo, monospace', color: 'var(--tx2)', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: '220px', overflow: 'auto' }}>
+            {preview}
+          </pre>
         </div>
       )}
     </div>
