@@ -205,7 +205,7 @@ export default function Dashboard() {
           <StatCard
             value={stats.highIntent}
             label="High Intent Leads"
-            sub="Ready to book"
+            sub="High urgency leads"
             color="var(--amb)"
             border="var(--amb)"
           />
