@@ -14,21 +14,34 @@ const STAGE_PRIORITY = {
 const INTENT_SCORE = { HIGH: 3, MEDIUM: 2, LOW: 1 }
 const TIME_RANGES = ['Today', 'Last 7 Days', 'Last 30 Days']
 
+function Tooltip({ text }) {
+  const [show, setShow] = useState(false)
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <span
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        style={{ width: '15px', height: '15px', borderRadius: '50%', background: '#e5e7eb', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '.6rem', color: '#6b7280', cursor: 'default', fontWeight: 700, flexShrink: 0 }}
+      >?</span>
+      {show && (
+        <span style={{ position: 'absolute', bottom: '130%', left: '50%', transform: 'translateX(-50%)', background: '#1A1A1A', color: '#fff', fontSize: '.72rem', lineHeight: 1.5, padding: '7px 10px', borderRadius: '8px', width: '210px', zIndex: 999, boxShadow: '0 4px 16px rgba(0,0,0,.25)', pointerEvents: 'none' }}>
+          {text}
+          <span style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', border: '5px solid transparent', borderTopColor: '#1A1A1A' }} />
+        </span>
+      )}
+    </span>
+  )
+}
+
 export default function Dashboard() {
   const { profile } = useAuth()
   const navigate = useNavigate()
   const [timeRange, setTimeRange] = useState('Last 7 Days')
-  const [stats, setStats] = useState({
-    newConversations: 0,
-    needsReply: 0,
-    highIntent: 0,
-    aiMessagesSent: 0,
-    booked: 0,
-    conversionRate: 0
-  })
+  const [stats, setStats] = useState({ newConversations: 0, needsReply: 0, highIntent: 0, aiMessagesSent: 0, booked: 0, conversionRate: 0 })
   const [closestToBooking, setClosestToBooking] = useState([])
   const [bots, setBots] = useState([])
   const [loading, setLoading] = useState(true)
+  const [lastUpdated, setLastUpdated] = useState(null)
   const adminRole = profile?.role === 'admin' || profile?.role === 'superadmin'
 
   useEffect(() => { loadData() }, [profile, timeRange])
@@ -57,30 +70,14 @@ export default function Dashboard() {
       if (!botIds.length) { setLoading(false); return }
 
       const since = getDateFilter()
-
-      const [
-        { data: convos },
-        { data: allReviews },
-        { data: pendingReviewsCount }
-      ] = await Promise.all([
-        supabase.from('conversations')
-          .select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status')
-          .in('bot_id', botIds)
-          .neq('channel', 'tester')
-          .gte('updated_at', since),
-        supabase.from('reviews')
-          .select('id, status')
-          .in('bot_id', botIds)
-          .gte('created_at', since),
-        supabase.from('reviews')
-          .select('customer_id')
-          .in('bot_id', botIds)
-          .eq('status', 'pending')
+      const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }] = await Promise.all([
+        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
+        supabase.from('reviews').select('id, status').in('bot_id', botIds).gte('created_at', since),
+        supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending')
       ])
 
       const allConvos = convos || []
       const reviews = allReviews || []
-
       const newConversations = allConvos.length
       const needsReply = new Set((pendingReviewsCount || []).map(r => r.customer_id)).size
       const highIntent = allConvos.filter(c => c.lead_intent === 'HIGH').length
@@ -89,6 +86,7 @@ export default function Dashboard() {
       const conversionRate = newConversations > 0 ? Math.round((booked / newConversations) * 100) : 0
 
       setStats({ newConversations, needsReply, highIntent, aiMessagesSent, booked, conversionRate })
+      setLastUpdated(new Date())
 
       const scored = allConvos
         .filter(c => c.status !== 'booked')
@@ -115,8 +113,6 @@ export default function Dashboard() {
     if (ch.includes('instagram') || ch === 'manychat') return 'Instagram Lead'
     if (ch.includes('facebook')) return 'Facebook Lead'
     if (ch.includes('whatsapp')) return 'WhatsApp Lead'
-    if (ch.includes('sms')) return 'SMS Lead'
-    if (ch.includes('email')) return 'Email Lead'
     return 'Instagram Lead'
   }
 
@@ -130,8 +126,7 @@ export default function Dashboard() {
   function fmtTime(ts) {
     if (!ts) return ''
     const d = new Date(ts), now = new Date(), diff = now - d
-    const mins = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
+    const mins = Math.floor(diff / 60000), hours = Math.floor(diff / 3600000)
     if (mins < 1) return 'Just now'
     if (mins < 60) return `${mins}m ago`
     if (hours < 24) return `${hours}h ago`
@@ -150,98 +145,68 @@ export default function Dashboard() {
 
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
 
-  const StatCard = ({ value, label, sub, color, border, urgent }) => (
-    <div className="stat-card" style={{
-      borderLeftColor: border || 'var(--acc)',
-      ...(urgent ? { background: '#fff9f0', borderLeftColor: '#e53e3e' } : {})
-    }}>
+  const StatCard = ({ value, label, sub, color, border, urgent, tooltip }) => (
+    <div className="stat-card" style={{ borderLeftColor: border || 'var(--acc)', ...(urgent ? { background: '#fff9f0', borderLeftColor: '#e53e3e' } : {}) }}>
       <div className="stat-num" style={{ color: urgent ? '#e53e3e' : (color || 'var(--acc)') }}>{value}</div>
-      <div className="stat-label" style={{ fontSize: '.8rem', marginTop: '6px', fontWeight: 500, color: 'var(--tx2)' }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '6px' }}>
+        <div className="stat-label" style={{ fontSize: '.8rem', fontWeight: 500, color: 'var(--tx2)' }}>{label}</div>
+        {tooltip && <Tooltip text={tooltip} />}
+      </div>
       {sub && <div className="stat-change" style={{ color: urgent ? '#e53e3e' : (color || 'var(--acc)') }}>{sub}</div>}
     </div>
   )
 
   return (
     <div className="page">
-      {/* Header */}
       <div className="page-header">
         <div>
           <div className="page-title">Dashboard</div>
-          <div className="page-sub">{profile?.organizations?.name || 'Platform'} · All bots</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div className="page-sub">{profile?.organizations?.name || 'Platform'} · All bots</div>
+            {lastUpdated && (
+              <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>
+                Last updated: {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
+          </div>
         </div>
         <div style={{ display: 'flex', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '10px', overflow: 'hidden' }}>
           {TIME_RANGES.map(t => (
-            <button key={t} onClick={() => setTimeRange(t)} style={{
-              padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: '.76rem',
-              fontWeight: timeRange === t ? 600 : 400,
-              background: timeRange === t ? 'var(--acc)' : 'transparent',
-              color: timeRange === t ? '#fff' : 'var(--tx2)',
-              transition: 'all .15s', fontFamily: 'var(--fn)'
-            }}>{t}</button>
+            <button key={t} onClick={() => setTimeRange(t)} style={{ padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: '.76rem', fontWeight: timeRange === t ? 600 : 400, background: timeRange === t ? 'var(--acc)' : 'transparent', color: timeRange === t ? '#fff' : 'var(--tx2)', transition: 'all .15s', fontFamily: 'var(--fn)' }}>{t}</button>
           ))}
         </div>
       </div>
 
-      {/* ACTIVITY SECTION */}
       <div>
-        <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>
-          Activity
-        </div>
+        <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Activity</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-          <StatCard
-            value={stats.newConversations}
-            label="New Conversations"
-            sub={timeRange}
-          />
-          <StatCard
-            value={stats.needsReply}
-            label="Needs Reply"
-            sub="Pending in Mu AI inbox"
-            color="#e53e3e"
-            border="#e53e3e"
-            urgent={stats.needsReply > 0}
-          />
-          <StatCard
-            value={stats.highIntent}
-            label="High Intent Leads"
-            sub="High urgency leads"
-            color="var(--amb)"
-            border="var(--amb)"
-          />
-          <StatCard
-            value={stats.aiMessagesSent}
-            label="AI Messages Sent"
-            sub="Auto-approved"
-            color="var(--blu)"
-            border="var(--blu)"
-          />
-          <StatCard
-            value={stats.booked}
-            label="Calls Booked"
-            sub={timeRange}
-            color="#16a34a"
-            border="#16a34a"
-          />
-          <StatCard
-            value={`${stats.conversionRate}%`}
-            label="Conversion Rate"
-            sub="Booked / Total Conversations"
-            color="var(--acc)"
-            border="var(--acc)"
-          />
+          <StatCard value={stats.newConversations} label="New Conversations" sub={timeRange}
+            tooltip="Unique leads who sent at least one message in the selected period." />
+          <StatCard value={stats.needsReply} label="Needs Reply" sub="Pending in Mu AI inbox"
+            color="#e53e3e" border="#e53e3e" urgent={stats.needsReply > 0}
+            tooltip="Leads with AI replies waiting for approval in the inbox. Excludes test conversations." />
+          <StatCard value={stats.highIntent} label="High Intent Leads" sub="High urgency leads"
+            color="var(--amb)" border="var(--amb)"
+            tooltip="Leads currently tagged as HIGH intent. Indicates strong motivation or urgency to act." />
+          <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Auto-approved"
+            color="var(--blu)" border="var(--blu)"
+            tooltip="AI replies approved and sent, either automatically or manually by a setter." />
+          <StatCard value={stats.booked} label="Calls Booked" sub={timeRange}
+            color="#16a34a" border="#16a34a"
+            tooltip="Leads who reached the CALL BOOKING stage in the conversation." />
+          <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations"
+            color="var(--acc)" border="var(--acc)"
+            tooltip="Calls Booked divided by total conversations started in this period." />
         </div>
       </div>
 
-      {/* CLOSEST TO BOOKING */}
       <div className="card">
         <div style={{ marginBottom: '16px' }}>
-          <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--tx)', letterSpacing: '-.01em' }}>Closest to Booking</div>
+          <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--tx)' }}>Closest to Booking</div>
           <div style={{ fontSize: '.82rem', color: 'var(--tx3)', marginTop: '3px' }}>Top leads ranked by intent, stage, and recent activity</div>
         </div>
         {closestToBooking.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '32px', color: 'var(--tx3)', fontSize: '.9rem' }}>
-            No active leads in this time range.
-          </div>
+          <div style={{ textAlign: 'center', padding: '32px', color: 'var(--tx3)', fontSize: '.9rem' }}>No active leads in this time range.</div>
         ) : (
           <div className="table-wrap">
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '480px' }}>
@@ -256,34 +221,20 @@ export default function Dashboard() {
                 {closestToBooking.map((c, i) => {
                   const ii = intentInfo(c.lead_intent, c.conversation_stage)
                   return (
-                    <tr
-                      key={c.customer_id}
-                      onClick={() => navigate('/dashboard/inbox', { state: { openLead: c.customer_id } })}
-                      style={{ cursor: 'pointer', transition: 'background .12s' }}
-                      onMouseEnter={e => e.currentTarget.style.background = 'var(--accp)'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                    >
+                    <tr key={c.customer_id} onClick={() => navigate('/dashboard/inbox', { state: { openLead: c.customer_id } })} style={{ cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.background = 'var(--accp)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                       <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: i === 0 ? 'var(--acc)' : 'var(--surf3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.72rem', fontWeight: 700, color: i === 0 ? '#fff' : 'var(--tx3)', flexShrink: 0 }}>
-                            {i + 1}
-                          </div>
+                          <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: i === 0 ? 'var(--acc)' : 'var(--surf3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.72rem', fontWeight: 700, color: i === 0 ? '#fff' : 'var(--tx3)', flexShrink: 0 }}>{i + 1}</div>
                           <span style={{ fontWeight: 600, fontSize: '.95rem', color: 'var(--tx)' }}>{getLeadName(c)}</span>
                         </div>
                       </td>
                       <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
-                        <span style={{ fontSize: '.86rem', fontWeight: 500, color: stageColor(c.conversation_stage) }}>
-                          {c.conversation_stage || 'Entry'}
-                        </span>
+                        <span style={{ fontSize: '.86rem', fontWeight: 500, color: stageColor(c.conversation_stage) }}>{c.conversation_stage || 'Entry'}</span>
                       </td>
                       <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
-                        <span style={{ fontSize: '.84rem', fontWeight: 700, padding: '3px 12px', borderRadius: '999px', color: ii.color, background: ii.bg, border: ii.border }}>
-                          {ii.emoji} {ii.label}
-                        </span>
+                        <span style={{ fontSize: '.84rem', fontWeight: 700, padding: '3px 12px', borderRadius: '999px', color: ii.color, background: ii.bg, border: ii.border }}>{ii.emoji} {ii.label}</span>
                       </td>
-                      <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)', fontSize: '.88rem', color: 'var(--tx2)' }}>
-                        {fmtTime(c.updated_at)}
-                      </td>
+                      <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)', fontSize: '.88rem', color: 'var(--tx2)' }}>{fmtTime(c.updated_at)}</td>
                     </tr>
                   )
                 })}
@@ -293,15 +244,12 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Bots table — admin only */}
       {adminRole && bots.length > 0 && (
         <div className="card">
           <div className="card-title">Your Bots</div>
           <div className="table-wrap">
             <table className="data-table">
-              <thead>
-                <tr><th>Bot Name</th><th>Model</th><th>Status</th><th>Created</th></tr>
-              </thead>
+              <thead><tr><th>Bot Name</th><th>Model</th><th>Status</th><th>Created</th></tr></thead>
               <tbody>
                 {bots.map(b => (
                   <tr key={b.id}>
@@ -316,12 +264,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-
-      <style>{`
-        @media (max-width: 767px) {
-          .activity-grid { grid-template-columns: repeat(2, 1fr) !important; }
-        }
-      `}</style>
     </div>
   )
 }
