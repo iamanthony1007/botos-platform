@@ -1,4 +1,4 @@
-var __defProp = Object.defineProperty;
+﻿var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
@@ -46,7 +46,6 @@ You MUST respond with ONLY a valid JSON object (no markdown, no explanation) wit
   "confidence": 0.0-1.0,
   "messages": ["first message", "second message (optional)", "third message with question (optional)"],
   "reply": "all messages joined into one string — for logging only",
-  "lead_readiness": "COLD|WARM|HOT",
   "lead_intent": "LOW|MEDIUM|HIGH",
   "primary_goal": "Distance|Pain/Injuries|Consistency|Unknown",
   "next_action": "AUTO_SEND|SEND_TO_INBOX_REVIEW|ESCALATE_TO_HUMAN",
@@ -365,7 +364,6 @@ var index_default = {
           customer_id: String(customer_id),
           channel,
           status: botResponse.conversation_stage === "CALL BOOKING" ? "booked" : "active",
-          lead_readiness: botResponse.lead_readiness || "COLD",
           lead_intent: botResponse.lead_intent || "LOW",
           primary_goal: botResponse.primary_goal || null,
           conversation_stage: botResponse.conversation_stage || null,
@@ -427,7 +425,6 @@ var index_default = {
           conversation_stage: botResponse.conversation_stage,
           decision_type: botResponse.decision_type || null,
           confidence: botResponse.confidence,
-          lead_readiness: botResponse.lead_readiness,
           lead_intent: botResponse.lead_intent || "LOW",
           next_action: finalAction,
           auto_send_enabled: autoSendEnabled,

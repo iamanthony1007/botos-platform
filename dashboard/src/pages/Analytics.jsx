@@ -1,10 +1,9 @@
-﻿import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 
 const TIME_RANGES = ['Today', 'Last 7 Days', 'Last 30 Days']
 
-// Strict sequential stage order - each stage can only have <= leads than the previous
 const STAGE_SEQUENCE = [
   'ENTRY / OPEN LOOP', 'ENTRY', 'OPEN LOOP',
   'LOCATION ANCHOR',
@@ -61,7 +60,7 @@ export default function Analytics() {
 
       const { data: convos } = await supabase
         .from('conversations')
-        .select('customer_id, lead_readiness, conversation_stage, status, updated_at')
+        .select('customer_id, lead_intent, conversation_stage, status, updated_at')
         .eq('bot_id', bot.id)
         .neq('channel', 'tester')
         .gte('updated_at', since)
@@ -76,11 +75,13 @@ export default function Analytics() {
 
       const aiAssistedIds = new Set(allReviews.map(r => r.customer_id))
       const active = allConvos.length
-      const qualified = allConvos.filter(c => c.lead_readiness === 'HOT' || c.lead_readiness === 'WARM').length
+      // Qualified = HIGH or MEDIUM intent
+      const qualified = allConvos.filter(c => c.lead_intent === 'HIGH' || c.lead_intent === 'MEDIUM').length
       const booked = allConvos.filter(c => c.status === 'booked').length
       const aiAssisted = aiAssistedIds.size
       const qualifiedPct = active > 0 ? Math.round((qualified / active) * 100) : 0
-      const conversionRate = qualified > 0 ? Math.round((booked / qualified) * 100) : 0
+      // Conversion Rate = Booked / Total Conversations
+      const conversionRate = active > 0 ? Math.round((booked / active) * 100) : 0
       const reviewsSent = allReviews.length
       const autoSent = allReviews.filter(r => r.status === "approved").length
       const autoSendRate = allReviews.length > 0 ? Math.round((autoSent / allReviews.length) * 100) : 0
@@ -92,34 +93,29 @@ export default function Analytics() {
       // Funnel: strict 3-step
       setFunnelData([
         { label: 'Conversations Started', value: active },
-        { label: 'Qualified Leads', value: qualified },
+        { label: 'Qualified Leads (Medium + High Intent)', value: qualified },
         { label: 'Calls Booked', value: booked },
       ])
 
-      // Stage drop-off: strict sequential logic
-      // Count leads at each stage
+      // Stage drop-off
       const stageCounts = {}
       allConvos.forEach(c => {
         const s = c.conversation_stage
         if (s) stageCounts[s] = (stageCounts[s] || 0) + 1
       })
 
-      // Build sequential stage list, enforce monotonic decrease
       const rawStages = STAGE_SEQUENCE
         .map(s => ({ stage: s, rawCount: stageCounts[s] || 0 }))
         .filter(s => s.rawCount > 0)
 
-      // Enforce: each stage count cannot exceed the previous
-      // Use cumulative max from top downward to fix the broken data
       const strictStages = []
-      let prevCount = active // start with total conversations as ceiling
+      let prevCount = active
       for (const s of rawStages) {
         const cappedCount = Math.min(s.rawCount, prevCount)
         strictStages.push({ stage: s.stage, count: cappedCount })
         prevCount = cappedCount
       }
 
-      // Calculate drop-off between adjacent stages
       const stageDataWithDropoff = strictStages.map((s, i) => {
         if (i === 0) return { ...s, dropoffPct: null, entered: s.count, dropped: 0 }
         const prev = strictStages[i - 1].count
@@ -171,17 +167,20 @@ export default function Analytics() {
       {/* TOP METRICS */}
       <div className="stats-grid">
         <StatCard value={stats.active} label="Active Conversations" sub={timeRange} />
-        <StatCard value={stats.qualified} label="Number of Qualified Leads" sub={timeRange} color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct} />
+        <StatCard value={stats.qualified} label="Qualified Leads" sub="Medium + High intent" color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct} />
         {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply" color="var(--blu)" border="var(--blu)" />}
         <StatCard value={stats.booked} label="Calls Booked" sub={timeRange} color="#16a34a" border="#16a34a" />
-        <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked ÷ Qualified" color="var(--acc)" border="var(--acc)" />
+        <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations" color="var(--acc)" border="var(--acc)" />
       </div>
 
       <div className='grid-2col'>
 
         {/* CONVERSATION FUNNEL */}
         <div className="card">
-          <div className="card-title">Conversation Funnel</div>
+          <div className="card-title">Conversation Drop-Off (Lead Behavior)</div>
+          <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginBottom: '12px', marginTop: '-8px' }}>
+            Shows where leads disengage in the conversation flow. Drop-offs reflect lead behaviour, not system errors.
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
             {funnelData.map((step, i) => {
               const pct = i > 0 && funnelData[i-1].value > 0
@@ -226,7 +225,7 @@ export default function Analytics() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px', background: 'var(--accp)', borderRadius: 'var(--rsm)', border: '1px solid var(--accl)' }}>
                 <div>
                   <div style={{ fontSize: '.82rem', color: 'var(--tx2)', fontWeight: 500 }}>Booking Conversion</div>
-                  <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>Bookings ÷ All conversations</div>
+                  <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>Bookings / All conversations</div>
                 </div>
                 <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--acc)' }}>{systemPerf.bookingRate}%</span>
               </div>
@@ -241,7 +240,7 @@ export default function Analytics() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px", background: "var(--blubg)", borderRadius: "var(--rsm)", border: "1px solid var(--blubd)" }}>
                   <div>
                     <div style={{ fontSize: ".82rem", color: "var(--tx2)", fontWeight: 500 }}>AI Auto-Send Rate</div>
-                    <div style={{ fontSize: ".72rem", color: "var(--tx3)", marginTop: "2px" }}>Approved ÷ Total reviews</div>
+                    <div style={{ fontSize: ".72rem", color: "var(--tx3)", marginTop: "2px" }}>Approved / Total reviews</div>
                   </div>
                   <span style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--blu)" }}>{systemPerf.autoSendRate}%</span>
                 </div>
@@ -256,7 +255,7 @@ export default function Analytics() {
         <div className="card">
           <div style={{ marginBottom: '14px' }}>
             <div className="card-title" style={{ margin: 0 }}>Drop-Off by Stage</div>
-            <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginTop: '2px' }}>Where leads are being lost in the conversation flow</div>
+            <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginTop: '2px' }}>Where leads disengage in the conversation flow. These are lead behaviour patterns, not system errors.</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {stageData.map((s, i) => (
