@@ -14,7 +14,6 @@ export default function UserManagement() {
 
   const isFullAccess = (role) => role === 'admin' || role === 'superadmin'
 
-  // Default role for invite form based on current user role
   const defaultInviteRole = profile?.role === 'client' ? 'setter' : 'client'
   const [inviteForm, setInviteForm] = useState({
     email: '', name: '', role: defaultInviteRole,
@@ -26,12 +25,11 @@ export default function UserManagement() {
   async function loadData() {
     setLoading(true)
 
-    // Load users — clients only see setters on their bot
     let usersQuery = supabase
-  .from('profiles')
-  .select('id, name, email, role, assigned_bot_id, permissions, created_at, invited_by')
-  .eq('disabled', false)
-  .order('created_at', { ascending: false })
+      .from('profiles')
+      .select('id, name, email, role, assigned_bot_id, permissions, created_at, invited_by')
+      .eq('disabled', false)
+      .order('created_at', { ascending: false })
 
     if (profile?.role === 'client') {
       usersQuery = usersQuery
@@ -41,7 +39,6 @@ export default function UserManagement() {
 
     const { data: usersData } = await usersQuery
 
-    // Load pending invites — clients only see invites they sent
     let invitesQuery = supabase
       .from('invites')
       .select('id, email, name, token, role, status, expires_at, created_at, assigned_bot_id, invited_by')
@@ -54,18 +51,15 @@ export default function UserManagement() {
 
     const { data: invitesData } = await invitesQuery
 
-    // Load bots — clients only see their own bot
     let botsQuery = supabase.from('bots').select('id, name').order('name')
     if (profile?.role === 'client') {
       botsQuery = botsQuery.eq('id', profile.assigned_bot_id)
     }
     const { data: botsData } = await botsQuery
 
-    // Build bot name map for display
     const botMap = {}
     ;(botsData || []).forEach(b => { botMap[b.id] = b.name })
 
-    // Attach bot name to users and invites
     const usersWithBot = (usersData || []).map(u => ({ ...u, botName: botMap[u.assigned_bot_id] || null }))
     const invitesWithBot = (invitesData || []).map(i => ({ ...i, botName: botMap[i.assigned_bot_id] || null }))
 
@@ -78,7 +72,6 @@ export default function UserManagement() {
   async function sendInvite() {
     if (!inviteForm.email || !inviteForm.name) { showToast('Please fill in all required fields', 'error'); return }
 
-    // Clients always assign their own bot to setters
     const assignedBot = profile?.role === 'client'
       ? profile.assigned_bot_id
       : inviteForm.assigned_bot_id
@@ -86,10 +79,6 @@ export default function UserManagement() {
     if (inviteForm.role === 'client' && !assignedBot) {
       showToast('Please assign a bot', 'error'); return
     }
-
-    const defaultPerms = inviteForm.role === 'setter'
-      ? DEFAULT_SETTER_PERMISSIONS
-      : inviteForm.permissions
 
     try {
       const token = Math.random().toString(36).substring(2) + Date.now().toString(36)
@@ -138,7 +127,7 @@ export default function UserManagement() {
     await supabase.from('invites').update({ status: 'expired' }).eq('email', u.email).eq('status', 'pending')
     showToast(`${u.name || u.email} removed`, 'success')
     loadData()
- }
+  }
 
   async function cancelInvite(id) {
     if (!confirm('Cancel this invite?')) return
@@ -171,7 +160,7 @@ export default function UserManagement() {
         )}
       </div>
 
-      {/* ACTIVE USERS TABLE */}
+      {/* ── ACTIVE USERS ── */}
       <div className="card">
         <div className="card-title">
           {profile?.role === 'client' ? 'Your Setters' : `Active Users (${users.length})`}
@@ -181,76 +170,118 @@ export default function UserManagement() {
             {profile?.role === 'client' ? 'No setters yet. Invite one using the button above.' : 'No users yet.'}
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '.84rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--bdr)' }}>
-                {['Name', 'Email', 'Role', 'Bot', 'Access', 'Actions'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '8px 10px', fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.05em' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(u => (
-                <tr key={u.id} style={{ borderBottom: '1px solid var(--bdr)' }}>
-                  <td style={{ padding: '10px' }}>{u.name || '—'}</td>
-                  <td style={{ padding: '10px', color: 'var(--tx2)' }}>{u.email}</td>
-                  <td style={{ padding: '10px' }}>
-                    <span className={`badge ${u.role === 'superadmin' ? 'badge-green' : u.role === 'admin' ? 'badge-green' : u.role === 'client' ? 'badge-blue' : 'badge-gray'}`}>
-                      {u.role}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {users.map(u => (
+              <div key={u.id} style={{
+                display: 'flex', flexDirection: 'column', gap: '8px',
+                padding: '14px', borderRadius: 'var(--rsm)',
+                border: '1px solid var(--bdr)', background: 'var(--surf2)'
+              }}>
+                {/* Row 1 — Avatar + Name + Email */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                    background: 'var(--acc)', display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', fontSize: '.88rem', fontWeight: 700, color: '#1A1A1A'
+                  }}>
+                    {(u.name || u.email || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: '.88rem', fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {u.name || '—'}
+                    </div>
+                    <div style={{ fontSize: '.75rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {u.email}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 2 — Role + Bot + Access */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span className={`badge ${u.role === 'superadmin' || u.role === 'admin' ? 'badge-green' : u.role === 'client' ? 'badge-blue' : 'badge-gray'}`}>
+                    {u.role}
+                  </span>
+                  {u.botName && (
+                    <span style={{ fontSize: '.76rem', color: 'var(--tx2)', background: 'var(--surf)', border: '1px solid var(--bdr)', padding: '2px 8px', borderRadius: '6px' }}>
+                      {u.botName}
                     </span>
-                  </td>
-                  <td style={{ padding: '10px', color: 'var(--tx2)', fontSize: '.8rem' }}>{u.botName || '—'}</td>
-                  <td style={{ padding: '10px', color: 'var(--tx3)', fontSize: '.78rem' }}>
-                    {isFullAccess(u.role) ? 'Full access' : `${(u.permissions || []).length} of ${ALL_PERMISSIONS.length}`}
-                  </td>
-                  <td style={{ padding: '10px', display: 'flex', gap: '6px' }}>
-                    {isFullAccess(profile?.role) && (
-                      <button className="btn btn-ghost btn-sm" onClick={() => setEditingUser({ ...u, permissions: u.permissions || [] })}>Edit</button>
-                    )}
-                    {canRemove(u) && (
-                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red, #e53e3e)' }} onClick={() => removeUser(u)}>Remove</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  )}
+                  <span style={{ fontSize: '.75rem', color: 'var(--tx3)', marginLeft: 'auto' }}>
+                    {isFullAccess(u.role) ? 'Full access' : `${(u.permissions || []).length} of ${ALL_PERMISSIONS.length} permissions`}
+                  </span>
+                </div>
+
+                {/* Row 3 — Actions */}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {isFullAccess(profile?.role) && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setEditingUser({ ...u, permissions: u.permissions || [] })}>Edit</button>
+                  )}
+                  {canRemove(u) && (
+                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => removeUser(u)}>Remove</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
-      {/* PENDING INVITES */}
+      {/* ── PENDING INVITES ── */}
       {invites.length > 0 && (
         <div className="card">
           <div className="card-title">Pending Invites ({invites.length})</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '.84rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--bdr)' }}>
-                {['Name', 'Email', 'Role', 'Bot', 'Expires', 'Actions'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '8px 10px', fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.05em' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {invites.map(inv => (
-                <tr key={inv.id} style={{ borderBottom: '1px solid var(--bdr)' }}>
-                  <td style={{ padding: '10px' }}>{inv.name || '—'}</td>
-                  <td style={{ padding: '10px' }}>{inv.email}</td>
-                  <td style={{ padding: '10px' }}>
-                    <span className={`badge ${isFullAccess(inv.role) ? 'badge-green' : inv.role === 'client' ? 'badge-blue' : 'badge-gray'}`}>{inv.role}</span>
-                  </td>
-                  <td style={{ padding: '10px', color: 'var(--tx2)', fontSize: '.8rem' }}>{inv.botName || '—'}</td>
-                  <td style={{ padding: '10px', color: 'var(--tx3)', fontSize: '.78rem' }}>{new Date(inv.expires_at).toLocaleDateString()}</td>
-                  <td style={{ padding: '10px' }}>
-                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red, #e53e3e)' }} onClick={() => cancelInvite(inv.id)}>Cancel</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {invites.map(inv => (
+              <div key={inv.id} style={{
+                display: 'flex', flexDirection: 'column', gap: '8px',
+                padding: '14px', borderRadius: 'var(--rsm)',
+                border: '1px solid var(--ambbd)', background: 'var(--ambbg)'
+              }}>
+                {/* Row 1 — Name + Email */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                    background: 'var(--amb)', display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', fontSize: '.88rem', fontWeight: 700, color: '#fff'
+                  }}>
+                    {(inv.name || inv.email || '?').charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: '.88rem', fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {inv.name || '—'}
+                    </div>
+                    <div style={{ fontSize: '.75rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {inv.email}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 2 — Role + Bot + Expiry */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span className={`badge ${isFullAccess(inv.role) ? 'badge-green' : inv.role === 'client' ? 'badge-blue' : 'badge-gray'}`}>
+                    {inv.role}
+                  </span>
+                  {inv.botName && (
+                    <span style={{ fontSize: '.76rem', color: 'var(--tx2)', background: 'var(--surf)', border: '1px solid var(--bdr)', padding: '2px 8px', borderRadius: '6px' }}>
+                      {inv.botName}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '.74rem', color: 'var(--tx3)', marginLeft: 'auto' }}>
+                    Expires {new Date(inv.expires_at).toLocaleDateString()}
+                  </span>
+                </div>
+
+                {/* Row 3 — Actions */}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={() => cancelInvite(inv.id)}>Cancel invite</button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* INVITE MODAL */}
+      {/* ── INVITE MODAL ── */}
       {showInviteModal && (
         <ModalOverlay onClose={() => setShowInviteModal(false)}>
           <div style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '20px' }}>Invite New User</div>
@@ -262,7 +293,6 @@ export default function UserManagement() {
               <input className="form-input" type="email" value={inviteForm.email} onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))} placeholder="their@email.com" />
             </FormField>
 
-            {/* Role selector — only shown if user can invite more than one role */}
             {availableRoles.length > 1 && (
               <FormField label="Role *">
                 <select className="form-input" value={inviteForm.role}
@@ -276,7 +306,6 @@ export default function UserManagement() {
               </FormField>
             )}
 
-            {/* Bot selector — only for admins/superadmins inviting clients */}
             {isFullAccess(profile?.role) && (
               <FormField label="Assign Bot *">
                 <select className="form-input" value={inviteForm.assigned_bot_id} onChange={e => setInviteForm(f => ({ ...f, assigned_bot_id: e.target.value }))}>
@@ -287,7 +316,6 @@ export default function UserManagement() {
               </FormField>
             )}
 
-            {/* Permissions — only for non-admin, non-setter roles */}
             {!isFullAccess(inviteForm.role) && inviteForm.role !== 'setter' && (
               <PermissionCheckboxes
                 permissions={inviteForm.permissions}
@@ -311,7 +339,7 @@ export default function UserManagement() {
         </ModalOverlay>
       )}
 
-      {/* EDIT USER MODAL — admins/superadmins only */}
+      {/* ── EDIT USER MODAL ── */}
       {editingUser && isFullAccess(profile?.role) && (
         <ModalOverlay onClose={() => setEditingUser(null)}>
           <div style={{ marginBottom: '20px' }}>
@@ -351,7 +379,7 @@ export default function UserManagement() {
   )
 }
 
-// ─── Small reusable components ────────────────────────────────────────────────
+// ─── Reusable components ──────────────────────────────────────────────────────
 
 function ModalOverlay({ children, onClose }) {
   return (
