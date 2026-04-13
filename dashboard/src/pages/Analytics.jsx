@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+ï»¿import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 
@@ -155,7 +155,7 @@ export default function Analytics() {
         <div>
           <div className="page-title">Analytics</div>
           <div className="page-sub">Understand performance, conversion rates, and where opportunities are being lost.</div>
-          <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginTop: '2px' }}>{timeRange} · {botName}</div>
+          <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginTop: '2px' }}>{timeRange} Â· {botName}</div>
         </div>
         <div style={{ display: 'flex', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '10px', overflow: 'hidden' }}>
           {TIME_RANGES.map(t => (
@@ -174,7 +174,7 @@ export default function Analytics() {
         <StatCard value={stats.qualified} label="Number of Qualified Leads" sub={timeRange} color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct} />
         {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply" color="var(--blu)" border="var(--blu)" />}
         <StatCard value={stats.booked} label="Calls Booked" sub={timeRange} color="#16a34a" border="#16a34a" />
-        <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked ÷ Qualified" color="var(--acc)" border="var(--acc)" />
+        <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked Ã· Qualified" color="var(--acc)" border="var(--acc)" />
       </div>
 
       <div className='grid-2col'>
@@ -226,7 +226,7 @@ export default function Analytics() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px', background: 'var(--accp)', borderRadius: 'var(--rsm)', border: '1px solid var(--accl)' }}>
                 <div>
                   <div style={{ fontSize: '.82rem', color: 'var(--tx2)', fontWeight: 500 }}>Booking Conversion</div>
-                  <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>Bookings ÷ All conversations</div>
+                  <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>Bookings Ã· All conversations</div>
                 </div>
                 <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--acc)' }}>{systemPerf.bookingRate}%</span>
               </div>
@@ -241,7 +241,7 @@ export default function Analytics() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px", background: "var(--blubg)", borderRadius: "var(--rsm)", border: "1px solid var(--blubd)" }}>
                   <div>
                     <div style={{ fontSize: ".82rem", color: "var(--tx2)", fontWeight: 500 }}>AI Auto-Send Rate</div>
-                    <div style={{ fontSize: ".72rem", color: "var(--tx3)", marginTop: "2px" }}>Approved ÷ Total reviews</div>
+                    <div style={{ fontSize: ".72rem", color: "var(--tx3)", marginTop: "2px" }}>Approved Ã· Total reviews</div>
                   </div>
                   <span style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--blu)" }}>{systemPerf.autoSendRate}%</span>
                 </div>
@@ -285,7 +285,7 @@ export default function Analytics() {
                       </div>
                     </div>
                   ) : (
-                    <div style={{ fontSize: '.8rem', color: 'var(--tx3)' }}>Start — {s.count} leads</div>
+                    <div style={{ fontSize: '.8rem', color: 'var(--tx3)' }}>Start â€” {s.count} leads</div>
                   )}
                 </div>
               </div>

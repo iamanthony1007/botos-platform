@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
@@ -122,10 +122,10 @@ export default function Dashboard() {
   }
 
   function readinessInfo(r, stage) {
-    if (stage === 'CALL BOOKING') return { emoji: '?', label: 'Call Booked', color: '#16a34a', bg: '#f0fdf4', border: '1px solid #bbf7d0' }
-    if (r === 'HOT') return { emoji: '??', label: 'HOT', color: '#e53e3e', bg: '#fff5f5', border: '1px solid #fed7d7' }
-    if (r === 'WARM') return { emoji: '??', label: 'WARM', color: '#d97706', bg: '#fffbeb', border: '1px solid #fde68a' }
-    return { emoji: '??', label: 'COLD', color: '#3b82f6', bg: '#eff6ff', border: '1px solid #bfdbfe' }
+    if (stage === 'CALL BOOKING') return { emoji: '✅', label: 'Call Booked', color: '#16a34a', bg: '#f0fdf4', border: '1px solid #bbf7d0' }
+    if (r === 'HOT') return { emoji: '🔥', label: 'HOT', color: '#e53e3e', bg: '#fff5f5', border: '1px solid #fed7d7' }
+    if (r === 'WARM') return { emoji: '🟡', label: 'WARM', color: '#d97706', bg: '#fffbeb', border: '1px solid #fde68a' }
+    return { emoji: '🔵', label: 'COLD', color: '#3b82f6', bg: '#eff6ff', border: '1px solid #bfdbfe' }
   }
 
   function fmtTime(ts) {
@@ -168,7 +168,7 @@ export default function Dashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Dashboard</div>
-          <div className="page-sub">{profile?.organizations?.name || 'Platform'} � All bots</div>
+          <div className="page-sub">{profile?.organizations?.name || 'Platform'} · All bots</div>
         </div>
         <div style={{ display: 'flex', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '10px', overflow: 'hidden' }}>
           {TIME_RANGES.map(t => (
@@ -183,7 +183,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* -- ACTIVITY SECTION -- */}
+      {/* ── ACTIVITY SECTION ── */}
       <div>
         <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>
           Activity
@@ -226,14 +226,14 @@ export default function Dashboard() {
           <StatCard
             value={`${stats.conversionRate}%`}
             label="Conversion Rate"
-            sub="Booked � Qualified"
+            sub="Booked ÷ Qualified"
             color="var(--acc)"
             border="var(--acc)"
           />
         </div>
       </div>
 
-      {/* -- CLOSEST TO BOOKING -- */}
+      {/* ── CLOSEST TO BOOKING ── */}
       <div className="card">
         <div style={{ marginBottom: '16px' }}>
           <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--tx)', letterSpacing: '-.01em' }}>Closest to Booking</div>
@@ -294,7 +294,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Bots table � admin only */}
+      {/* Bots table — admin only */}
       {adminRole && bots.length > 0 && (
         <div className="card">
           <div className="card-title">Your Bots</div>

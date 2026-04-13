@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+﻿import { useState, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
@@ -199,7 +199,7 @@ export default function Inbox() {
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
     
-    showToast('? Approved and sent', 'success')
+    showToast('✓ Approved and sent', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -241,7 +241,7 @@ export default function Inbox() {
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
     setShowTrainModal(false)
-    showToast('?? Learning saved and sent', 'success')
+    showToast('🧠 Learning saved and sent', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -317,10 +317,10 @@ export default function Inbox() {
   }
 
   function readinessEmoji(r, stage) {
-    if (stage === 'CALL BOOKING') return '?'
-    if (r === 'HOT') return '??'
-    if (r === 'WARM') return '??'
-    return '??'
+    if (stage === 'CALL BOOKING') return '✅'
+    if (r === 'HOT') return '🔥'
+    if (r === 'WARM') return '🟡'
+    return '🔵'
   }
 
   function readinessStyle(r, stage) {
@@ -388,13 +388,13 @@ export default function Inbox() {
     <div className="inbox-wrapper">
       {toast.msg && <div className={`toast ${toast.type === 'error' ? 'toast-error' : ''}`}>{toast.msg}</div>}
 
-      {/* -- LEFT PANEL - LEADS LIST -- */}
+      {/* ══ LEFT PANEL - LEADS LIST ══ */}
       <div className="inbox-list" style={{ display: selectedLead ? 'none' : 'flex' }}>
 
         {/* Search */}
         <div style={{ padding: '12px 12px 8px' }}>
           <div style={{ position: 'relative' }}>
-            <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--tx3)', fontSize: '.84rem', pointerEvents: 'none' }}>??</span>
+            <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--tx3)', fontSize: '.84rem', pointerEvents: 'none' }}>🔍</span>
             <input
               ref={searchRef}
               value={search}
@@ -408,7 +408,7 @@ export default function Inbox() {
               }}
             />
             {search && (
-              <button onClick={() => setSearch('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '.8rem', padding: 0 }}>?</button>
+              <button onClick={() => setSearch('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '.8rem', padding: 0 }}>✕</button>
             )}
           </div>
         </div>
@@ -441,7 +441,7 @@ export default function Inbox() {
             fontFamily: 'var(--fn)'
           }}>
             <option value="lastInteraction">Sort: Last Interaction</option>
-            <option value="readiness">Sort: Readiness (?? first)</option>
+            <option value="readiness">Sort: Readiness (🔥 first)</option>
             <option value="stage">Sort: Conversation Stage</option>
           </select>
         </div>
@@ -468,10 +468,10 @@ export default function Inbox() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                       <span style={{ fontWeight: 600, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(lead)}</span>
-                      {lead.lead_readiness === 'HOT' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>??</span>}
-                      {lead.lead_readiness === 'WARM' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>??</span>}
-                      {lead.lead_readiness === 'COLD' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>??</span>}
-                      {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>??</span>}
+                      {lead.lead_readiness === 'HOT' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>🔥</span>}
+                      {lead.lead_readiness === 'WARM' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>🟡</span>}
+                      {lead.lead_readiness === 'COLD' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>🔵</span>}
+                      {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>🚨</span>}
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                     </div>
                     <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>
@@ -486,7 +486,7 @@ export default function Inbox() {
         </div>
       </div>
 
-      {/* -- RIGHT PANEL - CONVERSATION -- */}
+      {/* ══ RIGHT PANEL - CONVERSATION ══ */}
       <div className="inbox-thread" style={{ display: selectedLead ? 'flex' : 'none' }}>
         {!selectedLead ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx3)', fontSize: '.9rem' }}>
@@ -516,7 +516,7 @@ export default function Inbox() {
                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--accl)'; e.currentTarget.style.color = 'var(--acc)' }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'var(--surf2)'; e.currentTarget.style.color = 'var(--tx2)' }}
               >
-                ? <span style={{ fontSize: '.8rem', fontWeight: 500 }}>Back</span>
+                ← <span style={{ fontSize: '.8rem', fontWeight: 500 }}>Back</span>
               </button>
 
               <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
@@ -602,7 +602,7 @@ export default function Inbox() {
                               cursor: isPending ? 'pointer' : 'default',
                               transition: 'all .15s'
                             }}>
-                            {isPending && bi === 0 && '? '}{bubble}
+                            {isPending && bi === 0 && '⚠ '}{bubble}
                           </div>
                         ))}
                       </div>
@@ -612,9 +612,9 @@ export default function Inbox() {
                           {item.timestamp ? fmtTime(new Date(item.timestamp)) : ''}
                         </span>
                         {!isLead && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
-                        {!isLead && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>??</span>}
+                        {!isLead && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>✓✓</span>}
                         {null}
-                        {!isLead && review?.status === 'discarded' && <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>? Discarded</span>}
+                        {!isLead && review?.status === 'discarded' && <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>✕ Discarded</span>}
                       </div>
                     </div>
                   )
@@ -627,7 +627,7 @@ export default function Inbox() {
                 <div className="profile-panel">
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ fontWeight: 600, fontSize: '.88rem' }}>Lead Profile</div>
-                    <button onClick={() => setShowProfile(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem' }}>�</button>
+                    <button onClick={() => setShowProfile(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem' }}>×</button>
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '12px 0', borderBottom: '1px solid var(--bdr)' }}>
@@ -648,7 +648,7 @@ export default function Inbox() {
                     { label: 'Primary Goal', value: selectedLead.primary_goal },
                     { label: 'Stage', value: selectedLead.conversation_stage },
                     { label: 'Channel', value: selectedLead.channel },
-                    { label: 'Last Interaction', value: selectedLead.last_activity ? timeAgo(selectedLead.last_activity) : '�' },
+                    { label: 'Last Interaction', value: selectedLead.last_activity ? timeAgo(selectedLead.last_activity) : '—' },
                     { label: 'Golf Identity', value: selectedLead.profile_facts?.golf_identity },
                     { label: 'Timeframe', value: selectedLead.profile_facts?.timeframe },
                     { label: 'What They\'ve Tried', value: selectedLead.profile_facts?.what_theyve_tried },
@@ -671,20 +671,20 @@ export default function Inbox() {
               )}
             </div>
 
-            {/* -- REVIEW ACTION PANEL -- */}
+            {/* ══ REVIEW ACTION PANEL ══ */}
             {activeReview && (
               <div style={{ background: 'var(--surf)', borderTop: '1px solid var(--bdr)', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,.08)' }}>
 
                 <div style={{ padding: '8px 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {(activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER')
-                    ? <span style={{ fontSize: '.74rem', fontWeight: 600, color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '6px', padding: '2px 8px' }}>?? Escalated to Human</span>
-                    : <span style={{ fontSize: '.72rem', color: 'var(--tx3)', fontWeight: 500 }}>? Review needed</span>
+                    ? <span style={{ fontSize: '.74rem', fontWeight: 600, color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '6px', padding: '2px 8px' }}>🚨 Escalated to Human</span>
+                    : <span style={{ fontSize: '.72rem', color: 'var(--tx3)', fontWeight: 500 }}>⚠ Review needed</span>
                   }
                   {activeReview.escalation_reason && (
                     <span style={{ fontSize: '.72rem', color: 'var(--tx3)', fontStyle: 'italic' }}>{activeReview.escalation_reason}</span>
                   )}
 
-                  {/* -- Compact Tag Bar -- */}
+                  {/* ── Compact Tag Bar ── */}
                   <div style={{ padding: '6px 16px 0', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                       {/* Lead Intent */}
@@ -718,7 +718,7 @@ export default function Inbox() {
                     </div>
                     <div style={{ fontSize: '.68rem', color: 'var(--tx3)' }}>Shapes how the AI responds and moves the conversation forward</div>
                   </div>
-                  <button onClick={() => { setActiveReview(null); setReplyMessages([]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem', lineHeight: 1, padding: '4px', marginLeft: 'auto' }}>�</button>
+                  <button onClick={() => { setActiveReview(null); setReplyMessages([]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem', lineHeight: 1, padding: '4px', marginLeft: 'auto' }}>×</button>
                 </div>
 
                 <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -742,7 +742,7 @@ export default function Inbox() {
                         <button
                           onClick={() => removeReplyMessage(idx)}
                           style={{ position: 'absolute', top: '8px', right: '8px', width: '24px', height: '24px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.75rem', color: '#e53e3e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                        >�</button>
+                        >×</button>
                       )}
                       <div style={{ position: 'absolute', bottom: '8px', left: '13px', fontSize: '.65rem', color: 'var(--tx3)' }}>
                         Msg {idx + 1}
@@ -765,20 +765,20 @@ export default function Inbox() {
                     onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accm)'}
                     onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--bdr)'}
                   >
-                    ? Edit &amp; Train
+                    ✏ Edit &amp; Train
                   </button>
                   <button
                     onClick={discard}
                     style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '8px 14px', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '10px', cursor: 'pointer', fontSize: '.8rem', color: '#e53e3e', fontWeight: 500 }}
                   >
-                    ? Discard
+                    ✕ Discard
                   </button>
                   <button
                     onClick={approve}
                     disabled={sending || replyMessages.filter(m => m.trim()).length === 0}
                     style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 20px', background: 'var(--acc)', border: 'none', borderRadius: '10px', cursor: sending ? 'not-allowed' : 'pointer', fontSize: '.84rem', color: '#fff', fontWeight: 600, opacity: sending || replyMessages.filter(m => m.trim()).length === 0 ? .7 : 1, boxShadow: '0 2px 8px rgba(45,106,79,.3)', transition: 'all .15s' }}
                   >
-                    {sending ? 'Sending...' : `? Approve (${replyMessages.filter(m => m.trim()).length})`}
+                    {sending ? 'Sending...' : `✓ Approve (${replyMessages.filter(m => m.trim()).length})`}
                   </button>
                 </div>
 
@@ -793,7 +793,7 @@ export default function Inbox() {
         )}
       </div>
 
-      {/* -- TRAIN MODAL -- */}
+      {/* ══ TRAIN MODAL ══ */}
       {showTrainModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
           <div style={{ background: 'var(--surf)', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.2)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -822,7 +822,7 @@ export default function Inbox() {
                       <button
                         onClick={() => removeReplyMessage(idx)}
                         style={{ position: 'absolute', top: '8px', right: '8px', width: '22px', height: '22px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.7rem', color: '#e53e3e' }}
-                      >�</button>
+                      >×</button>
                     )}
                   </div>
                 ))}
@@ -835,7 +835,7 @@ export default function Inbox() {
               </div>
             </div>
 
-            {/* AI Corrections � Stage + Intent */}
+            {/* AI Corrections — Stage + Intent */}
             <div style={{ background: 'var(--surf2)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div><div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Tag Lead Stage and Intent</div><div style={{ fontSize: '.74rem', color: 'var(--tx3)', marginTop: '3px' }}>Based on what the lead said, not what the AI asked</div></div>
 
@@ -890,7 +890,7 @@ export default function Inbox() {
               <textarea
                 className="form-input"
                 rows={3}
-                placeholder="e.g. Bot classified this as GOAL LOCK but the lead already stated their goal � should be GOAL DEPTH. Intent is MEDIUM not LOW because they showed genuine interest."
+                placeholder="e.g. Bot classified this as GOAL LOCK but the lead already stated their goal — should be GOAL DEPTH. Intent is MEDIUM not LOW because they showed genuine interest."
                 value={trainReason}
                 onChange={e => setTrainReason(e.target.value)}
                 style={{ borderRadius: '10px' }}
@@ -906,7 +906,7 @@ export default function Inbox() {
                 disabled={sending || !trainReason.trim()}
                 style={{ padding: '9px 20px', background: 'var(--acc)', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '.84rem', color: '#fff', fontWeight: 600, opacity: sending || !trainReason.trim() ? .6 : 1 }}
               >
-                {sending ? 'Saving...' : '?? Save & Train'}
+                {sending ? 'Saving...' : '💾 Save & Train'}
               </button>
             </div>
           </div>
@@ -915,7 +915,7 @@ export default function Inbox() {
 
       {/* Responsive CSS */}
       <style>{`
-        /* -- Outer wrapper -- */
+        /* ── Outer wrapper ── */
         .inbox-wrapper {
           display: flex;
           height: 100%;
@@ -924,7 +924,7 @@ export default function Inbox() {
           position: relative;
         }
 
-        /* -- Left panel -- */
+        /* ── Left panel ── */
         .inbox-list {
           width: 100%;
           flex-shrink: 0;
@@ -934,7 +934,7 @@ export default function Inbox() {
           min-height: 0;
         }
 
-        /* -- Right panel -- */
+        /* ── Right panel ── */
         .inbox-thread {
           flex: 1;
           flex-direction: column;
@@ -943,7 +943,7 @@ export default function Inbox() {
           min-width: 0;
         }
 
-        /* -- Profile panel -- */
+        /* ── Profile panel ── */
         .profile-panel {
           position: fixed;
           top: 0; right: 0; bottom: 0;
@@ -965,7 +965,7 @@ export default function Inbox() {
           to   { transform: translateX(0); }
         }
 
-        /* -- Corrections bar -- */
+        /* ── Corrections bar ── */
         .corrections-bar {
           padding: 8px 16px;
           border-top: 1px solid var(--bdr);
@@ -976,7 +976,7 @@ export default function Inbox() {
           flex-wrap: wrap;
         }
 
-        /* -- Review action buttons -- */
+        /* ── Review action buttons ── */
         .review-actions {
           padding: 0 16px 14px;
           display: flex;
@@ -988,7 +988,7 @@ export default function Inbox() {
           margin-left: auto;
         }
 
-        /* -- Desktop (= 1024px) -- */
+        /* ── Desktop (≥ 1024px) ── */
         @media (min-width: 1024px) {
           .inbox-list {
             width: 320px;
@@ -1002,7 +1002,7 @@ export default function Inbox() {
           }
         }
 
-        /* -- Tablet/Desktop: show placeholder on right when no lead selected -- */
+        /* ── Tablet/Desktop: show placeholder on right when no lead selected ── */
         @media (min-width: 768px) {
           .inbox-thread { display: flex !important; }
           /* inbox-list is controlled purely by JS state - no CSS override */
@@ -1011,4 +1011,3 @@ export default function Inbox() {
     </div>
   )
 }
-
