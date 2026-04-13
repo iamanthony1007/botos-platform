@@ -48,12 +48,12 @@ export default function Settings() {
 
       if (reviews) {
         const total = reviews.length
-        const approved = reviews.filter(r => r.status === 'approved' || r.status === 'edited').length
-        const autoSent = reviews.filter(r => r.status === 'auto_sent').length
+        const approved = reviews.filter(r => r.status === 'approved').length
+        const edited = reviews.filter(r => r.status === 'edited').length
         const pending = reviews.filter(r => r.status === 'pending').length
         const discarded = reviews.filter(r => r.status === 'discarded').length
-        const resolved = approved + autoSent + discarded
-        const approvalRate = resolved > 0 ? Math.round(((approved + autoSent) / resolved) * 100) : 0
+        const resolved = approved + edited + discarded
+        const approvalRate = resolved > 0 ? Math.round(((approved + edited) / resolved) * 100) : 0
         const recentReviews = reviews.filter(r => r.confidence != null).slice(-20)
         const avgConfidence = recentReviews.length > 0
           ? Math.round((recentReviews.reduce((a, r) => a + r.confidence, 0) / recentReviews.length) * 100)
@@ -74,7 +74,7 @@ export default function Settings() {
           progressMsg = `${resolved} responses reviewed. The AI is well trained. Auto Mode is recommended.`
         }
 
-        setAutomationStats({ total, approved, autoSent, pending, discarded, approvalRate, avgConfidence, progressStage, progressPct, progressMsg })
+        setAutomationStats({ total, approved, edited, pending, discarded, approvalRate, avgConfidence, progressStage, progressPct, progressMsg })
       }
     }
     setLoading(false)
@@ -176,8 +176,8 @@ export default function Settings() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '10px', marginBottom: '16px' }}>
             {[
               { label: 'Total Reviews', value: automationStats.total, color: 'var(--tx)', sub: 'All time' },
-              { label: 'Approved & Sent', value: automationStats.approved + automationStats.autoSent, color: '#16a34a', sub: `${automationStats.approvalRate}% rate` },
-              { label: 'Auto-Sent', value: automationStats.autoSent, color: 'var(--blu)', sub: 'No edits needed' },
+              { label: 'Approved & Sent', value: automationStats.approved + automationStats.edited, color: '#16a34a', sub: `${automationStats.approvalRate}% approval rate` },
+              { label: 'Edited by You', value: automationStats.edited, color: 'var(--blu)', sub: 'Corrected before sending' },
               { label: 'Pending Review', value: automationStats.pending, color: automationStats.pending > 0 ? '#d97706' : 'var(--tx3)', sub: 'Waiting for you' },
             ].map(s => (
               <div key={s.label} style={{ padding: '12px', background: 'var(--surf2)', borderRadius: 'var(--rsm)', border: '1px solid var(--bdr)' }}>
