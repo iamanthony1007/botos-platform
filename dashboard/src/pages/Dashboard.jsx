@@ -197,7 +197,7 @@ export default function Dashboard() {
           <StatCard
             value={stats.needsReply}
             label="Needs Reply"
-            sub="Pending in inbox"
+            sub="Pending in Mu AI inbox"
             color="#e53e3e"
             border="#e53e3e"
             urgent={stats.needsReply > 0}
