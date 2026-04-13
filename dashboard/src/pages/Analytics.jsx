@@ -34,7 +34,7 @@ export default function Analytics() {
   const { profile } = useAuth()
   const adminRole = profile?.role === 'admin' || profile?.role === 'superadmin'
   const [timeRange, setTimeRange] = useState('Last 7 Days')
-  const [stats, setStats] = useState({ active: 0, qualified: 0, qualifiedPct: 0, aiAssisted: 0, booked: 0, conversionRate: 0 })
+  const [stats, setStats] = useState({ active: 0, qualified: 0, qualifiedPct: 0, aiAssisted: 0, booked: 0, conversionRate: 0, closeRate: 0 })
   const [funnelData, setFunnelData] = useState([])
   const [stageData, setStageData] = useState([])
   const [systemPerf, setSystemPerf] = useState({ bookingRate: 0, reviewsSent: 0, autoSendRate: 0 })
@@ -79,11 +79,12 @@ export default function Analytics() {
       const aiAssisted = new Set(allReviews.map(r => r.customer_id)).size
       const qualifiedPct = active > 0 ? Math.round((qualified / active) * 100) : 0
       const conversionRate = active > 0 ? Math.round((booked / active) * 100) : 0
+      const closeRate = qualified > 0 ? Math.round((booked / qualified) * 100) : 0
       const autoSent = allReviews.filter(r => r.status === 'approved').length
       const autoSendRate = allReviews.length > 0 ? Math.round((autoSent / allReviews.length) * 100) : 0
       const bookingRate = active > 0 ? parseFloat(((booked / active) * 100).toFixed(1)) : 0
 
-      setStats({ active, qualified, qualifiedPct, aiAssisted, booked, conversionRate })
+      setStats({ active, qualified, qualifiedPct, aiAssisted, booked, conversionRate, closeRate })
       setSystemPerf({ bookingRate, reviewsSent: allReviews.length, autoSendRate })
       setLastUpdated(new Date())
 
@@ -170,6 +171,9 @@ export default function Analytics() {
         <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations"
           color="var(--acc)" border="var(--acc)"
           tooltip="Calls Booked divided by total conversations started. Shows overall system effectiveness." />
+        <StatCard value={`${stats.closeRate}%`} label="Close Rate" sub="Booked / Qualified Leads"
+          color="#16a34a" border="#16a34a"
+          tooltip="Calls Booked divided by Qualified Leads (Medium + High intent). Shows how well qualified leads are converted." />
       </div>
 
       <div className="grid-2col">
