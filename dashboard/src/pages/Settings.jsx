@@ -24,6 +24,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [targetAvatar, setTargetAvatar] = useState('')
   const [aiBehavior, setAiBehavior] = useState(DEFAULT_AI_BEHAVIOR)
+  const [automationStats, setAutomationStats] = useState(null)
 
   useEffect(() => { load() }, [profile])
 
@@ -37,6 +38,43 @@ export default function Settings() {
       const saved = data.ai_behavior_settings
       if (saved && typeof saved === 'object') {
         setAiBehavior({ ...DEFAULT_AI_BEHAVIOR, ...saved })
+      }
+
+      // Load automation stats
+      const { data: reviews } = await supabase
+        .from('reviews')
+        .select('id, status, confidence, created_at')
+        .eq('bot_id', data.id)
+
+      if (reviews) {
+        const total = reviews.length
+        const approved = reviews.filter(r => r.status === 'approved' || r.status === 'edited').length
+        const autoSent = reviews.filter(r => r.status === 'auto_sent').length
+        const pending = reviews.filter(r => r.status === 'pending').length
+        const discarded = reviews.filter(r => r.status === 'discarded').length
+        const resolved = approved + autoSent + discarded
+        const approvalRate = resolved > 0 ? Math.round(((approved + autoSent) / resolved) * 100) : 0
+        const recentReviews = reviews.filter(r => r.confidence != null).slice(-20)
+        const avgConfidence = recentReviews.length > 0
+          ? Math.round((recentReviews.reduce((a, r) => a + r.confidence, 0) / recentReviews.length) * 100)
+          : null
+
+        let progressStage, progressPct, progressMsg
+        if (resolved < 20) {
+          progressStage = 'Learning'; progressPct = Math.round((resolved / 20) * 33)
+          progressMsg = `${resolved} responses reviewed. Keep approving and editing to teach the AI your style.`
+        } else if (resolved < 60) {
+          progressStage = 'Improving'; progressPct = 33 + Math.round(((resolved - 20) / 40) * 34)
+          progressMsg = `${resolved} responses reviewed. The AI is picking up your patterns. Edit frequently to accelerate learning.`
+        } else if (resolved < 120) {
+          progressStage = 'Trusted'; progressPct = 67 + Math.round(((resolved - 60) / 60) * 23)
+          progressMsg = `${resolved} responses reviewed. Strong performance. Consider enabling Auto Mode for high-confidence replies.`
+        } else {
+          progressStage = 'Auto-Ready'; progressPct = 100
+          progressMsg = `${resolved} responses reviewed. The AI is well trained. Auto Mode is recommended.`
+        }
+
+        setAutomationStats({ total, approved, autoSent, pending, discarded, approvalRate, avgConfidence, progressStage, progressPct, progressMsg })
       }
     }
     setLoading(false)
@@ -91,7 +129,86 @@ export default function Settings() {
         </button>
       </div>
 
-      {/* ══ AI MODE ══ */}
+      {/* AI AUTOMATION PROGRESS */}
+      {automationStats && (
+        <div className="card">
+          <div style={{ marginBottom: '16px' }}>
+            <div className="card-title" style={{ marginBottom: '4px' }}>AI Automation Progress</div>
+            <div style={{ fontSize: '.82rem', color: 'var(--tx3)', lineHeight: 1.5 }}>
+              Tracks how well the AI has learned from your corrections and whether it is ready for Auto Mode.
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--tx)' }}>
+                  {automationStats.progressStage === 'Learning' && '🌱'}
+                  {automationStats.progressStage === 'Improving' && '📈'}
+                  {automationStats.progressStage === 'Trusted' && '✅'}
+                  {automationStats.progressStage === 'Auto-Ready' && '🚀'}
+                  {' '}{automationStats.progressStage}
+                </span>
+                <span style={{ fontSize: '.72rem', color: 'var(--tx3)', background: 'var(--surf2)', border: '1px solid var(--bdr)', padding: '1px 8px', borderRadius: '999px' }}>
+                  {automationStats.progressPct}%
+                </span>
+              </div>
+              <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>{automationStats.progressMsg}</div>
+            </div>
+            <div style={{ height: '8px', background: 'var(--surf3)', borderRadius: '100px', overflow: 'hidden', border: '1px solid var(--bdr)' }}>
+              <div style={{
+                height: '100%',
+                width: `${automationStats.progressPct}%`,
+                background: automationStats.progressStage === 'Auto-Ready' ? '#16a34a' : automationStats.progressStage === 'Trusted' ? 'var(--acc)' : automationStats.progressStage === 'Improving' ? 'var(--amb)' : 'var(--blu)',
+                borderRadius: '100px',
+                transition: 'width 1s ease'
+              }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px' }}>
+              {['Learning', 'Improving', 'Trusted', 'Auto-Ready'].map((s, i) => (
+                <span key={s} style={{ fontSize: '.64rem', color: automationStats.progressStage === s ? 'var(--acc)' : 'var(--tx3)', fontWeight: automationStats.progressStage === s ? 700 : 400 }}>{s}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* Stats grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+            {[
+              { label: 'Total Reviews', value: automationStats.total, color: 'var(--tx)', sub: 'All time' },
+              { label: 'Approved & Sent', value: automationStats.approved + automationStats.autoSent, color: '#16a34a', sub: `${automationStats.approvalRate}% rate` },
+              { label: 'Auto-Sent', value: automationStats.autoSent, color: 'var(--blu)', sub: 'No edits needed' },
+              { label: 'Pending Review', value: automationStats.pending, color: automationStats.pending > 0 ? '#d97706' : 'var(--tx3)', sub: 'Waiting for you' },
+            ].map(s => (
+              <div key={s.label} style={{ padding: '12px', background: 'var(--surf2)', borderRadius: 'var(--rsm)', border: '1px solid var(--bdr)' }}>
+                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.value}</div>
+                <div style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx)', marginTop: '5px' }}>{s.label}</div>
+                <div style={{ fontSize: '.7rem', color: 'var(--tx3)', marginTop: '2px' }}>{s.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Confidence + threshold */}
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: '160px', padding: '12px 14px', background: 'var(--accp)', border: '1px solid var(--accl)', borderRadius: 'var(--rsm)' }}>
+              <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '4px' }}>Confidence Threshold</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--acc)' }}>75%</div>
+              <div style={{ fontSize: '.73rem', color: 'var(--tx3)', marginTop: '3px', lineHeight: 1.5 }}>The AI must reach 75% confidence before auto-sending. Below this it sends to your inbox for review.</div>
+            </div>
+            {automationStats.avgConfidence != null && (
+              <div style={{ flex: 1, minWidth: '160px', padding: '12px 14px', background: automationStats.avgConfidence >= 75 ? '#f0fdf4' : '#fffbeb', border: `1px solid ${automationStats.avgConfidence >= 75 ? '#bbf7d0' : '#fde68a'}`, borderRadius: 'var(--rsm)' }}>
+                <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '4px' }}>Avg Confidence (Last 20)</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: automationStats.avgConfidence >= 75 ? '#16a34a' : '#d97706' }}>{automationStats.avgConfidence}%</div>
+                <div style={{ fontSize: '.73rem', color: 'var(--tx3)', marginTop: '3px', lineHeight: 1.5 }}>
+                  {automationStats.avgConfidence >= 75 ? 'Above threshold — AI is performing well.' : 'Below threshold — more training needed before Auto Mode.'}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* AI MODE */}
       <div style={{
         background: autoSend
           ? 'linear-gradient(135deg, #faf6e8 0%, #fff9ed 100%)'
