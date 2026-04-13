@@ -570,7 +570,29 @@ export default function Inbox() {
                     <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', fontWeight: 700, color: '#fff' }}>
                       {getLeadName(selectedLead).charAt(0).toUpperCase()}
                     </div>
-                    <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center' }}>{getLeadName(selectedLead)}</div>
+                    {/* Show profile_name if available */}
+                    {selectedLead.profile_name && (
+                      <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center', color: 'var(--tx)' }}>{selectedLead.profile_name}</div>
+                    )}
+                    {/* Show @username if available */}
+                    {selectedLead.username && (
+                      <div style={{ fontSize: '.82rem', color: 'var(--tx3)', textAlign: 'center' }}>@{selectedLead.username}</div>
+                    )}
+                    {/* Fallback if neither */}
+                    {!selectedLead.profile_name && !selectedLead.username && (
+                      <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center' }}>{getLeadName(selectedLead)}</div>
+                    )}
+                    {/* Clickable Instagram link */}
+                    {selectedLead.username && (selectedLead.channel === 'manychat' || (selectedLead.channel || '').toLowerCase().includes('instagram') || (selectedLead.channel || '').toLowerCase() === 'ig') && (
+                      <a
+                        href={`https://www.instagram.com/${selectedLead.username.replace('@','')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: '.75rem', color: '#e1306c', fontWeight: 600, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '999px', background: '#fff0f5', border: '1px solid #f9c0d0' }}
+                      >
+                        <span>📸</span> View Instagram Profile
+                      </a>
+                    )}
                     <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>ID: {selectedLead.customer_id}</div>
                     {selectedLead.lead_intent && (
                       <span style={{ fontSize: '.7rem', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', ...intentBadgeStyle(selectedLead.lead_intent, selectedLead.conversation_stage) }}>
