@@ -3,6 +3,27 @@ import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 
+function Tooltip({ text }) {
+  const [show, setShow] = useState(false)
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <span
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        style={{ width: '15px', height: '15px', borderRadius: '50%', background: '#e5e7eb', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '.6rem', color: '#6b7280', cursor: 'default', fontWeight: 700, flexShrink: 0 }}
+      >?</span>
+      {show && (
+        <span style={{ position: 'absolute', bottom: '130%', left: '50%', transform: 'translateX(-50%)', background: '#1A1A1A', color: '#fff', fontSize: '.72rem', lineHeight: 1.5, padding: '7px 10px', borderRadius: '8px', width: '220px', zIndex: 999, boxShadow: '0 4px 16px rgba(0,0,0,.25)', pointerEvents: 'none' }}>
+          {text}
+          <span style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', border: '5px solid transparent', borderTopColor: '#1A1A1A' }} />
+        </span>
+      )}
+    </span>
+  )
+}
+
+
+
 const DEFAULT_AI_BEHAVIOR = {
   aiRole: 'Setter / Assistant',
   primaryObjective: 'Book Call',
@@ -52,30 +73,46 @@ export default function Settings() {
         const edited = reviews.filter(r => r.status === 'edited').length
         const pending = reviews.filter(r => r.status === 'pending').length
         const discarded = reviews.filter(r => r.status === 'discarded').length
-        const meaningful = approved + edited  // Only real training: approved as-is or corrected before sending
-        const resolved = approved + edited + discarded  // Total actioned (for display)
-        const approvalRate = resolved > 0 ? Math.round((meaningful / resolved) * 100) : 0
+
+        // Approval rate = approved-as-is ÷ (approved + edited)
+        // Discarded is excluded — it doesn't reflect reply quality (lead may have gone cold, inbox cleanup etc)
+        // Edited counts — the AI generated a reply but it needed correction before sending
+        // Only approved-as-is moves the rate up, proving the AI is generating better replies
+        const actioned = approved + edited
+        const approvalRate = actioned > 0 ? Math.round((approved / actioned) * 100) : 0
+
         const recentReviews = reviews.filter(r => r.confidence != null).slice(-20)
         const avgConfidence = recentReviews.length > 0
           ? Math.round((recentReviews.reduce((a, r) => a + r.confidence, 0) / recentReviews.length) * 100)
           : null
 
+        // Progress stages based on approval rate
+        // 0–40%  = Learning   (AI still needs a lot of correction)
+        // 41–65% = Improving  (AI is picking up patterns)
+        // 66–85% = Trusted    (AI is reliable, occasional edits)
+        // 86–100% = Auto-Ready (AI consistently generates good replies)
         let progressStage, progressPct, progressMsg
-        if (meaningful < 20) {
-          progressStage = 'Learning'; progressPct = Math.round((meaningful / 20) * 33)
-          progressMsg = `${meaningful} corrections made. Keep approving and editing to teach the AI your style.`
-        } else if (meaningful < 60) {
-          progressStage = 'Improving'; progressPct = 33 + Math.round(((meaningful - 20) / 40) * 34)
-          progressMsg = `${meaningful} corrections made. The AI is picking up your patterns. Edit frequently to accelerate learning.`
-        } else if (meaningful < 120) {
-          progressStage = 'Trusted'; progressPct = 67 + Math.round(((meaningful - 60) / 60) * 23)
-          progressMsg = `${meaningful} corrections made. Strong performance. Consider enabling Auto Mode for high-confidence replies.`
+        if (approvalRate <= 40) {
+          progressStage = 'Learning'
+          progressPct = Math.round((approvalRate / 40) * 33)
+          progressMsg = actioned === 0
+            ? 'No reviews actioned yet. Start approving and editing replies to train the AI.'
+            : `${approvalRate}% approval rate. The AI is still learning your style — keep editing replies to guide it.`
+        } else if (approvalRate <= 65) {
+          progressStage = 'Improving'
+          progressPct = 33 + Math.round(((approvalRate - 41) / 24) * 34)
+          progressMsg = `${approvalRate}% approval rate. The AI is picking up your patterns. Keep reviewing to push it higher.`
+        } else if (approvalRate <= 85) {
+          progressStage = 'Trusted'
+          progressPct = 67 + Math.round(((approvalRate - 66) / 19) * 23)
+          progressMsg = `${approvalRate}% approval rate. The AI is reliable. Consider enabling Auto Mode for high-confidence replies.`
         } else {
-          progressStage = 'Auto-Ready'; progressPct = 100
-          progressMsg = `${meaningful} corrections made. The AI is well trained. Auto Mode is recommended.`
+          progressStage = 'Auto-Ready'
+          progressPct = 90 + Math.round(((approvalRate - 86) / 14) * 10)
+          progressMsg = `${approvalRate}% approval rate. The AI consistently generates good replies. Auto Mode is recommended.`
         }
 
-        setAutomationStats({ total, approved, edited, pending, discarded, meaningful, approvalRate, avgConfidence, progressStage, progressPct, progressMsg })
+        setAutomationStats({ total, approved, edited, pending, discarded, actioned, approvalRate, avgConfidence, progressStage, progressPct, progressMsg })
       }
     }
     setLoading(false)
@@ -136,7 +173,7 @@ export default function Settings() {
           <div style={{ marginBottom: '16px' }}>
             <div className="card-title" style={{ marginBottom: '4px' }}>AI Automation Progress</div>
             <div style={{ fontSize: '.82rem', color: 'var(--tx3)', lineHeight: 1.5 }}>
-              Tracks approved and edited replies only. Discarded replies are excluded as no learning occurs when a reply is thrown away.
+              Based on approval rate — how often the AI generates a reply that gets approved without edits. Discarded replies are excluded as they don't reflect reply quality.
             </div>
           </div>
 
@@ -173,17 +210,35 @@ export default function Settings() {
             </div>
           </div>
 
+          {/* Approval rate highlight */}
+          <div style={{ padding: '14px 16px', background: automationStats.approvalRate >= 66 ? '#f0fdf4' : automationStats.approvalRate >= 41 ? '#fffbeb' : 'var(--surf2)', border: `1px solid ${automationStats.approvalRate >= 66 ? '#bbf7d0' : automationStats.approvalRate >= 41 ? '#fde68a' : 'var(--bdr)'}`, borderRadius: 'var(--rsm)', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Approval Rate</div>
+                <Tooltip text="How often the AI generates a reply that gets approved without any edits. Approved as-is ÷ (Approved + Edited). Discarded replies are excluded. The higher this rate, the less human correction the AI needs." />
+              </div>
+              <div style={{ fontSize: '.78rem', color: 'var(--tx3)', lineHeight: 1.5 }}>Approved as-is ÷ (Approved + Edited) — discarded excluded</div>
+            </div>
+            <div style={{ fontSize: '2rem', fontWeight: 700, color: automationStats.approvalRate >= 66 ? '#16a34a' : automationStats.approvalRate >= 41 ? '#d97706' : 'var(--tx2)' }}>
+              {automationStats.approvalRate}%
+            </div>
+          </div>
+
           {/* Stats grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '10px', marginBottom: '16px' }}>
             {[
-              { label: 'Total Reviews', value: automationStats.total, color: 'var(--tx)', sub: 'All time' },
-              { label: 'Approved & Sent', value: automationStats.approved + automationStats.edited, color: '#16a34a', sub: `${automationStats.approvalRate}% approval rate` },
-              { label: 'Edited by You', value: automationStats.edited, color: 'var(--blu)', sub: 'Corrected before sending' },
-              { label: 'Pending Review', value: automationStats.pending, color: automationStats.pending > 0 ? '#d97706' : 'var(--tx3)', sub: 'Waiting for you' },
+              { label: 'Total Reviews', value: automationStats.total, color: 'var(--tx)', sub: 'All time', tooltip: 'Every time the bot generated a reply and sent it to the inbox for human review. Counts all reviews ever created.' },
+              { label: 'Approved As-Is', value: automationStats.approved, color: '#16a34a', sub: 'No changes needed', tooltip: 'The setter read the reply and approved it without changing a single word. This is the strongest signal that the AI is learning — the reply was good enough to send exactly as written.' },
+              { label: 'Edited Before Send', value: automationStats.edited, color: 'var(--blu)', sub: 'AI needed correction', tooltip: 'The setter changed the reply before sending it. The AI was close but not quite right. Each edit is a correction the AI can learn from.' },
+              { label: 'Discarded', value: automationStats.discarded, color: 'var(--tx3)', sub: 'Reply thrown away', tooltip: 'The reply was discarded without being sent. Usually because the lead was spam, irrelevant, or not worth engaging. Discarded replies do not affect the approval rate.' },
+              { label: 'Pending Review', value: automationStats.pending, color: automationStats.pending > 0 ? '#d97706' : 'var(--tx3)', sub: 'Waiting for you', tooltip: 'Replies sitting in the inbox right now waiting to be approved, edited, or discarded. The higher this number, the more the setter needs to action.' },
             ].map(s => (
               <div key={s.label} style={{ padding: '12px', background: 'var(--surf2)', borderRadius: 'var(--rsm)', border: '1px solid var(--bdr)' }}>
                 <div style={{ fontSize: '1.3rem', fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.value}</div>
-                <div style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx)', marginTop: '5px' }}>{s.label}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '5px' }}>
+                  <div style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx)' }}>{s.label}</div>
+                  <Tooltip text={s.tooltip} />
+                </div>
                 <div style={{ fontSize: '.7rem', color: 'var(--tx3)', marginTop: '2px' }}>{s.sub}</div>
               </div>
             ))}
@@ -192,13 +247,19 @@ export default function Settings() {
           {/* Confidence + threshold */}
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: '160px', padding: '12px 14px', background: 'var(--accp)', border: '1px solid var(--accl)', borderRadius: 'var(--rsm)' }}>
-              <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '4px' }}>Confidence Threshold</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Confidence Threshold</div>
+                <Tooltip text="The minimum confidence score the AI must reach before a reply is auto-sent. Below 75% the reply goes to the inbox for human review instead." />
+              </div>
               <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--acc)' }}>75%</div>
               <div style={{ fontSize: '.73rem', color: 'var(--tx3)', marginTop: '3px', lineHeight: 1.5 }}>The AI must reach 75% confidence before auto-sending. Below this it sends to your inbox for review.</div>
             </div>
             {automationStats.avgConfidence != null && (
               <div style={{ flex: 1, minWidth: '160px', padding: '12px 14px', background: automationStats.avgConfidence >= 75 ? '#f0fdf4' : '#fffbeb', border: `1px solid ${automationStats.avgConfidence >= 75 ? '#bbf7d0' : '#fde68a'}`, borderRadius: 'var(--rsm)' }}>
-                <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '4px' }}>Avg Confidence (Last 20)</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                  <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Avg Confidence (Last 20)</div>
+                  <Tooltip text="The AI's average confidence score across the last 20 replies it generated. Above 75% means the AI is consistently sure enough to auto-send when Auto Mode is on." />
+                </div>
                 <div style={{ fontSize: '1.1rem', fontWeight: 700, color: automationStats.avgConfidence >= 75 ? '#16a34a' : '#d97706' }}>{automationStats.avgConfidence}%</div>
                 <div style={{ fontSize: '.73rem', color: 'var(--tx3)', marginTop: '3px', lineHeight: 1.5 }}>
                   {automationStats.avgConfidence >= 75 ? 'Above threshold — AI is performing well.' : 'Below threshold — more training needed before Auto Mode.'}
