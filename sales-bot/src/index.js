@@ -117,9 +117,12 @@ async function supabaseInsert(env, table, data) {
     if (!response.ok) {
       const error = await response.text();
       console.error(`Supabase insert error (${table}):`, error);
+      return { success: false, error: error };
     }
+    return { success: true };
   } catch (error) {
     console.error(`Supabase insert exception (${table}):`, error);
+    return { success: false, error: error.message };
   }
 }
 __name(supabaseInsert, "supabaseInsert");
@@ -393,6 +396,9 @@ var index_default = {
           ...(profile_name ? { profile_name: String(profile_name) } : {})
         }, "bot_id,customer_id"));
 
+        // ── DEBUG: track review insert result ──────────────────────────────
+        let reviewResult = { success: false, error: "no_review_path_hit" };
+
         if (finalAction === "SEND_TO_INBOX_REVIEW" || finalAction === "ESCALATE_TO_HUMAN") {
           await sendToSlack(env, {
             customer_id, action: finalAction,
@@ -406,7 +412,7 @@ var index_default = {
             review_id, auto_send_enabled: autoSendEnabled
           });
 
-          ctx.waitUntil(supabaseInsert(env, "reviews", {
+          reviewResult = await supabaseInsert(env, "reviews", {
             id: review_id, bot_id: BOT_ID,
             customer_id: String(customer_id),
             action_type: finalAction,
@@ -423,13 +429,13 @@ var index_default = {
             created_at: new Date().toISOString(),
             ...(username ? { username: String(username) } : {}),
             ...(profile_name ? { profile_name: String(profile_name) } : {})
-          }));
+          });
         }
 
         // AUTO_SEND — send via Scenario 2 directly + write review record
         if (finalAction === "AUTO_SEND") {
           ctx.waitUntil(sendToMakeScenario2(String(customer_id), dedupedMessages, typingDelays));
-          ctx.waitUntil(supabaseInsert(env, "reviews", {
+          reviewResult = await supabaseInsert(env, "reviews", {
             id: review_id, bot_id: BOT_ID,
             customer_id: String(customer_id),
             action_type: "AUTO_SEND",
@@ -445,7 +451,7 @@ var index_default = {
             created_at: new Date().toISOString(),
             ...(username ? { username: String(username) } : {}),
             ...(profile_name ? { profile_name: String(profile_name) } : {})
-          }));
+          });
         }
 
         return new Response(JSON.stringify({
@@ -476,7 +482,20 @@ var index_default = {
             content: m.content,
             timestamp: new Date(m.timestamp).toLocaleString()
           })),
-          timestamp: new Date().toLocaleString()
+          timestamp: new Date().toLocaleString(),
+
+          // ── DEBUG INFO (remove after fixing) ──────────────────────────────
+          debug: {
+            review_insert: reviewResult,
+            final_action: finalAction,
+            auto_send_db_value: botSettings.auto_send_enabled,
+            auto_send_resolved: autoSendEnabled,
+            bot_suggested_action: botResponse.next_action,
+            emotional_state: botResponse.emotional_state,
+            escalation_reason: botResponse.escalation_reason || null,
+            situation_clarity: botResponse.situation_clarity,
+            response_quality: botResponse.response_quality
+          }
         }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       } catch (error) {
