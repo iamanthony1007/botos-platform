@@ -30,6 +30,7 @@ export default function Inbox() {
   const [botId, setBotId] = useState(null)
   const [showMobileThread, setShowMobileThread] = useState(false)
   const channelRef = useRef(null)
+  const selectedLeadRef = useRef(null)
   const msgEndRef = useRef(null)
   const searchRef = useRef(null)
 
@@ -69,7 +70,7 @@ export default function Inbox() {
 
     const leadsMap = {}
 
-    ;(convos || []).forEach(c => {
+    ;(convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test')).forEach(c => {
       let identity = null, pf = {}
       try { pf = typeof c.profile_facts === 'string' ? JSON.parse(c.profile_facts) : (c.profile_facts || {}); identity = pf?.golf_identity || null } catch {}
       leadsMap[c.customer_id] = {
@@ -110,14 +111,15 @@ export default function Inbox() {
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
     const ch = supabase.channel(`inbox-${bot.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); if (selectedLead) loadThread(selectedLead.customer_id, bot.id) })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); if (selectedLead) loadThread(selectedLead.customer_id, bot.id) })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); if (selectedLeadRef.current) loadThread(selectedLeadRef.current.customer_id, bot.id) })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); if (selectedLeadRef.current) loadThread(selectedLeadRef.current.customer_id, bot.id) })
       .subscribe()
     channelRef.current = ch
     if (Notification.permission === 'default') Notification.requestPermission()
   }
 
   async function selectLead(lead) {
+    selectedLeadRef.current = lead
     setSelectedLead(lead)
     setActiveReview(null)
     setReplyMessages([])
@@ -129,6 +131,7 @@ export default function Inbox() {
   }
 
   function goBackToList() {
+    selectedLeadRef.current = null
     setSelectedLead(null)
     setShowMobileThread(false)
     setActiveReview(null)
@@ -178,6 +181,24 @@ export default function Inbox() {
     setReplyMessages(prev => prev.filter((_, i) => i !== idx))
   }
 
+
+  // Send approved/edited reply to lead via Make.com Scenario 2
+  async function sendToMake(customerId, messages, typingDelays) {
+    try {
+      await fetch('https://hook.eu2.make.com/jknvsf64c05m0urc1f7qph523pi310st', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: customerId,
+          messages: messages.filter(m => m.trim()),
+          typing_delays_ms: typingDelays && typingDelays.length > 0 ? typingDelays : messages.map(() => 1500)
+        })
+      })
+    } catch (e) {
+      console.error('Make webhook error:', e)
+    }
+  }
+
   async function approve() {
     if (!activeReview) return
     setSending(true)
@@ -197,7 +218,8 @@ export default function Inbox() {
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
-    showToast('Approved and sent', 'success')
+    await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [])
+    showToast('Approved — reply sent to lead', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -234,8 +256,9 @@ export default function Inbox() {
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
+    await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [])
     setShowTrainModal(false)
-    showToast('Learning saved and sent', 'success')
+    showToast('Edited — reply sent to lead', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
