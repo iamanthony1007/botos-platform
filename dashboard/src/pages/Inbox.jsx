@@ -29,10 +29,31 @@ export default function Inbox() {
   const [showProfile, setShowProfile] = useState(false)
   const [botId, setBotId] = useState(null)
   const [showMobileThread, setShowMobileThread] = useState(false)
+  const [showBotNotes, setShowBotNotes] = useState(false)
+  const [reviewHeight, setReviewHeight] = useState(160)
+  const draggingRef = useRef(false)
   const channelRef = useRef(null)
   const selectedLeadRef = useRef(null)
   const msgEndRef = useRef(null)
   const searchRef = useRef(null)
+
+  function onDragStart(e) {
+    e.preventDefault()
+    draggingRef.current = true
+    const startY = e.clientY || e.touches?.[0]?.clientY
+    const startH = reviewHeight
+    function onMove(ev) {
+      if (!draggingRef.current) return
+      const y = ev.clientY || ev.touches?.[0]?.clientY
+      const newH = Math.max(100, Math.min(window.innerHeight * 0.6, startH + (startY - y)))
+      setReviewHeight(newH)
+    }
+    function onEnd() { draggingRef.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onEnd); window.removeEventListener('touchmove', onMove); window.removeEventListener('touchend', onEnd) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onEnd)
+    window.addEventListener('touchmove', onMove)
+    window.addEventListener('touchend', onEnd)
+  }
 
   useEffect(() => {
     if (!profile) return
@@ -652,9 +673,13 @@ export default function Inbox() {
               )}
             </div>
 
-            {/* REVIEW ACTION PANEL - Compact ~20% height */}
+            {/* REVIEW ACTION PANEL - Resizable */}
             {activeReview && (
-              <div style={{ background: 'var(--surf)', borderTop: '2px solid var(--acc)', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,.08)', maxHeight: '22vh', overflowY: 'auto' }}>
+              <div style={{ background: 'var(--surf)', borderTop: '2px solid var(--acc)', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,.08)', height: reviewHeight, display: 'flex', flexDirection: 'column' }}>
+                {/* Drag handle */}
+                <div onMouseDown={onDragStart} onTouchStart={onDragStart} style={{ height: '8px', cursor: 'ns-resize', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, userSelect: 'none' }}>
+                  <div style={{ width: '36px', height: '3px', borderRadius: '2px', background: 'var(--bdr)' }} />
+                </div>
                 {/* Row 1: Status + Tags + Close */}
                 <div style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', borderBottom: '1px solid var(--bdr)' }}>
                   {(activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER')
@@ -691,7 +716,7 @@ export default function Inbox() {
                 </div>
 
                 {/* Row 2: Messages side-by-side + Actions */}
-                <div style={{ padding: '6px 14px 8px', display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                <div style={{ padding: '6px 14px 8px', display: 'flex', gap: '8px', alignItems: 'flex-end', flex: 1, minHeight: 0, overflow: 'auto' }}>
                   {/* Messages in a row */}
                   <div style={{ flex: 1, display: 'flex', gap: '6px', minWidth: 0 }}>
                     {replyMessages.map((msg, idx) => (
