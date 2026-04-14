@@ -69,7 +69,7 @@ export default function Inbox() {
 
     const leadsMap = {}
 
-    ;(convos || []).forEach(c => {
+    ;(convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test')).forEach(c => {
       let identity = null, pf = {}
       try { pf = typeof c.profile_facts === 'string' ? JSON.parse(c.profile_facts) : (c.profile_facts || {}); identity = pf?.golf_identity || null } catch {}
       leadsMap[c.customer_id] = {
