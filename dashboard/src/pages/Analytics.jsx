@@ -68,7 +68,7 @@ export default function Analytics() {
 
       const since = getDateFilter()
 
-      const { data: convos } = await supabase.from('conversations').select('customer_id, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').gte('updated_at', since)
+      const { data: convos } = await supabase.from('conversations').select('customer_id, username, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').gte('updated_at', since)
       const allConvos = (convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test'))
       const { data: reviewData } = await supabase.from('reviews').select('customer_id, action_type, status').eq('bot_id', bot.id).gte('created_at', since)
       const allReviews = reviewData || []
