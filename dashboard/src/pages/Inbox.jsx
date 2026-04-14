@@ -716,16 +716,15 @@ export default function Inbox() {
                 </div>
 
                 {/* Row 2: Messages side-by-side + Actions */}
-                <div style={{ padding: '6px 14px 8px', display: 'flex', gap: '8px', alignItems: 'flex-end', flex: 1, minHeight: 0, overflow: 'auto' }}>
+                <div style={{ padding: '6px 14px 8px', display: 'flex', gap: '8px', flex: 1, minHeight: 0 }}>
                   {/* Messages in a row */}
                   <div style={{ flex: 1, display: 'flex', gap: '6px', minWidth: 0 }}>
                     {replyMessages.map((msg, idx) => (
-                      <div key={idx} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                      <div key={idx} style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                         <textarea
                           value={msg}
                           onChange={e => updateReplyMessage(idx, e.target.value)}
-                          rows={2}
-                          style={{ width: '100%', background: 'var(--surf2)', border: '1.5px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.82rem', padding: '6px 28px 6px 10px', borderRadius: '8px', resize: 'none', outline: 'none', lineHeight: 1.5, boxSizing: 'border-box', transition: 'border-color .15s' }}
+                          style={{ width: '100%', flex: 1, background: 'var(--surf2)', border: '1.5px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.82rem', padding: '6px 28px 6px 10px', borderRadius: '8px', resize: 'none', outline: 'none', lineHeight: 1.5, boxSizing: 'border-box', transition: 'border-color .15s', minHeight: '40px' }}
                           onFocus={e => e.target.style.borderColor = 'var(--accm)'}
                           onBlur={e => e.target.style.borderColor = 'var(--bdr)'}
                           placeholder={`Msg ${idx + 1}...`}
@@ -741,7 +740,7 @@ export default function Inbox() {
                   </div>
 
                   {/* Action buttons */}
-                  <div style={{ display: 'flex', gap: '5px', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', gap: '5px', flexShrink: 0, alignSelf: 'flex-end' }}>
                     <button
                       onClick={() => { setTrainReason(''); setShowTrainModal(true) }}
                       title="Edit & Train"
