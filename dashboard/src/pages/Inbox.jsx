@@ -110,7 +110,7 @@ export default function Inbox() {
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
     const ch = supabase.channel(`inbox-${bot.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); if (selectedLead) loadThread(selectedLead.customer_id, bot.id) })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); if (selectedLead) loadThread(selectedLead.customer_id, bot.id) })
       .subscribe()
     channelRef.current = ch
@@ -178,25 +178,6 @@ export default function Inbox() {
     setReplyMessages(prev => prev.filter((_, i) => i !== idx))
   }
 
-
-  // ── Send approved reply to ManyChat via Make.com Scenario 2 ──────────────
-  async function sendToMake(customerId, messages, typingDelays) {
-    try {
-      await fetch('https://hook.eu2.make.com/jknvsf64c05m0urc1f7qph523pi310st', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id: customerId,
-          messages: messages.filter(m => m.trim()),
-          typing_delays_ms: typingDelays || messages.map(() => 1500)
-        })
-      })
-    } catch (e) {
-      console.error('Make webhook error:', e)
-      // Don't block the UI if Make fails — review is already saved in Supabase
-    }
-  }
-
   async function approve() {
     if (!activeReview) return
     setSending(true)
@@ -216,12 +197,7 @@ export default function Inbox() {
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
-    await sendToMake(
-      activeReview.customer_id,
-      validMessages,
-      activeReview.typing_delays || []
-    )
-    showToast('Approved — reply sent to lead', 'success')
+    showToast('Approved and sent', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -258,13 +234,8 @@ export default function Inbox() {
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
-    await sendToMake(
-      activeReview.customer_id,
-      validMessages,
-      activeReview.typing_delays || []
-    )
     setShowTrainModal(false)
-    showToast('Edited — reply sent to lead', 'success')
+    showToast('Learning saved and sent', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
