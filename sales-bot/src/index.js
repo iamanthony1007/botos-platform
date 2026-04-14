@@ -243,6 +243,24 @@ function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}, memo
 }
 __name(resolveNextAction, "resolveNextAction");
 
+
+// Send messages directly to Make Scenario 2
+async function sendToMakeScenario2(customerId, messages, typingDelays) {
+  try {
+    await fetch("https://hook.eu2.make.com/jknvsf64c05m0urc1f7qph523pi310st", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customer_id: customerId,
+        messages: messages,
+        typing_delays_ms: typingDelays && typingDelays.length > 0 ? typingDelays : messages.map(() => 1500)
+      })
+    });
+  } catch (e) {
+    console.error("Make Scenario 2 error:", e);
+  }
+}
+
 // Main Worker
 
 var index_default = {
@@ -408,8 +426,9 @@ var index_default = {
           }));
         }
 
-        // AUTO_SEND — write review as auto_sent so it shows in inbox thread with sent indicator
+        // AUTO_SEND — send via Scenario 2 directly + write review record
         if (finalAction === "AUTO_SEND") {
+          ctx.waitUntil(sendToMakeScenario2(String(customer_id), dedupedMessages, typingDelays));
           ctx.waitUntil(supabaseInsert(env, "reviews", {
             id: review_id, bot_id: BOT_ID,
             customer_id: String(customer_id),
@@ -434,12 +453,12 @@ var index_default = {
           customer_id,
           user_message: message,
 
-          // Multi-message fields — only populated when auto-sending
-          // If not AUTO_SEND, return empty arrays so Make has nothing to send
-          messages: finalAction === "AUTO_SEND" ? dedupedMessages : [],
-          typing_delays_ms: finalAction === "AUTO_SEND" ? typingDelays : [],
-          total_delay_ms: finalAction === "AUTO_SEND" ? totalDelay : 0,
-          message_count: finalAction === "AUTO_SEND" ? dedupedMessages.length : 0,
+          // Always empty — Worker never sends via Scenario 1
+          // AUTO_SEND goes via Scenario 2 directly. Manual approval goes via inbox -> Scenario 2
+          messages: [],
+          typing_delays_ms: [],
+          total_delay_ms: 0,
+          message_count: 0,
 
           // Full response for Tester and integrations
           bot_reply: joinedReply,

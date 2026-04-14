@@ -111,8 +111,8 @@ export default function Inbox() {
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
     const ch = supabase.channel(`inbox-${bot.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); if (selectedLeadRef.current) loadThread(selectedLeadRef.current.customer_id, bot.id) })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); if (selectedLeadRef.current) loadThread(selectedLeadRef.current.customer_id, bot.id) })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); setTimeout(() => { if (selectedLeadRef.current) loadThread(selectedLeadRef.current.customer_id, bot.id) }, 1000) })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `bot_id=eq.${bot.id}` }, () => { loadData(); setTimeout(() => { if (selectedLeadRef.current) loadThread(selectedLeadRef.current.customer_id, bot.id) }, 2000) })
       .subscribe()
     channelRef.current = ch
     if (Notification.permission === 'default') Notification.requestPermission()
