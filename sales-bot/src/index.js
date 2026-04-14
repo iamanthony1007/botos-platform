@@ -408,16 +408,38 @@ var index_default = {
           }));
         }
 
+        // AUTO_SEND — write review as auto_sent so it shows in inbox thread with sent indicator
+        if (finalAction === "AUTO_SEND") {
+          ctx.waitUntil(supabaseInsert(env, "reviews", {
+            id: review_id, bot_id: BOT_ID,
+            customer_id: String(customer_id),
+            action_type: "AUTO_SEND",
+            conversation_stage: botResponse.conversation_stage || null,
+            confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
+            bot_reply: joinedReply,
+            bot_messages: dedupedMessages,
+            typing_delays: typingDelays,
+            internal_notes: botResponse.internal_notes || null,
+            last_messages: memory.messages.slice(-5),
+            status: "auto_sent",
+            resolved_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            ...(username ? { username: String(username) } : {}),
+            ...(profile_name ? { profile_name: String(profile_name) } : {})
+          }));
+        }
+
         return new Response(JSON.stringify({
           review_id,
           customer_id,
           user_message: message,
 
-          // Multi-message fields — use these in Make/Zapier
-          messages: dedupedMessages,
-          typing_delays_ms: typingDelays,
-          total_delay_ms: totalDelay,
-          message_count: dedupedMessages.length,
+          // Multi-message fields — only populated when auto-sending
+          // If not AUTO_SEND, return empty arrays so Make has nothing to send
+          messages: finalAction === "AUTO_SEND" ? dedupedMessages : [],
+          typing_delays_ms: finalAction === "AUTO_SEND" ? typingDelays : [],
+          total_delay_ms: finalAction === "AUTO_SEND" ? totalDelay : 0,
+          message_count: finalAction === "AUTO_SEND" ? dedupedMessages.length : 0,
 
           // Full response for Tester and integrations
           bot_reply: joinedReply,
