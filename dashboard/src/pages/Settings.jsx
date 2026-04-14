@@ -74,11 +74,10 @@ export default function Settings() {
         const pending = reviews.filter(r => r.status === 'pending').length
         const discarded = reviews.filter(r => r.status === 'discarded').length
 
-        // Approval rate = approved-as-is ÷ (approved + edited)
-        // Discarded is excluded — it doesn't reflect reply quality (lead may have gone cold, inbox cleanup etc)
-        // Edited counts — the AI generated a reply but it needed correction before sending
-        // Only approved-as-is moves the rate up, proving the AI is generating better replies
-        const actioned = approved + edited
+        // Approval rate = approved-as-is ÷ total reviews (all time)
+        // Every reply the AI generated counts — approved, edited, discarded, and pending
+        // This is the strictest and most honest measure: out of everything the AI wrote, how many got a clean approval?
+        const actioned = total
         const approvalRate = actioned > 0 ? Math.round((approved / actioned) * 100) : 0
 
         const recentReviews = reviews.filter(r => r.confidence != null).slice(-20)
@@ -215,9 +214,9 @@ export default function Settings() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
                 <div style={{ fontSize: '.72rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Approval Rate</div>
-                <Tooltip text="How often the AI generates a reply that gets approved without any edits. Approved as-is ÷ (Approved + Edited). Discarded replies are excluded. The higher this rate, the less human correction the AI needs." />
+                <Tooltip text="Out of every reply the AI has ever generated, how many were approved without any changes. Approved as-is ÷ Total Reviews. The higher this rate, the better the AI is performing overall." />
               </div>
-              <div style={{ fontSize: '.78rem', color: 'var(--tx3)', lineHeight: 1.5 }}>Approved as-is ÷ (Approved + Edited) — discarded excluded</div>
+              <div style={{ fontSize: '.78rem', color: 'var(--tx3)', lineHeight: 1.5 }}>Approved as-is ÷ Total AI-generated replies</div>
             </div>
             <div style={{ fontSize: '2rem', fontWeight: 700, color: automationStats.approvalRate >= 66 ? '#16a34a' : automationStats.approvalRate >= 41 ? '#d97706' : 'var(--tx2)' }}>
               {automationStats.approvalRate}%
