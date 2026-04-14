@@ -52,29 +52,30 @@ export default function Settings() {
         const edited = reviews.filter(r => r.status === 'edited').length
         const pending = reviews.filter(r => r.status === 'pending').length
         const discarded = reviews.filter(r => r.status === 'discarded').length
-        const resolved = approved + edited + discarded
-        const approvalRate = resolved > 0 ? Math.round(((approved + edited) / resolved) * 100) : 0
+        const meaningful = approved + edited  // Only real training: approved as-is or corrected before sending
+        const resolved = approved + edited + discarded  // Total actioned (for display)
+        const approvalRate = resolved > 0 ? Math.round((meaningful / resolved) * 100) : 0
         const recentReviews = reviews.filter(r => r.confidence != null).slice(-20)
         const avgConfidence = recentReviews.length > 0
           ? Math.round((recentReviews.reduce((a, r) => a + r.confidence, 0) / recentReviews.length) * 100)
           : null
 
         let progressStage, progressPct, progressMsg
-        if (resolved < 20) {
-          progressStage = 'Learning'; progressPct = Math.round((resolved / 20) * 33)
-          progressMsg = `${resolved} responses reviewed. Keep approving and editing to teach the AI your style.`
-        } else if (resolved < 60) {
-          progressStage = 'Improving'; progressPct = 33 + Math.round(((resolved - 20) / 40) * 34)
-          progressMsg = `${resolved} responses reviewed. The AI is picking up your patterns. Edit frequently to accelerate learning.`
-        } else if (resolved < 120) {
-          progressStage = 'Trusted'; progressPct = 67 + Math.round(((resolved - 60) / 60) * 23)
-          progressMsg = `${resolved} responses reviewed. Strong performance. Consider enabling Auto Mode for high-confidence replies.`
+        if (meaningful < 20) {
+          progressStage = 'Learning'; progressPct = Math.round((meaningful / 20) * 33)
+          progressMsg = `${meaningful} corrections made. Keep approving and editing to teach the AI your style.`
+        } else if (meaningful < 60) {
+          progressStage = 'Improving'; progressPct = 33 + Math.round(((meaningful - 20) / 40) * 34)
+          progressMsg = `${meaningful} corrections made. The AI is picking up your patterns. Edit frequently to accelerate learning.`
+        } else if (meaningful < 120) {
+          progressStage = 'Trusted'; progressPct = 67 + Math.round(((meaningful - 60) / 60) * 23)
+          progressMsg = `${meaningful} corrections made. Strong performance. Consider enabling Auto Mode for high-confidence replies.`
         } else {
           progressStage = 'Auto-Ready'; progressPct = 100
-          progressMsg = `${resolved} responses reviewed. The AI is well trained. Auto Mode is recommended.`
+          progressMsg = `${meaningful} corrections made. The AI is well trained. Auto Mode is recommended.`
         }
 
-        setAutomationStats({ total, approved, edited, pending, discarded, approvalRate, avgConfidence, progressStage, progressPct, progressMsg })
+        setAutomationStats({ total, approved, edited, pending, discarded, meaningful, approvalRate, avgConfidence, progressStage, progressPct, progressMsg })
       }
     }
     setLoading(false)
@@ -135,7 +136,7 @@ export default function Settings() {
           <div style={{ marginBottom: '16px' }}>
             <div className="card-title" style={{ marginBottom: '4px' }}>AI Automation Progress</div>
             <div style={{ fontSize: '.82rem', color: 'var(--tx3)', lineHeight: 1.5 }}>
-              Tracks how well the AI has learned from your corrections and whether it is ready for Auto Mode.
+              Tracks approved and edited replies only. Discarded replies are excluded as no learning occurs when a reply is thrown away.
             </div>
           </div>
 

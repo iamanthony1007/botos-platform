@@ -71,7 +71,7 @@ export default function Dashboard() {
 
       const since = getDateFilter()
       const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }] = await Promise.all([
-        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
+        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status').in('bot_id', botIds).neq('channel', 'tester').not('username', 'ilike', 'test%').gte('updated_at', since),
         supabase.from('reviews').select('id, status').in('bot_id', botIds).gte('created_at', since),
         supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending')
       ])
@@ -184,7 +184,7 @@ export default function Dashboard() {
             tooltip="Unique leads who sent at least one message in the selected period." />
           <StatCard value={stats.needsReply} label="Needs Reply" sub="Pending in Mu AI inbox"
             color="#e53e3e" border="#e53e3e" urgent={stats.needsReply > 0}
-            tooltip="Leads with AI replies waiting for approval in the inbox. Excludes test conversations." />
+            tooltip="Leads with AI replies waiting for approval in the inbox. Conversations replied back to outside Mu AI platform will not be calculated." />
           <StatCard value={stats.highIntent} label="High Intent Leads" sub="High urgency leads"
             color="var(--amb)" border="var(--amb)"
             tooltip="Leads currently tagged as HIGH intent. Indicates strong motivation or urgency to act." />
