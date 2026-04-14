@@ -71,12 +71,12 @@ export default function Dashboard() {
 
       const since = getDateFilter()
       const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }] = await Promise.all([
-        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status').in('bot_id', botIds).neq('channel', 'tester').not('username', 'ilike', 'test%').gte('updated_at', since),
+        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
         supabase.from('reviews').select('id, status').in('bot_id', botIds).gte('created_at', since),
         supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending')
       ])
 
-      const allConvos = convos || []
+      const allConvos = (convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test'))
       const reviews = allReviews || []
       const newConversations = allConvos.length
       const needsReply = new Set((pendingReviewsCount || []).map(r => r.customer_id)).size
