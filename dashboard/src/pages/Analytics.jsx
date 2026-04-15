@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 
@@ -32,6 +33,7 @@ function Tooltip({ text }) {
 
 export default function Analytics() {
   const { profile } = useAuth()
+  const navigate = useNavigate()
   const adminRole = profile?.role === 'admin' || profile?.role === 'superadmin'
   const [timeRange, setTimeRange] = useState('Last 7 Days')
   const [stats, setStats] = useState({
@@ -41,6 +43,8 @@ export default function Analytics() {
   })
   const [funnelData, setFunnelData] = useState([])
   const [stageData, setStageData] = useState([])
+  const [stageLeadsMap, setStageLeadsMap] = useState({}) // stage -> array of lead objects
+  const [expandedStage, setExpandedStage] = useState(null)
   const [systemPerf, setSystemPerf] = useState({ bookingRate: 0, reviewsSent: 0, autoSendRate: 0 })
   const [loading, setLoading] = useState(true)
   const [botName, setBotName] = useState('Bombers Blueprint')
@@ -53,6 +57,37 @@ export default function Analytics() {
     if (timeRange === 'Today') { const d = new Date(now); d.setHours(0,0,0,0); return d.toISOString() }
     if (timeRange === 'Last 7 Days') { const d = new Date(now); d.setDate(d.getDate()-7); return d.toISOString() }
     const d = new Date(now); d.setDate(d.getDate()-30); return d.toISOString()
+  }
+
+  function getLeadName(c) {
+    if (!c) return ''
+    if (c.username) return `@${c.username}`
+    if (c.profile_name) return c.profile_name
+    const ch = (c.channel || '').toLowerCase()
+    if (ch.includes('instagram') || ch === 'manychat') return 'Instagram Lead'
+    if (ch.includes('facebook')) return 'Facebook Lead'
+    if (ch.includes('whatsapp')) return 'WhatsApp Lead'
+    return 'Instagram Lead'
+  }
+
+  function timeAgo(dateStr) {
+    if (!dateStr) return ''
+    const diff = Date.now() - new Date(dateStr).getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'Just now'
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    const days = Math.floor(hrs / 24)
+    if (days === 1) return 'Yesterday'
+    if (days < 7) return `${days}d ago`
+    return new Date(dateStr).toLocaleDateString()
+  }
+
+  function intentStyle(intent) {
+    if (intent === 'HIGH') return { color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7' }
+    if (intent === 'MEDIUM') return { color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }
+    return { color: '#6b7280', background: '#f9fafb', border: '1px solid #e5e7eb' }
   }
 
   async function load() {
@@ -73,7 +108,7 @@ export default function Analytics() {
       const since = getDateFilter()
 
       const [{ data: convos }, { data: reviewData }, { data: pendingReviews }] = await Promise.all([
-        supabase.from('conversations').select('customer_id, username, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').gte('updated_at', since),
+        supabase.from('conversations').select('customer_id, username, profile_name, channel, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').gte('updated_at', since),
         supabase.from('reviews').select('customer_id, action_type, status').eq('bot_id', bot.id).gte('created_at', since),
         supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending')
       ])
@@ -91,8 +126,6 @@ export default function Analytics() {
       const autoSent = allReviews.filter(r => r.status === 'approved').length
       const autoSendRate = allReviews.length > 0 ? Math.round((autoSent / allReviews.length) * 100) : 0
       const bookingRate = active > 0 ? parseFloat(((booked / active) * 100).toFixed(1)) : 0
-
-      // Dashboard metrics
       const needsReply = new Set((pendingReviews || []).map(r => r.customer_id)).size
       const highIntent = allConvos.filter(c => c.lead_intent === 'HIGH').length
       const aiMessagesSent = allReviews.filter(r => r.status === 'approved').length + allReviews.filter(r => r.status === 'auto_sent').length
@@ -106,6 +139,19 @@ export default function Analytics() {
         { label: 'Qualified Leads (Medium + High Intent)', value: qualified },
         { label: 'Calls Booked', value: booked },
       ])
+
+      // Build stage leads map — group leads by their current stage
+      const leadsMap = {}
+      allConvos.forEach(c => {
+        if (!c.conversation_stage) return
+        if (!leadsMap[c.conversation_stage]) leadsMap[c.conversation_stage] = []
+        leadsMap[c.conversation_stage].push(c)
+      })
+      // Sort each stage's leads by updated_at desc
+      Object.keys(leadsMap).forEach(stage => {
+        leadsMap[stage].sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+      })
+      setStageLeadsMap(leadsMap)
 
       const stageCounts = {}
       allConvos.forEach(c => { if (c.conversation_stage) stageCounts[c.conversation_stage] = (stageCounts[c.conversation_stage] || 0) + 1 })
@@ -126,6 +172,10 @@ export default function Analytics() {
       }))
     } catch (e) { console.error(e) }
     setLoading(false)
+  }
+
+  function toggleStage(stage) {
+    setExpandedStage(prev => prev === stage ? null : stage)
   }
 
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
@@ -169,7 +219,7 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* ── SECTION: Activity (Dashboard metrics) ── */}
+      {/* ── Activity ── */}
       <div>
         <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Activity</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
@@ -184,7 +234,7 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* ── SECTION: Performance ── */}
+      {/* ── Performance ── */}
       <div>
         <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Performance</div>
         <div className="stats-grid">
@@ -273,31 +323,109 @@ export default function Analytics() {
         </div>
       </div>
 
+      {/* ── Drop-Off by Stage (clickable) ── */}
       {stageData.length > 1 && (
         <div className="card">
           <div style={{ marginBottom: '14px' }}>
             <div className="card-title" style={{ margin: 0 }}>Drop-Off by Stage</div>
-            <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginTop: '2px' }}>Where leads disengage in the conversation flow. These are lead behaviour patterns, not system errors.</div>
+            <div style={{ fontSize: '.76rem', color: 'var(--tx3)', marginTop: '2px' }}>
+              Where leads disengage in the conversation flow. Click any stage to see the leads currently in it.
+            </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {stageData.map((s, i) => (
-              <div key={s.stage} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: i === 0 ? 'var(--surf2)' : s.dropoffPct >= 50 ? '#fff5f5' : s.dropoffPct >= 30 ? '#fffbeb' : 'var(--surf2)', borderRadius: 'var(--rsm)', border: `1px solid ${s.dropoffPct >= 50 ? '#fed7d7' : s.dropoffPct >= 30 ? '#fde68a' : 'var(--bdr)'}` }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '.82rem', fontWeight: 500, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.stage}</div>
-                  {s.dropoffPct !== null && <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>{s.count} of {s.entered} leads reached this stage</div>}
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  {s.dropoffPct !== null ? (
-                    <div>
-                      <div style={{ fontSize: '.9rem', fontWeight: 700, color: s.dropoffPct >= 50 ? '#e53e3e' : s.dropoffPct >= 30 ? '#d97706' : '#16a34a' }}>{s.dropoffPct}% drop-off</div>
-                      <div style={{ fontSize: '.7rem', color: 'var(--tx3)' }}>({s.dropped} / {s.entered})</div>
+            {stageData.map((s, i) => {
+              const isExpanded = expandedStage === s.stage
+              const leadsInStage = stageLeadsMap[s.stage] || []
+              const hasLeads = leadsInStage.length > 0
+              return (
+                <div key={s.stage}>
+                  {/* Stage row — clickable */}
+                  <div
+                    onClick={() => hasLeads && toggleStage(s.stage)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '12px',
+                      padding: '10px 14px',
+                      background: isExpanded ? 'var(--accp)' : i === 0 ? 'var(--surf2)' : s.dropoffPct >= 50 ? '#fff5f5' : s.dropoffPct >= 30 ? '#fffbeb' : 'var(--surf2)',
+                      borderRadius: isExpanded ? 'var(--rsm) var(--rsm) 0 0' : 'var(--rsm)',
+                      border: `1px solid ${isExpanded ? 'var(--accm)' : s.dropoffPct >= 50 ? '#fed7d7' : s.dropoffPct >= 30 ? '#fde68a' : 'var(--bdr)'}`,
+                      cursor: hasLeads ? 'pointer' : 'default',
+                      transition: 'all .15s',
+                      userSelect: 'none'
+                    }}
+                  >
+                    {/* Chevron */}
+                    <div style={{ flexShrink: 0, width: '16px', color: hasLeads ? 'var(--tx3)' : 'transparent', fontSize: '.7rem', transition: 'transform .2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '.82rem', fontWeight: 500, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.stage}</div>
+                      {s.dropoffPct !== null && (
+                        <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '2px' }}>
+                          {s.count} of {s.entered} leads reached this stage
+                          {hasLeads && <span style={{ color: 'var(--acc)', marginLeft: '6px' }}>· {leadsInStage.length} currently here</span>}
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div style={{ fontSize: '.8rem', color: 'var(--tx3)' }}>Start — {s.count} leads</div>
+
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      {s.dropoffPct !== null ? (
+                        <div>
+                          <div style={{ fontSize: '.9rem', fontWeight: 700, color: s.dropoffPct >= 50 ? '#e53e3e' : s.dropoffPct >= 30 ? '#d97706' : '#16a34a' }}>{s.dropoffPct}% drop-off</div>
+                          <div style={{ fontSize: '.7rem', color: 'var(--tx3)' }}>({s.dropped} / {s.entered})</div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: '.8rem', color: 'var(--tx3)' }}>Start — {s.count} leads</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Expanded leads list */}
+                  {isExpanded && leadsInStage.length > 0 && (
+                    <div style={{ border: '1px solid var(--accm)', borderTop: 'none', borderRadius: '0 0 var(--rsm) var(--rsm)', background: 'var(--surf)', overflow: 'hidden' }}>
+                      {leadsInStage.map((lead, li) => (
+                        <div
+                          key={lead.customer_id}
+                          onClick={() => navigate('/dashboard/inbox', { state: { openLead: lead.customer_id } })}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '12px',
+                            padding: '10px 14px',
+                            borderTop: li > 0 ? '1px solid var(--bdr)' : 'none',
+                            cursor: 'pointer',
+                            transition: 'background .12s'
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--accp)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        >
+                          {/* Avatar */}
+                          <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.8rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                            {getLeadName(lead).charAt(0).toUpperCase()}
+                          </div>
+
+                          {/* Name + stage */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '.84rem', fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {getLeadName(lead)}
+                            </div>
+                            <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: '1px' }}>
+                              {timeAgo(lead.updated_at)}
+                            </div>
+                          </div>
+
+                          {/* Intent badge */}
+                          {lead.lead_intent && (
+                            <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', flexShrink: 0, ...intentStyle(lead.lead_intent) }}>
+                              {lead.lead_intent}
+                            </span>
+                          )}
+
+                          {/* Open in inbox arrow */}
+                          <span style={{ fontSize: '.75rem', color: 'var(--acc)', fontWeight: 600, flexShrink: 0 }}>→ Inbox</span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
