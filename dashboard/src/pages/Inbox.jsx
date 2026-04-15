@@ -31,6 +31,7 @@ export default function Inbox() {
   const [botId, setBotId] = useState(null)
   const [showMobileThread, setShowMobileThread] = useState(false)
   const [manualReply, setManualReply] = useState('')
+  const [manualSending, setManualSending] = useState(false)
   const channelRef = useRef(null)
   const selectedLeadRef = useRef(null)
   const msgEndRef = useRef(null)
@@ -192,6 +193,7 @@ export default function Inbox() {
       })
     } catch (e) {
       console.error('Make webhook error:', e)
+      throw e
     }
   }
 
@@ -263,12 +265,38 @@ export default function Inbox() {
   }
 
   async function sendManualReply() {
-    if (!manualReply.trim() || !selectedLead) return
-    setSending(true)
-    await sendToMake(selectedLead.customer_id, [manualReply.trim()], [1500])
-    showToast('Manual reply sent', 'success')
+    if (!manualReply.trim() || !selectedLead || !botId) return
+    setManualSending(true)
+    const text = manualReply.trim()
     setManualReply('')
-    setSending(false)
+
+    // 1. Save to conversations table — append to messages array
+    const currentMessages = conversation?.messages || []
+    const newMessage = {
+      role: 'assistant',
+      content: text,
+      bot_messages: [text],
+      timestamp: Date.now(),
+      manual: true
+    }
+    const updatedMessages = [...currentMessages, newMessage]
+
+    await supabase.from('conversations')
+      .update({ messages: updatedMessages, updated_at: new Date().toISOString() })
+      .eq('bot_id', botId)
+      .eq('customer_id', selectedLead.customer_id)
+
+    // 2. Deliver to Instagram via Make
+    try {
+      await sendToMake(selectedLead.customer_id, [text], [1500])
+      showToast('Manual reply sent', 'success')
+    } catch (e) {
+      showToast('Saved but failed to deliver to Instagram', 'error')
+    }
+
+    // 3. Reload thread so message appears immediately
+    await loadThread(selectedLead.customer_id, botId)
+    setManualSending(false)
   }
 
   function showToast(msg, type = 'success') { setToast({ msg, type }); setTimeout(() => setToast({ msg: '' }), 3000) }
@@ -350,7 +378,7 @@ export default function Inbox() {
   const sortedLeads = [...leads].sort((a, b) => {
     if (sortBy === 'intent') { const order = { HIGH: 0, MEDIUM: 1, LOW: 2 }; return (order[a.lead_intent] ?? 3) - (order[b.lead_intent] ?? 3) }
     if (sortBy === 'stage') return (a.conversation_stage || '').localeCompare(b.conversation_stage || '')
-    return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
+    return new Date(b.last_activity || 0) - new Date(a.last_activity || 0)
   })
 
   const filteredLeads = sortedLeads.filter(l => {
@@ -477,6 +505,7 @@ export default function Inbox() {
                       </div>
                     )
                     const isLead = item.role === 'user' || item.role === 'Lead'
+                    const isManual = item.manual === true
                     const review = item._review
                     const isPending = review?.status === 'pending'
                     const isActive = activeReview?.id === review?.id
@@ -491,13 +520,14 @@ export default function Inbox() {
                           )}
                           {!isLead && botMessages.map((bubble, bi) => (
                             <div key={bi} onClick={() => isPending ? (setActiveReview(review), setReplyMessages(getReviewMessages(review))) : null}
-                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? '#fffbeb' : 'var(--acc)', color: isPending ? '#78350f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isPending ? '1.5px solid #fcd34d' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
+                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? '#fffbeb' : isManual ? '#e8f0fe' : 'var(--acc)', color: isPending ? '#78350f' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isPending ? '1.5px solid #fcd34d' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
                               {isPending && bi === 0 && '\u26A0 '}{bubble}
                             </div>
                           ))}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
                           <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{item.timestamp ? fmtTime(new Date(item.timestamp)) : ''}</span>
+                          {!isLead && isManual && <span style={{ fontSize: '.65rem', color: '#6b7280', fontWeight: 500 }}>Manual</span>}
                           {!isLead && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
                           {!isLead && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'}</span>}
                           {!isLead && review?.status === 'discarded' && <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{'\u2715'} Discarded</span>}
@@ -514,14 +544,15 @@ export default function Inbox() {
                     value={manualReply}
                     onChange={e => setManualReply(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendManualReply() } }}
-                    placeholder="Type your response..."
-                    style={{ flex: 1, padding: '10px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '12px', fontSize: '.84rem', color: 'var(--tx)', outline: 'none', fontFamily: 'var(--fn)', boxSizing: 'border-box' }}
+                    placeholder="Type a manual reply..."
+                    disabled={manualSending}
+                    style={{ flex: 1, padding: '10px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '12px', fontSize: '.84rem', color: 'var(--tx)', outline: 'none', fontFamily: 'var(--fn)', boxSizing: 'border-box', opacity: manualSending ? .6 : 1 }}
                   />
                   <button
                     onClick={sendManualReply}
-                    disabled={!manualReply.trim() || sending}
-                    style={{ padding: '10px 18px', background: manualReply.trim() ? 'var(--acc)' : 'var(--surf2)', border: 'none', borderRadius: '12px', cursor: manualReply.trim() ? 'pointer' : 'default', fontSize: '.84rem', color: manualReply.trim() ? '#fff' : 'var(--tx3)', fontWeight: 600, transition: 'all .15s' }}
-                  >Send</button>
+                    disabled={!manualReply.trim() || manualSending}
+                    style={{ padding: '10px 18px', background: manualReply.trim() && !manualSending ? 'var(--acc)' : 'var(--surf2)', border: 'none', borderRadius: '12px', cursor: manualReply.trim() && !manualSending ? 'pointer' : 'default', fontSize: '.84rem', color: manualReply.trim() && !manualSending ? '#fff' : 'var(--tx3)', fontWeight: 600, transition: 'all .15s' }}
+                  >{manualSending ? 'Sending...' : 'Send'}</button>
                 </div>
               </div>
 
@@ -609,6 +640,7 @@ export default function Inbox() {
                         )}
                       </div>
                     </div>
+
                   </div>
 
                   {/* Action Buttons - pinned to bottom */}
@@ -648,7 +680,18 @@ export default function Inbox() {
                     )}
                     <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>ID: {selectedLead.customer_id}</div>
                   </div>
-                  {[{ label: 'Lead Intent', value: selectedLead.lead_intent },{ label: 'Primary Goal', value: selectedLead.primary_goal },{ label: 'Stage', value: selectedLead.conversation_stage },{ label: 'Channel', value: selectedLead.channel },{ label: 'Last Interaction', value: selectedLead.last_activity ? timeAgo(selectedLead.last_activity) : '-' },{ label: 'Golf Identity', value: selectedLead.profile_facts?.golf_identity },{ label: 'Timeframe', value: selectedLead.profile_facts?.timeframe },{ label: "What They've Tried", value: selectedLead.profile_facts?.what_theyve_tried },{ label: 'Current Approach', value: selectedLead.profile_facts?.current_approach_working },{ label: 'Priority Level', value: selectedLead.profile_facts?.priority_level }].filter(f => f.value && f.value !== '').map(f => (
+                  {[
+                    { label: 'Lead Intent', value: selectedLead.lead_intent },
+                    { label: 'Primary Goal', value: selectedLead.primary_goal },
+                    { label: 'Stage', value: selectedLead.conversation_stage },
+                    { label: 'Channel', value: selectedLead.channel },
+                    { label: 'Last Interaction', value: selectedLead.last_activity ? timeAgo(selectedLead.last_activity) : '—' },
+                    { label: 'Golf Identity', value: selectedLead.profile_facts?.golf_identity },
+                    { label: 'Timeframe', value: selectedLead.profile_facts?.timeframe },
+                    { label: "What They've Tried", value: selectedLead.profile_facts?.what_theyve_tried },
+                    { label: 'Current Approach', value: selectedLead.profile_facts?.current_approach_working },
+                    { label: 'Priority Level', value: selectedLead.profile_facts?.priority_level },
+                  ].filter(f => f.value && f.value !== '').map(f => (
                     <div key={f.label}>
                       <div style={{ fontSize: '.67rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '3px' }}>{f.label}</div>
                       <div style={{ fontSize: '.81rem', color: 'var(--tx)', lineHeight: 1.5 }}>{f.value}</div>
@@ -667,49 +710,54 @@ export default function Inbox() {
         )}
       </div>
 
-      {/* ═══ TRAIN MODAL ═══ */}
-      {showTrainModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: 'var(--surf)', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.2)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div>
-              <div style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '4px' }}>Edit & Save as Training</div>
-              <div style={{ fontSize: '.81rem', color: 'var(--tx3)' }}>Your corrections teach the bot to respond better next time.</div>
+      {/* ── TRAIN MODAL ── */}
+      {showTrainModal && activeReview && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: 'var(--surf)', borderRadius: 'var(--rlg)', boxShadow: 'var(--shm)', width: '100%', maxWidth: '560px', overflow: 'hidden' }}>
+            <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--bdr)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '.95rem' }}>✏ Edit & Train</div>
+                <div style={{ fontSize: '.75rem', color: 'var(--tx3)', marginTop: '2px' }}>The bot will learn from your correction</div>
+              </div>
+              <button onClick={() => setShowTrainModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', color: 'var(--tx3)', lineHeight: 1 }}>{'\u00D7'}</button>
             </div>
-            <div className="form-group">
-              <label className="form-label">Corrected Reply ({replyMessages.filter(m => m.trim()).length} message{replyMessages.filter(m => m.trim()).length > 1 ? 's' : ''})</label>
+            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '65vh', overflowY: 'auto' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {replyMessages.map((msg, idx) => (
-                  <div key={idx} style={{ position: 'relative' }}>
-                    <textarea className="form-input" rows={2} value={msg} onChange={e => updateReplyMessage(idx, e.target.value)} style={{ borderRadius: '10px', paddingRight: '36px' }} placeholder={`Message ${idx + 1}...`} />
-                    {replyMessages.length > 1 && <button onClick={() => removeReplyMessage(idx)} style={{ position: 'absolute', top: '8px', right: '8px', width: '22px', height: '22px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.7rem', color: '#e53e3e' }}>{'\u00D7'}</button>}
-                  </div>
-                ))}
-                {replyMessages.length < 3 && <button onClick={addReplyMessage} style={{ alignSelf: 'flex-start', padding: '4px 12px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}>+ Add message</button>}
-              </div>
-            </div>
-            <div style={{ background: 'var(--surf2)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div><div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Tag Lead Stage and Intent</div></div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Conversation Stage</label>
-                <select value={correctedStage || ''} onChange={e => setCorrectedStage(e.target.value)} className="form-input" style={{ fontSize: '.8rem', padding: '6px 10px', borderRadius: '8px' }}>
-                  {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Lead Intent</label>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {['LOW', 'MEDIUM', 'HIGH'].map(i => (
-                    <button key={i} onClick={() => setCorrectedIntent(i)} style={{ flex: 1, padding: '7px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600, background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf)', color: correctedIntent === i ? '#fff' : 'var(--tx3)', outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)' }}>{i}</button>
+                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Reply ({replyMessages.length} message{replyMessages.length !== 1 ? 's' : ''})</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {replyMessages.map((msg, idx) => (
+                    <div key={idx} style={{ position: 'relative' }}>
+                      <textarea className="form-input" rows={2} value={msg} onChange={e => updateReplyMessage(idx, e.target.value)} style={{ borderRadius: '10px', paddingRight: '36px' }} placeholder={`Message ${idx + 1}...`} />
+                      {replyMessages.length > 1 && <button onClick={() => removeReplyMessage(idx)} style={{ position: 'absolute', top: '8px', right: '8px', width: '22px', height: '22px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.7rem', color: '#e53e3e' }}>{'\u00D7'}</button>}
+                    </div>
                   ))}
+                  {replyMessages.length < 3 && <button onClick={addReplyMessage} style={{ alignSelf: 'flex-start', padding: '4px 12px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}>+ Add message</button>}
                 </div>
               </div>
+              <div style={{ background: 'var(--surf2)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div><div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Tag Lead Stage and Intent</div></div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Conversation Stage</label>
+                  <select value={correctedStage || ''} onChange={e => setCorrectedStage(e.target.value)} className="form-input" style={{ fontSize: '.8rem', padding: '6px 10px', borderRadius: '8px' }}>
+                    {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Lead Intent</label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {['LOW', 'MEDIUM', 'HIGH'].map(i => (
+                      <button key={i} onClick={() => setCorrectedIntent(i)} style={{ flex: 1, padding: '7px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600, background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf)', color: correctedIntent === i ? '#fff' : 'var(--tx3)', outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)' }}>{i}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Why did you make these changes? <span style={{ color: '#e53e3e' }}>*</span></label>
+                <textarea className="form-input" rows={3} placeholder="e.g. Bot classified this as GOAL LOCK but the lead already stated their goal." value={trainReason} onChange={e => setTrainReason(e.target.value)} style={{ borderRadius: '10px' }} />
+                <div className="form-hint">The more detail you give, the faster the AI learns.</div>
+              </div>
             </div>
-            <div className="form-group">
-              <label className="form-label">Why did you make these changes? <span style={{ color: '#e53e3e' }}>*</span></label>
-              <textarea className="form-input" rows={3} placeholder="e.g. Bot classified this as GOAL LOCK but the lead already stated their goal." value={trainReason} onChange={e => setTrainReason(e.target.value)} style={{ borderRadius: '10px' }} />
-              <div className="form-hint">The more detail you give, the faster the AI learns.</div>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <div style={{ padding: '14px 20px', borderTop: '1px solid var(--bdr)', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button className="btn btn-ghost" onClick={() => setShowTrainModal(false)} style={{ borderRadius: '10px' }}>Cancel</button>
               <button onClick={saveTraining} disabled={sending || !trainReason.trim()} style={{ padding: '9px 20px', background: 'var(--acc)', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '.84rem', color: '#fff', fontWeight: 600, opacity: sending || !trainReason.trim() ? .6 : 1 }}>{sending ? 'Saving...' : 'Save & Train'}</button>
             </div>
