@@ -34,7 +34,11 @@ export default function Analytics() {
   const { profile } = useAuth()
   const adminRole = profile?.role === 'admin' || profile?.role === 'superadmin'
   const [timeRange, setTimeRange] = useState('Last 7 Days')
-  const [stats, setStats] = useState({ active: 0, qualified: 0, qualifiedPct: 0, aiAssisted: 0, booked: 0, conversionRate: 0, closeRate: 0 })
+  const [stats, setStats] = useState({
+    active: 0, qualified: 0, qualifiedPct: 0, aiAssisted: 0,
+    booked: 0, conversionRate: 0, closeRate: 0,
+    needsReply: 0, highIntent: 0, aiMessagesSent: 0
+  })
   const [funnelData, setFunnelData] = useState([])
   const [stageData, setStageData] = useState([])
   const [systemPerf, setSystemPerf] = useState({ bookingRate: 0, reviewsSent: 0, autoSendRate: 0 })
@@ -68,9 +72,13 @@ export default function Analytics() {
 
       const since = getDateFilter()
 
-      const { data: convos } = await supabase.from('conversations').select('customer_id, username, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').gte('updated_at', since)
+      const [{ data: convos }, { data: reviewData }, { data: pendingReviews }] = await Promise.all([
+        supabase.from('conversations').select('customer_id, username, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').gte('updated_at', since),
+        supabase.from('reviews').select('customer_id, action_type, status').eq('bot_id', bot.id).gte('created_at', since),
+        supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending')
+      ])
+
       const allConvos = (convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test'))
-      const { data: reviewData } = await supabase.from('reviews').select('customer_id, action_type, status').eq('bot_id', bot.id).gte('created_at', since)
       const allReviews = reviewData || []
 
       const active = allConvos.length
@@ -84,7 +92,12 @@ export default function Analytics() {
       const autoSendRate = allReviews.length > 0 ? Math.round((autoSent / allReviews.length) * 100) : 0
       const bookingRate = active > 0 ? parseFloat(((booked / active) * 100).toFixed(1)) : 0
 
-      setStats({ active, qualified, qualifiedPct, aiAssisted, booked, conversionRate, closeRate })
+      // Dashboard metrics
+      const needsReply = new Set((pendingReviews || []).map(r => r.customer_id)).size
+      const highIntent = allConvos.filter(c => c.lead_intent === 'HIGH').length
+      const aiMessagesSent = allReviews.filter(r => r.status === 'approved').length + allReviews.filter(r => r.status === 'auto_sent').length
+
+      setStats({ active, qualified, qualifiedPct, aiAssisted, booked, conversionRate, closeRate, needsReply, highIntent, aiMessagesSent })
       setSystemPerf({ bookingRate, reviewsSent: allReviews.length, autoSendRate })
       setLastUpdated(new Date())
 
@@ -117,17 +130,17 @@ export default function Analytics() {
 
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
 
-  const StatCard = ({ value, label, sub, color, border, pct, tooltip }) => (
-    <div className="stat-card" style={{ borderLeftColor: border || 'var(--acc)' }}>
+  const StatCard = ({ value, label, sub, color, border, pct, tooltip, urgent }) => (
+    <div className="stat-card" style={{ borderLeftColor: border || 'var(--acc)', ...(urgent ? { background: '#fff9f0', borderLeftColor: '#e53e3e' } : {}) }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-        <div className="stat-num" style={{ color: color || 'var(--acc)' }}>{value}</div>
+        <div className="stat-num" style={{ color: urgent ? '#e53e3e' : (color || 'var(--acc)') }}>{value}</div>
         {pct !== undefined && <div style={{ fontSize: '.82rem', fontWeight: 600, color: color || 'var(--acc)' }}>{pct}%</div>}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px' }}>
         <div className="stat-label">{label}</div>
         {tooltip && <Tooltip text={tooltip} />}
       </div>
-      <div className="stat-change" style={{ color: color || 'var(--acc)' }}>{sub}</div>
+      <div className="stat-change" style={{ color: urgent ? '#e53e3e' : (color || 'var(--acc)') }}>{sub}</div>
     </div>
   )
 
@@ -156,24 +169,44 @@ export default function Analytics() {
         </div>
       </div>
 
-      <div className="stats-grid">
-        <StatCard value={stats.active} label="Active Conversations" sub={timeRange}
-          tooltip="Total unique leads with at least one message in the selected period." />
-        <StatCard value={stats.qualified} label="Qualified Leads" sub="Medium + High intent"
-          color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct}
-          tooltip="Leads tagged MEDIUM or HIGH intent. These are showing real interest and readiness." />
-        {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply"
-          color="var(--blu)" border="var(--blu)"
-          tooltip="Conversations where the AI generated at least one reply, auto-sent or manually approved." />}
-        <StatCard value={stats.booked} label="Calls Booked" sub={timeRange}
-          color="#16a34a" border="#16a34a"
-          tooltip="Leads who reached the CALL BOOKING stage." />
-        <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations"
-          color="var(--acc)" border="var(--acc)"
-          tooltip="Calls Booked divided by total conversations started. Shows overall system effectiveness." />
-        <StatCard value={`${stats.closeRate}%`} label="Close Rate" sub="Booked / Qualified Leads"
-          color="#16a34a" border="#16a34a"
-          tooltip="Calls Booked divided by Qualified Leads (Medium + High intent). Shows how well qualified leads are converted." />
+      {/* ── SECTION: Activity (Dashboard metrics) ── */}
+      <div>
+        <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Activity</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+          <StatCard value={stats.active} label="Active Conversations" sub={timeRange}
+            tooltip="Total unique leads with at least one message in the selected period." />
+          <StatCard value={stats.needsReply} label="Needs Reply" sub="Pending in inbox"
+            color="#e53e3e" border="#e53e3e" urgent={stats.needsReply > 0}
+            tooltip="Leads with AI replies currently waiting for approval in the inbox." />
+          <StatCard value={stats.highIntent} label="High Intent Leads" sub="High urgency leads"
+            color="var(--amb)" border="var(--amb)"
+            tooltip="Leads currently tagged as HIGH intent — showing strong motivation or urgency to act." />
+        </div>
+      </div>
+
+      {/* ── SECTION: Performance ── */}
+      <div>
+        <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Performance</div>
+        <div className="stats-grid">
+          <StatCard value={stats.qualified} label="Qualified Leads" sub="Medium + High intent"
+            color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct}
+            tooltip="Leads tagged MEDIUM or HIGH intent. These are showing real interest and readiness." />
+          {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply"
+            color="var(--blu)" border="var(--blu)"
+            tooltip="Conversations where the AI generated at least one reply, auto-sent or manually approved." />}
+          <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Approved + auto-sent"
+            color="var(--blu)" border="var(--blu)"
+            tooltip="AI replies approved and sent, either automatically or manually by a setter." />
+          <StatCard value={stats.booked} label="Calls Booked" sub={timeRange}
+            color="#16a34a" border="#16a34a"
+            tooltip="Leads who reached the CALL BOOKING stage." />
+          <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations"
+            color="var(--acc)" border="var(--acc)"
+            tooltip="Calls Booked divided by total conversations started. Shows overall system effectiveness." />
+          <StatCard value={`${stats.closeRate}%`} label="Close Rate" sub="Booked / Qualified Leads"
+            color="#16a34a" border="#16a34a"
+            tooltip="Calls Booked divided by Qualified Leads (Medium + High intent). Shows how well qualified leads are converted." />
+        </div>
       </div>
 
       <div className="grid-2col">
