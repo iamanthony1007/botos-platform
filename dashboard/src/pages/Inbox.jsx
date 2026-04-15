@@ -5,6 +5,7 @@ import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 
 const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved']
+const STAGES = ['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE']
 
 export default function Inbox() {
   const { profile } = useAuth()
@@ -29,31 +30,11 @@ export default function Inbox() {
   const [showProfile, setShowProfile] = useState(false)
   const [botId, setBotId] = useState(null)
   const [showMobileThread, setShowMobileThread] = useState(false)
-  const [showBotNotes, setShowBotNotes] = useState(false)
-  const [reviewHeight, setReviewHeight] = useState(160)
-  const draggingRef = useRef(false)
+  const [manualReply, setManualReply] = useState('')
   const channelRef = useRef(null)
   const selectedLeadRef = useRef(null)
   const msgEndRef = useRef(null)
   const searchRef = useRef(null)
-
-  function onDragStart(e) {
-    e.preventDefault()
-    draggingRef.current = true
-    const startY = e.clientY || e.touches?.[0]?.clientY
-    const startH = reviewHeight
-    function onMove(ev) {
-      if (!draggingRef.current) return
-      const y = ev.clientY || ev.touches?.[0]?.clientY
-      const newH = Math.max(100, Math.min(window.innerHeight * 0.6, startH + (startY - y)))
-      setReviewHeight(newH)
-    }
-    function onEnd() { draggingRef.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onEnd); window.removeEventListener('touchmove', onMove); window.removeEventListener('touchend', onEnd) }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onEnd)
-    window.addEventListener('touchmove', onMove)
-    window.addEventListener('touchend', onEnd)
-  }
 
   useEffect(() => {
     if (!profile) return
@@ -147,6 +128,7 @@ export default function Inbox() {
     setShowProfile(false)
     setShowMobileThread(true)
     setThreadLoading(true)
+    setManualReply('')
     await loadThread(lead.customer_id, botId)
     setThreadLoading(false)
   }
@@ -158,6 +140,7 @@ export default function Inbox() {
     setActiveReview(null)
     setReplyMessages([])
     setShowProfile(false)
+    setManualReply('')
   }
 
   async function loadThread(customerId, bid) {
@@ -178,18 +161,12 @@ export default function Inbox() {
   }
 
   function getReviewMessages(review) {
-    if (Array.isArray(review.bot_messages) && review.bot_messages.length > 0) {
-      return review.bot_messages
-    }
+    if (Array.isArray(review.bot_messages) && review.bot_messages.length > 0) return review.bot_messages
     return [review.bot_reply || '']
   }
 
   function updateReplyMessage(idx, val) {
-    setReplyMessages(prev => {
-      const newMsgs = [...prev]
-      newMsgs[idx] = val
-      return newMsgs
-    })
+    setReplyMessages(prev => { const n = [...prev]; n[idx] = val; return n })
   }
 
   function addReplyMessage() {
@@ -202,8 +179,6 @@ export default function Inbox() {
     setReplyMessages(prev => prev.filter((_, i) => i !== idx))
   }
 
-
-  // Send approved/edited reply to lead via Make.com Scenario 2
   async function sendToMake(customerId, messages, typingDelays) {
     try {
       await fetch('https://hook.eu2.make.com/jknvsf64c05m0urc1f7qph523pi310st', {
@@ -226,9 +201,7 @@ export default function Inbox() {
     const validMessages = replyMessages.filter(m => m.trim())
     const joinedReply = validMessages.join(' ')
     await supabase.from('reviews').update({
-      status: 'approved',
-      final_reply: joinedReply,
-      final_messages: validMessages,
+      status: 'approved', final_reply: joinedReply, final_messages: validMessages,
       resolved_at: new Date().toISOString(),
       ...(correctedStage ? { conversation_stage: correctedStage } : {}),
       ...(correctedIntent ? { lead_intent: correctedIntent } : {})
@@ -240,7 +213,7 @@ export default function Inbox() {
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
     await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [])
-    showToast('Approved — reply sent to lead', 'success')
+    showToast('Approved - reply sent to lead', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -255,21 +228,13 @@ export default function Inbox() {
     const joinedReply = validMessages.join(' ')
     const originalJoined = activeReview.bot_reply || ''
     await supabase.from('reviews').update({
-      status: 'edited',
-      final_reply: joinedReply,
-      final_messages: validMessages,
-      resolved_at: new Date().toISOString()
+      status: 'edited', final_reply: joinedReply, final_messages: validMessages, resolved_at: new Date().toISOString()
     }).eq('id', activeReview.id)
     await supabase.from('learnings').insert({
-      bot_id: botId,
-      customer_id: activeReview.customer_id,
-      review_id: activeReview.id,
+      bot_id: botId, customer_id: activeReview.customer_id, review_id: activeReview.id,
       conversation_stage: correctedStage || activeReview.conversation_stage,
-      original_reply: originalJoined,
-      corrected_reply: joinedReply,
-      corrected_messages: validMessages,
-      reason: trainReason,
-      source: 'inbox'
+      original_reply: originalJoined, corrected_reply: joinedReply, corrected_messages: validMessages,
+      reason: trainReason, source: 'inbox'
     })
     if (correctedStage || correctedIntent) {
       await supabase.from('conversations').update({
@@ -279,7 +244,7 @@ export default function Inbox() {
     }
     await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [])
     setShowTrainModal(false)
-    showToast('Edited — reply sent to lead', 'success')
+    showToast('Edited - reply sent to lead', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -297,21 +262,23 @@ export default function Inbox() {
     loadData()
   }
 
-  function showToast(msg, type = 'success') {
-    setToast({ msg, type })
-    setTimeout(() => setToast({ msg: '' }), 3000)
+  async function sendManualReply() {
+    if (!manualReply.trim() || !selectedLead) return
+    setSending(true)
+    await sendToMake(selectedLead.customer_id, [manualReply.trim()], [1500])
+    showToast('Manual reply sent', 'success')
+    setManualReply('')
+    setSending(false)
   }
+
+  function showToast(msg, type = 'success') { setToast({ msg, type }); setTimeout(() => setToast({ msg: '' }), 3000) }
 
   function getLeadName(lead) {
     if (!lead) return ''
     if (String(lead.customer_id).startsWith('tester_')) return 'Bot Tester'
     const ch = (lead.channel || '').toLowerCase()
-    const isFacebook = ch.includes('facebook') || ch === 'fb'
-    if (isFacebook) {
-      if (lead.profile_name) return lead.profile_name
-      if (lead.username) return `@${lead.username}`
-      return 'Facebook Lead'
-    }
+    const isFb = ch.includes('facebook') || ch === 'fb'
+    if (isFb) { if (lead.profile_name) return lead.profile_name; if (lead.username) return `@${lead.username}`; return 'Facebook Lead' }
     if (lead.username) return `@${lead.username}`
     if (lead.profile_name) return lead.profile_name
     if (lead.identity) return lead.identity
@@ -345,22 +312,13 @@ export default function Inbox() {
   }
 
   function intentEmoji(intent, stage) {
-    if (stage === 'CALL BOOKING') return '✅'
-    if (intent === 'HIGH') return '🔴'
-    if (intent === 'MEDIUM') return '🟡'
-    return '⚪'
+    if (stage === 'CALL BOOKING') return '\u2705'
+    if (intent === 'HIGH') return '\uD83D\uDD34'
+    if (intent === 'MEDIUM') return '\uD83D\uDFE1'
+    return '\u26AA'
   }
 
-  function intentBtnStyle(i) {
-    if (i === 'HIGH') return { color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7' }
-    if (i === 'MEDIUM') return { color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }
-    return { color: 'var(--tx3)', background: 'var(--surf2)', border: '1px solid var(--bdr)' }
-  }
-
-  function fmtTime(ts) {
-    if (!ts) return ''
-    return timeAgo(ts)
-  }
+  function fmtTime(ts) { if (!ts) return ''; return timeAgo(ts) }
 
   function fmtDate(ts) {
     if (!ts) return ''
@@ -382,39 +340,22 @@ export default function Inbox() {
     messages.forEach((m, i) => {
       const ts = m.timestamp ? new Date(m.timestamp) : null
       const dateLabel = ts ? fmtDate(ts) : null
-      if (dateLabel && dateLabel !== lastDate) {
-        items.push({ type: 'separator', label: dateLabel, key: `sep-${i}` })
-        lastDate = dateLabel
-      }
+      if (dateLabel && dateLabel !== lastDate) { items.push({ type: 'separator', label: dateLabel, key: `sep-${i}` }); lastDate = dateLabel }
       const botMessages = m.bot_messages || (m.content ? [m.content] : [])
-      items.push({
-        type: 'message', ...m, botMessages,
-        _index: i,
-        _review: m.review_id ? reviewMap[m.review_id] : null,
-        key: `msg-${i}`
-      })
+      items.push({ type: 'message', ...m, botMessages, _index: i, _review: m.review_id ? reviewMap[m.review_id] : null, key: `msg-${i}` })
     })
     return items
   }
 
   const sortedLeads = [...leads].sort((a, b) => {
-    if (sortBy === 'intent') {
-      const order = { HIGH: 0, MEDIUM: 1, LOW: 2 }
-      return (order[a.lead_intent] ?? 3) - (order[b.lead_intent] ?? 3)
-    }
-    if (sortBy === 'stage') {
-      return (a.conversation_stage || '').localeCompare(b.conversation_stage || '')
-    }
+    if (sortBy === 'intent') { const order = { HIGH: 0, MEDIUM: 1, LOW: 2 }; return (order[a.lead_intent] ?? 3) - (order[b.lead_intent] ?? 3) }
+    if (sortBy === 'stage') return (a.conversation_stage || '').localeCompare(b.conversation_stage || '')
     return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
   })
 
   const filteredLeads = sortedLeads.filter(l => {
     const matchesSearch = !search || getLeadName(l).toLowerCase().includes(search.toLowerCase()) || String(l.customer_id).includes(search) || (l.username && l.username.toLowerCase().includes(search.toLowerCase().replace('@', ''))) || (l.profile_name && l.profile_name.toLowerCase().includes(search.toLowerCase()))
-    const matchesFilter =
-      filter === 'All' ? true :
-      filter === 'Pending' ? l.pending_count > 0 :
-      filter === 'Escalated' ? l.handoff_count > 0 :
-      filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0 : true
+    const matchesFilter = filter === 'All' ? true : filter === 'Pending' ? l.pending_count > 0 : filter === 'Escalated' ? l.handoff_count > 0 : filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0 : true
     return matchesSearch && matchesFilter
   })
 
@@ -427,21 +368,13 @@ export default function Inbox() {
     <div className="inbox-wrapper">
       {toast.msg && <div className={`toast ${toast.type === 'error' ? 'toast-error' : ''}`}>{toast.msg}</div>}
 
-      {/* LEFT PANEL */}
+      {/* ═══ LEFT: LEAD LIST ═══ */}
       <div className="inbox-list" style={{ display: selectedLead ? 'none' : 'flex' }}>
         <div style={{ padding: '12px 12px 8px' }}>
           <div style={{ position: 'relative' }}>
-            <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--tx3)', fontSize: '.84rem', pointerEvents: 'none' }}>🔍</span>
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search leads..."
-              style={{ width: '100%', padding: '8px 10px 8px 32px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '20px', fontSize: '.83rem', color: 'var(--tx)', outline: 'none', boxSizing: 'border-box', fontFamily: 'var(--fn)' }}
-            />
-            {search && (
-              <button onClick={() => setSearch('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '.8rem', padding: 0 }}>✕</button>
-            )}
+            <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--tx3)', fontSize: '.84rem', pointerEvents: 'none' }}>{'\uD83D\uDD0D'}</span>
+            <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search leads..." style={{ width: '100%', padding: '8px 10px 8px 32px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '20px', fontSize: '.83rem', color: 'var(--tx)', outline: 'none', boxSizing: 'border-box', fontFamily: 'var(--fn)' }} />
+            {search && <button onClick={() => setSearch('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '.8rem', padding: 0 }}>{'\u2715'}</button>}
           </div>
         </div>
 
@@ -458,9 +391,7 @@ export default function Inbox() {
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all .15s'
                 }}>
                   {f}
-                  {count > 0 && (
-                    <span style={{ background: filter === f ? 'rgba(255,255,255,.3)' : '#e53e3e', color: '#fff', borderRadius: '999px', fontSize: '.6rem', minWidth: '14px', height: '14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{count}</span>
-                  )}
+                  {count > 0 && <span style={{ background: filter === f ? 'rgba(255,255,255,.3)' : '#e53e3e', color: '#fff', borderRadius: '999px', fontSize: '.6rem', minWidth: '14px', height: '14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{count}</span>}
                 </button>
               )
             })}
@@ -474,34 +405,23 @@ export default function Inbox() {
 
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {filteredLeads.length === 0 ? (
-            <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--tx3)', fontSize: '.84rem' }}>
-              {search ? 'No leads match your search' : 'No conversations yet'}
-            </div>
+            <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--tx3)', fontSize: '.84rem' }}>{search ? 'No leads match your search' : 'No conversations yet'}</div>
           ) : filteredLeads.map(lead => {
             const isSelected = selectedLead?.customer_id === lead.customer_id
             return (
-              <div key={lead.customer_id} onClick={() => selectLead(lead)} style={{
-                padding: '12px 14px', cursor: 'pointer', borderBottom: '1px solid var(--bdr)',
-                background: isSelected ? 'var(--accp)' : 'transparent',
-                borderLeft: isSelected ? '3px solid var(--acc)' : '3px solid transparent',
-                transition: 'background .15s'
-              }}>
+              <div key={lead.customer_id} onClick={() => selectLead(lead)} style={{ padding: '12px 14px', cursor: 'pointer', borderBottom: '1px solid var(--bdr)', background: isSelected ? 'var(--accp)' : 'transparent', borderLeft: isSelected ? '3px solid var(--acc)' : '3px solid transparent', transition: 'background .15s' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.9rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-                    {getLeadName(lead).charAt(0).toUpperCase()}
-                  </div>
+                  <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.9rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>{getLeadName(lead).charAt(0).toUpperCase()}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                       <span style={{ fontWeight: 600, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(lead)}</span>
-                      {lead.lead_intent === 'HIGH' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>🔴</span>}
-                      {lead.lead_intent === 'MEDIUM' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>🟡</span>}
-                      {lead.lead_intent === 'LOW' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>⚪</span>}
-                      {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>🚨</span>}
+                      {lead.lead_intent === 'HIGH' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\uD83D\uDD34'}</span>}
+                      {lead.lead_intent === 'MEDIUM' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\uD83D\uDFE1'}</span>}
+                      {lead.lead_intent === 'LOW' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\u26AA'}</span>}
+                      {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\uD83D\uDEA8'}</span>}
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                     </div>
-                    <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>
-                      {lead.latest_preview || lead.conversation_stage || 'No messages yet'}
-                    </div>
+                    <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{lead.latest_preview || lead.conversation_stage || 'No messages yet'}</div>
                   </div>
                   <div style={{ fontSize: '.68rem', color: 'var(--tx3)', flexShrink: 0 }}>{fmtTime(lead.last_activity)}</div>
                 </div>
@@ -511,158 +431,229 @@ export default function Inbox() {
         </div>
       </div>
 
-      {/* RIGHT PANEL */}
+      {/* ═══ CENTER + RIGHT: THREAD VIEW ═══ */}
       <div className="inbox-thread" style={{ display: selectedLead ? 'flex' : 'none' }}>
         {!selectedLead ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx3)', fontSize: '.9rem' }}>
-            Select a conversation to view
-          </div>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx3)', fontSize: '.9rem' }}>Select a conversation to view</div>
         ) : (
           <>
             {/* Header */}
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--bdr)', display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--surf)', flexShrink: 0 }}>
-              <button
-                onClick={goBackToList}
-                style={{ background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '1rem', color: 'var(--tx2)', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '4px', transition: 'all .15s' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--accl)'; e.currentTarget.style.color = 'var(--acc)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'var(--surf2)'; e.currentTarget.style.color = 'var(--tx2)' }}
-              >
-                ← <span style={{ fontSize: '.8rem', fontWeight: 500 }}>Back</span>
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--bdr)', display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--surf)', flexShrink: 0 }}>
+              <button onClick={goBackToList} className="back-btn">
+                {'\u2190'} <span style={{ fontSize: '.8rem', fontWeight: 500 }}>Back</span>
               </button>
-
-              <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
-                {getLeadName(selectedLead).charAt(0).toUpperCase()}
-              </div>
+              <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.95rem', fontWeight: 700, color: '#fff' }}>{getLeadName(selectedLead).charAt(0).toUpperCase()}</div>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: '.92rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(selectedLead)}</div>
-                <div style={{ fontSize: '.73rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedLead.conversation_stage || 'Unknown stage'}</div>
+                <div style={{ fontWeight: 600, fontSize: '.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(selectedLead)}</div>
+                <div style={{ fontSize: '.72rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedLead.conversation_stage || 'Unknown stage'}</div>
               </div>
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflow: 'hidden', flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
                 {selectedLead.lead_intent && (
                   <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', ...intentBadgeStyle(selectedLead.lead_intent, selectedLead.conversation_stage) }}>
                     {intentEmoji(selectedLead.lead_intent, selectedLead.conversation_stage)} {selectedLead.conversation_stage === 'CALL BOOKING' ? 'Booked' : selectedLead.lead_intent}
                   </span>
                 )}
-                <button onClick={() => setShowProfile(p => !p)} style={{ background: showProfile ? 'var(--accl)' : 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.75rem', color: showProfile ? 'var(--acc)' : 'var(--tx2)', fontWeight: showProfile ? 600 : 400 }}>
-                  Profile
-                </button>
+                <button onClick={() => setShowProfile(p => !p)} style={{ background: showProfile ? 'var(--accl)' : 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.75rem', color: showProfile ? 'var(--acc)' : 'var(--tx2)', fontWeight: showProfile ? 600 : 400 }}>Profile</button>
               </div>
             </div>
 
+            {/* Main content area: Conversation + AI Assistant side by side */}
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-              {/* Messages */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                {threadLoading ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}><div className="spinner" /></div>
-                ) : timeline.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: 'var(--tx3)', fontSize: '.84rem', padding: '60px 0' }}>No conversation history yet.</div>
-                ) : timeline.map(item => {
-                  if (item.type === 'separator') return (
-                    <div key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '14px 0 10px' }}>
-                      <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
-                      <span style={{ fontSize: '.69rem', color: 'var(--tx3)', background: '#e8ede8', padding: '3px 10px', borderRadius: '999px', fontWeight: 500, whiteSpace: 'nowrap' }}>{item.label}</span>
-                      <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
-                    </div>
-                  )
 
-                  const isLead = item.role === 'user' || item.role === 'Lead'
-                  const review = item._review
-                  const isPending = review?.status === 'pending'
-                  const isActive = activeReview?.id === review?.id
-                  const isSent = review && (review.status === 'approved' || review.status === 'edited')
-                  const botMessages = item.botMessages || [item.content]
-                  const showMultiple = !isLead && botMessages.length > 1
+              {/* LEFT: Conversation + Manual Reply */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                {/* Messages */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  {threadLoading ? (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}><div className="spinner" /></div>
+                  ) : timeline.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: 'var(--tx3)', fontSize: '.84rem', padding: '60px 0' }}>No conversation history yet.</div>
+                  ) : timeline.map(item => {
+                    if (item.type === 'separator') return (
+                      <div key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '14px 0 10px' }}>
+                        <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
+                        <span style={{ fontSize: '.69rem', color: 'var(--tx3)', background: '#e8ede8', padding: '3px 10px', borderRadius: '999px', fontWeight: 500, whiteSpace: 'nowrap' }}>{item.label}</span>
+                        <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
+                      </div>
+                    )
+                    const isLead = item.role === 'user' || item.role === 'Lead'
+                    const review = item._review
+                    const isPending = review?.status === 'pending'
+                    const isActive = activeReview?.id === review?.id
+                    const isSent = review && (review.status === 'approved' || review.status === 'edited')
+                    const botMessages = item.botMessages || [item.content]
+                    const showMultiple = !isLead && botMessages.length > 1
+                    return (
+                      <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', marginBottom: '6px' }}>
+                        <div style={{ maxWidth: 'min(80%, 560px)', display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', gap: showMultiple ? '4px' : 0 }}>
+                          {isLead && (
+                            <div style={{ padding: '9px 13px', borderRadius: '2px 16px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#fff', color: 'var(--tx)', border: '1px solid rgba(0,0,0,.06)', boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>{item.content}</div>
+                          )}
+                          {!isLead && botMessages.map((bubble, bi) => (
+                            <div key={bi} onClick={() => isPending ? (setActiveReview(review), setReplyMessages(getReviewMessages(review))) : null}
+                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? '#fffbeb' : 'var(--acc)', color: isPending ? '#78350f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isPending ? '1.5px solid #fcd34d' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
+                              {isPending && bi === 0 && '\u26A0 '}{bubble}
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
+                          <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{item.timestamp ? fmtTime(new Date(item.timestamp)) : ''}</span>
+                          {!isLead && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
+                          {!isLead && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'}</span>}
+                          {!isLead && review?.status === 'discarded' && <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{'\u2715'} Discarded</span>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div ref={msgEndRef} />
+                </div>
 
-                  return (
-                    <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', marginBottom: '6px' }}>
-                      <div style={{ maxWidth: 'min(72%, 520px)', display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', gap: showMultiple ? '4px' : 0 }}>
-                        {isLead && (
-                          <div style={{ padding: '9px 13px', borderRadius: '2px 16px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#fff', color: 'var(--tx)', border: '1px solid rgba(0,0,0,.06)', boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>
-                            {item.content}
-                          </div>
-                        )}
-                        {!isLead && botMessages.map((bubble, bi) => (
-                          <div
-                            key={bi}
-                            onClick={() => isPending ? (setActiveReview(review), setReplyMessages(getReviewMessages(review))) : null}
-                            style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? '#fffbeb' : 'var(--acc)', color: isPending ? '#78350f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isPending ? '1.5px solid #fcd34d' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
-                            {isPending && bi === 0 && '⚠ '}{bubble}
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
-                        <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{item.timestamp ? fmtTime(new Date(item.timestamp)) : ''}</span>
-                        {!isLead && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
-                        {!isLead && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>✓✓</span>}
-                        {!isLead && review?.status === 'discarded' && <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>✕ Discarded</span>}
-                      </div>
-                    </div>
-                  )
-                })}
-                <div ref={msgEndRef} />
+                {/* Manual Reply Input */}
+                <div style={{ padding: '10px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                  <input
+                    value={manualReply}
+                    onChange={e => setManualReply(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendManualReply() } }}
+                    placeholder="Type your response..."
+                    style={{ flex: 1, padding: '10px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '12px', fontSize: '.84rem', color: 'var(--tx)', outline: 'none', fontFamily: 'var(--fn)', boxSizing: 'border-box' }}
+                  />
+                  <button
+                    onClick={sendManualReply}
+                    disabled={!manualReply.trim() || sending}
+                    style={{ padding: '10px 18px', background: manualReply.trim() ? 'var(--acc)' : 'var(--surf2)', border: 'none', borderRadius: '12px', cursor: manualReply.trim() ? 'pointer' : 'default', fontSize: '.84rem', color: manualReply.trim() ? '#fff' : 'var(--tx3)', fontWeight: 600, transition: 'all .15s' }}
+                  >Send</button>
+                </div>
               </div>
 
-              {/* Lead Profile Sidebar */}
+              {/* RIGHT: AI Assistant Panel (only when pending review exists) */}
+              {activeReview && (
+                <div className="ai-panel">
+                  <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+                    {/* Panel Header */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ fontSize: '.95rem', fontWeight: 700, color: 'var(--tx)' }}>AI Assistant</div>
+                      <button onClick={() => { setActiveReview(null); setReplyMessages([]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1rem' }}>{'\u2715'}</button>
+                    </div>
+
+                    {/* AI Insight */}
+                    {activeReview.internal_notes && (
+                      <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                          <span style={{ fontSize: '.95rem' }}>{'\uD83D\uDCA1'}</span>
+                          <span style={{ fontSize: '.78rem', fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.05em' }}>AI Insight</span>
+                        </div>
+                        <div style={{ fontSize: '.8rem', color: '#78350f', lineHeight: 1.65 }}>{activeReview.internal_notes}</div>
+                      </div>
+                    )}
+
+                    {/* Escalation Warning */}
+                    {(activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER') && (
+                      <div style={{ background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '10px', padding: '10px 14px' }}>
+                        <div style={{ fontSize: '.78rem', fontWeight: 600, color: '#e53e3e', marginBottom: '4px' }}>{'\uD83D\uDEA8'} Escalated to Human</div>
+                        {activeReview.escalation_reason && <div style={{ fontSize: '.76rem', color: '#991b1b', lineHeight: 1.5 }}>{activeReview.escalation_reason}</div>}
+                      </div>
+                    )}
+
+                    {/* Lead Intent */}
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '.82rem', fontWeight: 600, color: 'var(--tx)' }}>Lead Intent</span>
+                        <span style={{ fontSize: '.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: '999px', ...intentBadgeStyle(correctedIntent || activeReview.lead_intent, correctedStage || activeReview.conversation_stage) }}>
+                          {correctedIntent || activeReview.lead_intent || 'UNKNOWN'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        {['LOW', 'MEDIUM', 'HIGH'].map(i => (
+                          <button key={i} onClick={() => setCorrectedIntent(i)} style={{
+                            flex: 1, padding: '6px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '.72rem', fontWeight: 600,
+                            background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf2)',
+                            color: correctedIntent === i ? '#fff' : 'var(--tx3)',
+                            outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)'
+                          }}>{i}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Conversation Stage */}
+                    <div>
+                      <div style={{ fontSize: '.82rem', fontWeight: 600, color: 'var(--tx)', marginBottom: '6px' }}>Conversation Stage</div>
+                      <select value={correctedStage || ''} onChange={e => setCorrectedStage(e.target.value)}
+                        style={{ width: '100%', fontSize: '.78rem', padding: '7px 10px', borderRadius: '8px', border: correctedStage !== activeReview.conversation_stage ? '1.5px solid var(--acc)' : '1px solid var(--bdr)', background: correctedStage !== activeReview.conversation_stage ? 'var(--accp)' : 'var(--surf2)', color: 'var(--tx)', cursor: 'pointer', fontFamily: 'var(--fn)', boxSizing: 'border-box' }}>
+                        {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Suggested Reply */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ fontSize: '.82rem', fontWeight: 600, color: 'var(--tx)', marginBottom: '8px' }}>Suggested Reply</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+                        {replyMessages.map((msg, idx) => (
+                          <div key={idx} style={{ position: 'relative' }}>
+                            <textarea
+                              value={msg}
+                              onChange={e => updateReplyMessage(idx, e.target.value)}
+                              rows={3}
+                              style={{ width: '100%', background: 'var(--surf2)', border: '1px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.82rem', padding: '8px 30px 8px 10px', borderRadius: '8px', resize: 'vertical', outline: 'none', lineHeight: 1.55, boxSizing: 'border-box' }}
+                              onFocus={e => e.target.style.borderColor = 'var(--accm)'}
+                              onBlur={e => e.target.style.borderColor = 'var(--bdr)'}
+                              placeholder={`Message ${idx + 1}...`}
+                            />
+                            {replyMessages.length > 1 && (
+                              <button onClick={() => removeReplyMessage(idx)} style={{ position: 'absolute', top: '6px', right: '6px', width: '18px', height: '18px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.6rem', color: '#e53e3e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{'\u00D7'}</button>
+                            )}
+                          </div>
+                        ))}
+                        {replyMessages.length < 3 && (
+                          <button onClick={addReplyMessage} style={{ alignSelf: 'flex-start', padding: '4px 10px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '6px', cursor: 'pointer', fontSize: '.72rem', color: 'var(--tx3)' }}>+ Add message</button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons - pinned to bottom */}
+                  <div style={{ borderTop: '1px solid var(--bdr)', paddingTop: '12px', display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
+                    <button onClick={() => { setTrainReason(''); setShowTrainModal(true) }}
+                      style={{ padding: '8px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.78rem', color: 'var(--tx2)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {'\u270F'} Edit
+                    </button>
+                    <button onClick={discard}
+                      style={{ padding: '8px 12px', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '8px', cursor: 'pointer', fontSize: '.78rem', color: '#e53e3e', fontWeight: 500 }}>
+                      {'\u2715'} Discard
+                    </button>
+                    <button onClick={approve} disabled={sending || replyMessages.filter(m => m.trim()).length === 0}
+                      style={{ marginLeft: 'auto', padding: '8px 18px', background: 'var(--acc)', border: 'none', borderRadius: '8px', cursor: sending ? 'not-allowed' : 'pointer', fontSize: '.82rem', color: '#fff', fontWeight: 600, opacity: sending || replyMessages.filter(m => m.trim()).length === 0 ? .7 : 1, boxShadow: '0 2px 8px rgba(45,106,79,.25)' }}>
+                      {sending ? 'Sending...' : 'Approve'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Profile Sidebar (slides over) */}
               {showProfile && selectedLead && (
                 <div className="profile-panel">
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ fontWeight: 600, fontSize: '.88rem' }}>Lead Profile</div>
-                    <button onClick={() => setShowProfile(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem' }}>×</button>
+                    <button onClick={() => setShowProfile(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '1.1rem' }}>{'\u00D7'}</button>
                   </div>
-
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '12px 0', borderBottom: '1px solid var(--bdr)' }}>
-                    <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', fontWeight: 700, color: '#fff' }}>
-                      {getLeadName(selectedLead).charAt(0).toUpperCase()}
-                    </div>
-                    {/* Show profile_name if available */}
-                    {selectedLead.profile_name && (
-                      <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center', color: 'var(--tx)' }}>{selectedLead.profile_name}</div>
-                    )}
-                    {/* Show @username if available */}
-                    {selectedLead.username && (
-                      <div style={{ fontSize: '.82rem', color: 'var(--tx3)', textAlign: 'center' }}>@{selectedLead.username}</div>
-                    )}
-                    {/* Fallback if neither */}
-                    {!selectedLead.profile_name && !selectedLead.username && (
-                      <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center' }}>{getLeadName(selectedLead)}</div>
-                    )}
-                    {/* Clickable Instagram link */}
+                    <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', fontWeight: 700, color: '#fff' }}>{getLeadName(selectedLead).charAt(0).toUpperCase()}</div>
+                    {selectedLead.profile_name && <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center', color: 'var(--tx)' }}>{selectedLead.profile_name}</div>}
+                    {selectedLead.username && <div style={{ fontSize: '.82rem', color: 'var(--tx3)', textAlign: 'center' }}>@{selectedLead.username}</div>}
+                    {!selectedLead.profile_name && !selectedLead.username && <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center' }}>{getLeadName(selectedLead)}</div>}
                     {selectedLead.username && (selectedLead.channel === 'manychat' || (selectedLead.channel || '').toLowerCase().includes('instagram') || (selectedLead.channel || '').toLowerCase() === 'ig') && (
-                      <a
-                        href={`https://www.instagram.com/${selectedLead.username.replace('@','')}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ fontSize: '.75rem', color: '#e1306c', fontWeight: 600, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '999px', background: '#fff0f5', border: '1px solid #f9c0d0' }}
-                      >
-                        <span>📸</span> View Instagram Profile
+                      <a href={`https://www.instagram.com/${selectedLead.username.replace('@','')}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '.75rem', color: '#e1306c', fontWeight: 600, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '999px', background: '#fff0f5', border: '1px solid #f9c0d0' }}>
+                        <span>{'\uD83D\uDCF8'}</span> View Instagram
                       </a>
                     )}
                     <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>ID: {selectedLead.customer_id}</div>
-                    {selectedLead.lead_intent && (
-                      <span style={{ fontSize: '.7rem', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', ...intentBadgeStyle(selectedLead.lead_intent, selectedLead.conversation_stage) }}>
-                        {intentEmoji(selectedLead.lead_intent, selectedLead.conversation_stage)} {selectedLead.conversation_stage === 'CALL BOOKING' ? 'Booked' : selectedLead.lead_intent}
-                      </span>
-                    )}
                   </div>
-
-                  {[
-                    { label: 'Lead Intent', value: selectedLead.lead_intent },
-                    { label: 'Primary Goal', value: selectedLead.primary_goal },
-                    { label: 'Stage', value: selectedLead.conversation_stage },
-                    { label: 'Channel', value: selectedLead.channel },
-                    { label: 'Last Interaction', value: selectedLead.last_activity ? timeAgo(selectedLead.last_activity) : '—' },
-                    { label: 'Golf Identity', value: selectedLead.profile_facts?.golf_identity },
-                    { label: 'Timeframe', value: selectedLead.profile_facts?.timeframe },
-                    { label: "What They've Tried", value: selectedLead.profile_facts?.what_theyve_tried },
-                    { label: 'Current Approach', value: selectedLead.profile_facts?.current_approach_working },
-                    { label: 'Priority Level', value: selectedLead.profile_facts?.priority_level },
-                  ].filter(f => f.value && f.value !== '').map(f => (
+                  {[{ label: 'Lead Intent', value: selectedLead.lead_intent },{ label: 'Primary Goal', value: selectedLead.primary_goal },{ label: 'Stage', value: selectedLead.conversation_stage },{ label: 'Channel', value: selectedLead.channel },{ label: 'Last Interaction', value: selectedLead.last_activity ? timeAgo(selectedLead.last_activity) : '-' },{ label: 'Golf Identity', value: selectedLead.profile_facts?.golf_identity },{ label: 'Timeframe', value: selectedLead.profile_facts?.timeframe },{ label: "What They've Tried", value: selectedLead.profile_facts?.what_theyve_tried },{ label: 'Current Approach', value: selectedLead.profile_facts?.current_approach_working },{ label: 'Priority Level', value: selectedLead.profile_facts?.priority_level }].filter(f => f.value && f.value !== '').map(f => (
                     <div key={f.label}>
                       <div style={{ fontSize: '.67rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '3px' }}>{f.label}</div>
                       <div style={{ fontSize: '.81rem', color: 'var(--tx)', lineHeight: 1.5 }}>{f.value}</div>
                     </div>
                   ))}
-
                   {selectedLead.running_summary && (
                     <div style={{ borderTop: '1px solid var(--bdr)', paddingTop: '14px' }}>
                       <div style={{ fontSize: '.67rem', fontWeight: 600, color: 'var(--tx3)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '6px' }}>Summary</div>
@@ -672,180 +663,55 @@ export default function Inbox() {
                 </div>
               )}
             </div>
-
-            {/* REVIEW ACTION PANEL - Resizable */}
-            {activeReview && (
-              <div style={{ background: 'var(--surf)', borderTop: '2px solid var(--acc)', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,.08)', height: reviewHeight, display: 'flex', flexDirection: 'column' }}>
-                {/* Drag handle */}
-                <div onMouseDown={onDragStart} onTouchStart={onDragStart} style={{ height: '8px', cursor: 'ns-resize', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, userSelect: 'none' }}>
-                  <div style={{ width: '36px', height: '3px', borderRadius: '2px', background: 'var(--bdr)' }} />
-                </div>
-                {/* Row 1: Status + Tags + Close */}
-                <div style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', borderBottom: '1px solid var(--bdr)' }}>
-                  {(activeReview.action_type === 'ESCALATE_TO_HUMAN' || activeReview.action_type === 'HANDOFF_TO_SETTER')
-                    ? <span style={{ fontSize: '.7rem', fontWeight: 600, color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '5px', padding: '1px 7px' }}>🚨 Escalated</span>
-                    : <span style={{ fontSize: '.7rem', color: 'var(--tx3)', fontWeight: 500 }}>⚠ Review</span>
-                  }
-                  <div style={{ width: '1px', height: '14px', background: 'var(--bdr)' }} />
-                  <span style={{ fontSize: '.68rem', fontWeight: 600, color: 'var(--tx2)' }}>Intent:</span>
-                  <div style={{ display: 'flex', gap: '2px' }}>
-                    {['LOW','MEDIUM','HIGH'].map(i => (
-                      <button key={i} onClick={() => setCorrectedIntent(i)} style={{
-                        fontSize: '.65rem', fontWeight: 600, padding: '1px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer',
-                        background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf2)',
-                        color: correctedIntent === i ? '#fff' : 'var(--tx3)',
-                        outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)'
-                      }}>{i}</button>
-                    ))}
-                  </div>
-                  <div style={{ width: '1px', height: '14px', background: 'var(--bdr)' }} />
-                  <span style={{ fontSize: '.68rem', fontWeight: 600, color: 'var(--tx2)' }}>Stage:</span>
-                  <select
-                    value={correctedStage || ''}
-                    onChange={e => setCorrectedStage(e.target.value)}
-                    style={{ fontSize: '.68rem', padding: '1px 4px', borderRadius: '4px', border: correctedStage !== activeReview.conversation_stage ? '1.5px solid var(--acc)' : '1px solid var(--bdr)', background: correctedStage !== activeReview.conversation_stage ? 'var(--accp)' : 'var(--surf2)', color: 'var(--tx)', cursor: 'pointer', fontFamily: 'var(--fn)', maxWidth: '170px' }}
-                  >
-                    {['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE'].map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                  {activeReview.internal_notes && (
-                    <span title={activeReview.internal_notes} style={{ fontSize: '.65rem', color: 'var(--tx3)', cursor: 'help', marginLeft: '2px' }}>💡 AI notes</span>
-                  )}
-                  <button onClick={() => { setActiveReview(null); setReplyMessages([]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '.95rem', lineHeight: 1, padding: '2px', marginLeft: 'auto' }}>×</button>
-                </div>
-
-                {/* Row 2: Messages side-by-side + Actions */}
-                <div style={{ padding: '6px 14px 8px', display: 'flex', gap: '8px', flex: 1, minHeight: 0 }}>
-                  {/* Messages in a row */}
-                  <div style={{ flex: 1, display: 'flex', gap: '6px', minWidth: 0 }}>
-                    {replyMessages.map((msg, idx) => (
-                      <div key={idx} style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                        <textarea
-                          value={msg}
-                          onChange={e => updateReplyMessage(idx, e.target.value)}
-                          style={{ width: '100%', flex: 1, background: 'var(--surf2)', border: '1.5px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.82rem', padding: '6px 28px 6px 10px', borderRadius: '8px', resize: 'none', outline: 'none', lineHeight: 1.5, boxSizing: 'border-box', transition: 'border-color .15s', minHeight: '40px' }}
-                          onFocus={e => e.target.style.borderColor = 'var(--accm)'}
-                          onBlur={e => e.target.style.borderColor = 'var(--bdr)'}
-                          placeholder={`Msg ${idx + 1}...`}
-                        />
-                        {replyMessages.length > 1 && (
-                          <button onClick={() => removeReplyMessage(idx)} style={{ position: 'absolute', top: '4px', right: '4px', width: '18px', height: '18px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.6rem', color: '#e53e3e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
-                        )}
-                      </div>
-                    ))}
-                    {replyMessages.length < 3 && (
-                      <button onClick={addReplyMessage} style={{ padding: '6px 8px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.7rem', color: 'var(--tx3)', whiteSpace: 'nowrap', alignSelf: 'center' }}>+</button>
-                    )}
-                  </div>
-
-                  {/* Action buttons */}
-                  <div style={{ display: 'flex', gap: '5px', flexShrink: 0, alignSelf: 'flex-end' }}>
-                    <button
-                      onClick={() => { setTrainReason(''); setShowTrainModal(true) }}
-                      title="Edit & Train"
-                      style={{ padding: '6px 10px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx2)', fontWeight: 500 }}
-                    >✏ Edit</button>
-                    <button onClick={discard} title="Discard" style={{ padding: '6px 10px', background: '#fff5f5', border: '1px solid #fed7d7', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: '#e53e3e', fontWeight: 500 }}>✕</button>
-                    <button
-                      onClick={approve}
-                      disabled={sending || replyMessages.filter(m => m.trim()).length === 0}
-                      style={{ padding: '6px 14px', background: 'var(--acc)', border: 'none', borderRadius: '8px', cursor: sending ? 'not-allowed' : 'pointer', fontSize: '.78rem', color: '#fff', fontWeight: 600, opacity: sending || replyMessages.filter(m => m.trim()).length === 0 ? .7 : 1, boxShadow: '0 2px 6px rgba(45,106,79,.25)' }}
-                    >
-                      {sending ? '...' : `Approve (${replyMessages.filter(m => m.trim()).length})`}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </>
         )}
       </div>
 
-      {/* TRAIN MODAL */}
+      {/* ═══ TRAIN MODAL ═══ */}
       {showTrainModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
           <div style={{ background: 'var(--surf)', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,.2)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
-              <div style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '4px' }}>Edit &amp; Save as Training</div>
+              <div style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '4px' }}>Edit & Save as Training</div>
               <div style={{ fontSize: '.81rem', color: 'var(--tx3)' }}>Your corrections teach the bot to respond better next time.</div>
             </div>
-
             <div className="form-group">
               <label className="form-label">Corrected Reply ({replyMessages.filter(m => m.trim()).length} message{replyMessages.filter(m => m.trim()).length > 1 ? 's' : ''})</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {replyMessages.map((msg, idx) => (
                   <div key={idx} style={{ position: 'relative' }}>
                     <textarea className="form-input" rows={2} value={msg} onChange={e => updateReplyMessage(idx, e.target.value)} style={{ borderRadius: '10px', paddingRight: '36px' }} placeholder={`Message ${idx + 1}...`} />
-                    {replyMessages.length > 1 && (
-                      <button onClick={() => removeReplyMessage(idx)} style={{ position: 'absolute', top: '8px', right: '8px', width: '22px', height: '22px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.7rem', color: '#e53e3e' }}>×</button>
-                    )}
+                    {replyMessages.length > 1 && <button onClick={() => removeReplyMessage(idx)} style={{ position: 'absolute', top: '8px', right: '8px', width: '22px', height: '22px', borderRadius: '50%', background: '#fed7d7', border: 'none', cursor: 'pointer', fontSize: '.7rem', color: '#e53e3e' }}>{'\u00D7'}</button>}
                   </div>
                 ))}
-                {replyMessages.length < 3 && (
-                  <button onClick={addReplyMessage} style={{ alignSelf: 'flex-start', padding: '4px 12px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}>+ Add message</button>
-                )}
+                {replyMessages.length < 3 && <button onClick={addReplyMessage} style={{ alignSelf: 'flex-start', padding: '4px 12px', background: 'var(--surf2)', border: '1px dashed var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}>+ Add message</button>}
               </div>
             </div>
-
             <div style={{ background: 'var(--surf2)', borderRadius: '10px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div><div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Tag Lead Stage and Intent</div><div style={{ fontSize: '.74rem', color: 'var(--tx3)', marginTop: '3px' }}>Based on what the lead said, not what the AI asked</div></div>
-
+              <div><div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.07em' }}>Tag Lead Stage and Intent</div></div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                 <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Conversation Stage</label>
-                <select
-                  value={correctedStage || ''}
-                  onChange={e => setCorrectedStage(e.target.value)}
-                  className="form-input"
-                  style={{ fontSize: '.8rem', padding: '6px 10px', borderRadius: '8px', border: correctedStage !== activeReview?.conversation_stage ? '1.5px solid var(--acc)' : '1px solid var(--bdr)', background: correctedStage !== activeReview?.conversation_stage ? 'var(--accp)' : 'var(--surf)' }}
-                >
-                  {['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE'].map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
+                <select value={correctedStage || ''} onChange={e => setCorrectedStage(e.target.value)} className="form-input" style={{ fontSize: '.8rem', padding: '6px 10px', borderRadius: '8px' }}>
+                  {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-
               <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                 <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)' }}>Lead Intent</label>
                 <div style={{ display: 'flex', gap: '6px' }}>
                   {['LOW', 'MEDIUM', 'HIGH'].map(i => (
-                    <button
-                      key={i}
-                      onClick={() => setCorrectedIntent(i)}
-                      style={{
-                        flex: 1, padding: '7px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600, transition: 'all .15s',
-                        background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf)',
-                        color: correctedIntent === i ? '#fff' : 'var(--tx3)',
-                        outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)'
-                      }}
-                    >{i}</button>
+                    <button key={i} onClick={() => setCorrectedIntent(i)} style={{ flex: 1, padding: '7px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600, background: correctedIntent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf)', color: correctedIntent === i ? '#fff' : 'var(--tx3)', outline: correctedIntent === i ? 'none' : '1px solid var(--bdr)' }}>{i}</button>
                   ))}
                 </div>
               </div>
             </div>
-
             <div className="form-group">
               <label className="form-label">Why did you make these changes? <span style={{ color: '#e53e3e' }}>*</span></label>
-              <textarea
-                className="form-input"
-                rows={3}
-                placeholder="e.g. Bot classified this as GOAL LOCK but the lead already stated their goal. Intent is MEDIUM not LOW because they showed genuine interest."
-                value={trainReason}
-                onChange={e => setTrainReason(e.target.value)}
-                style={{ borderRadius: '10px' }}
-              />
+              <textarea className="form-input" rows={3} placeholder="e.g. Bot classified this as GOAL LOCK but the lead already stated their goal." value={trainReason} onChange={e => setTrainReason(e.target.value)} style={{ borderRadius: '10px' }} />
               <div className="form-hint">The more detail you give, the faster the AI learns.</div>
             </div>
-
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button className="btn btn-ghost" onClick={() => setShowTrainModal(false)} style={{ borderRadius: '10px' }}>Cancel</button>
-              <button
-                onClick={saveTraining}
-                disabled={sending || !trainReason.trim()}
-                style={{ padding: '9px 20px', background: 'var(--acc)', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '.84rem', color: '#fff', fontWeight: 600, opacity: sending || !trainReason.trim() ? .6 : 1 }}
-              >
-                {sending ? 'Saving...' : 'Save & Train'}
-              </button>
+              <button onClick={saveTraining} disabled={sending || !trainReason.trim()} style={{ padding: '9px 20px', background: 'var(--acc)', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '.84rem', color: '#fff', fontWeight: 600, opacity: sending || !trainReason.trim() ? .6 : 1 }}>{sending ? 'Saving...' : 'Save & Train'}</button>
             </div>
           </div>
         </div>
@@ -855,13 +721,17 @@ export default function Inbox() {
         .inbox-wrapper { display: flex; height: 100%; overflow: hidden; background: var(--bg); position: relative; }
         .inbox-list { width: 100%; flex-shrink: 0; border-right: 1px solid var(--bdr); flex-direction: column; background: var(--surf); min-height: 0; }
         .inbox-thread { flex: 1; flex-direction: column; overflow: hidden; background: var(--bg); min-width: 0; }
-        .profile-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(85vw, 300px); z-index: 200; background: var(--surf); border-left: 1px solid var(--bdr); overflow-y: auto; padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; box-shadow: -4px 0 24px rgba(0,0,0,.18); animation: slideInRight .2s ease; }
+        .ai-panel { width: 340px; flex-shrink: 0; border-left: 1px solid var(--bdr); background: var(--surf); padding: 16px; display: flex; flex-direction: column; overflow: hidden; }
+        .profile-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(85vw, 320px); z-index: 200; background: var(--surf); border-left: 1px solid var(--bdr); overflow-y: auto; padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; box-shadow: -4px 0 24px rgba(0,0,0,.18); animation: slideInRight .2s ease; }
+        .back-btn { background: var(--surf2); border: 1px solid var(--bdr); border-radius: 8px; cursor: pointer; font-size: 1rem; color: var(--tx2); padding: 6px 10px; display: flex; align-items: center; gap: 4px; transition: all .15s; }
+        .back-btn:hover { background: var(--accl); color: var(--acc); }
         @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
-        .review-actions { padding: 0 16px 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-        .review-actions button:last-child { margin-left: auto; }
         @media (min-width: 1024px) {
           .inbox-list { width: 320px; }
-          .profile-panel { position: relative; width: 260px; flex-shrink: 0; box-shadow: none; animation: none; }
+          .profile-panel { position: relative; width: 280px; flex-shrink: 0; box-shadow: none; animation: none; }
+        }
+        @media (max-width: 1023px) {
+          .ai-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(90vw, 360px); z-index: 200; box-shadow: -4px 0 24px rgba(0,0,0,.18); animation: slideInRight .2s ease; }
         }
         @media (min-width: 768px) {
           .inbox-thread { display: flex !important; }
