@@ -2,6 +2,7 @@
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 
 function Tooltip({ text }) {
   const [show, setShow] = useState(false)
@@ -38,14 +39,16 @@ const DEFAULT_AI_BEHAVIOR = {
 
 export default function Settings() {
   const { profile } = useAuth()
-  const [bot, setBot] = useState(null)
-  const [autoSend, setAutoSend] = useState(false)
+  const { get: getCache, set: setCache } = useDataCache()
+  const cached = getCache('settings_data')
+  const [bot, setBot] = useState(cached?.data?.bot || null)
+  const [autoSend, setAutoSend] = useState(cached?.data?.autoSend || false)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [targetAvatar, setTargetAvatar] = useState('')
-  const [aiBehavior, setAiBehavior] = useState(DEFAULT_AI_BEHAVIOR)
-  const [automationStats, setAutomationStats] = useState(null)
+  const [loading, setLoading] = useState(!cached?.data)
+  const [targetAvatar, setTargetAvatar] = useState(cached?.data?.targetAvatar || '')
+  const [aiBehavior, setAiBehavior] = useState(cached?.data?.aiBehavior || DEFAULT_AI_BEHAVIOR)
+  const [automationStats, setAutomationStats] = useState(cached?.data?.automationStats || null)
 
   useEffect(() => { load() }, [profile])
 
@@ -114,6 +117,7 @@ export default function Settings() {
         setAutomationStats({ total, approved, edited, pending, discarded, actioned, approvalRate, avgConfidence, progressStage, progressPct, progressMsg })
       }
     }
+    setCache('settings_data', { bot: bot || data, autoSend: data?.auto_send_enabled === true, targetAvatar: data?.target_avatar || '', aiBehavior: data?.ai_behavior_settings || DEFAULT_AI_BEHAVIOR, automationStats })
     setLoading(false)
   }
 

@@ -2,21 +2,27 @@
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 
 export default function Learnings() {
   const { profile } = useAuth()
-  const [learnings, setLearnings] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { get: getCache, set: setCache } = useDataCache()
+  const cached = getCache('learnings_data')
+  const [learnings, setLearnings] = useState(cached?.data || [])
+  const [loading, setLoading] = useState(!cached?.data?.length)
   const [filter, setFilter] = useState('all')
 
   useEffect(() => { load() }, [profile])
 
   async function load() {
     if (!profile) { setLoading(false); return }
+    const hasCached = learnings.length > 0
+    if (!hasCached) setLoading(true)
     const bot = await getAssignedBot(profile, 'id')
     if (!bot) { setLoading(false); return }
     const { data } = await supabase.from('learnings').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false })
     setLearnings(data || [])
+    setCache('learnings_data', data || [])
     setLoading(false)
   }
 

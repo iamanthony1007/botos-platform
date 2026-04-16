@@ -2,20 +2,25 @@
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 
 export default function PromptEditor() {
   const { profile } = useAuth()
-  const [bot, setBot] = useState(null)
-  const [prompt, setPrompt] = useState('')
-  const [versions, setVersions] = useState([])
+  const { get: getCache, set: setCache } = useDataCache()
+  const cached = getCache('prompt_data')
+  const [bot, setBot] = useState(cached?.data?.bot || null)
+  const [prompt, setPrompt] = useState(cached?.data?.prompt || '')
+  const [versions, setVersions] = useState(cached?.data?.versions || [])
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!cached?.data)
 
   useEffect(() => { loadBot() }, [profile])
 
   async function loadBot() {
     if (!profile) { setLoading(false); return }
+    const hasCached = bot !== null
+    if (!hasCached) setLoading(true)
     const data = await getAssignedBot(profile)
     if (data) {
       setBot(data)
@@ -28,6 +33,7 @@ export default function PromptEditor() {
       .order('version_number', { ascending: false })
       .limit(5)
     setVersions(vers || [])
+    setCache('prompt_data', { bot: data, prompt: data?.system_prompt || '', versions: vers || [] })
     setLoading(false)
   }
 

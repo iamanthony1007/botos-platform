@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth, ALL_PERMISSIONS, DEFAULT_CLIENT_PERMISSIONS, DEFAULT_SETTER_PERMISSIONS, ROLE_OPTIONS_FOR } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 
 const ROLE_GUIDE = [
   { role: 'Superadmin', badge: 'badge-green', desc: 'Full access to everything. Can manage all users, bots, billing, and settings across the entire platform.' },
@@ -11,10 +12,12 @@ const ROLE_GUIDE = [
 
 export default function UserManagement() {
   const { profile, canInvite, canRemove } = useAuth()
-  const [users, setUsers] = useState([])
-  const [invites, setInvites] = useState([])
-  const [bots, setBots] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { get: getCache, set: setCache } = useDataCache()
+  const cached = getCache('users_data')
+  const [users, setUsers] = useState(cached?.data?.users || [])
+  const [invites, setInvites] = useState(cached?.data?.invites || [])
+  const [bots, setBots] = useState(cached?.data?.bots || [])
+  const [loading, setLoading] = useState(!cached?.data)
   const [showInviteModal, setShowInviteModal] = useState(false)
   const [editingUser, setEditingUser] = useState(null)
   const [toast, setToast] = useState({ msg: '', type: 'success' })
@@ -27,7 +30,8 @@ export default function UserManagement() {
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
-    setLoading(true)
+    const hasCached = users.length > 0
+    if (!hasCached) setLoading(true)
     let usersQuery = supabase.from('profiles').select('id, name, email, role, assigned_bot_id, permissions, created_at, invited_by').eq('disabled', false).order('created_at', { ascending: false })
     if (profile?.role === 'client') usersQuery = usersQuery.eq('role', 'setter').eq('assigned_bot_id', profile.assigned_bot_id)
 
@@ -41,9 +45,12 @@ export default function UserManagement() {
 
     const botMap = {}
     ;(botsData || []).forEach(b => { botMap[b.id] = b.name })
-    setUsers((usersData || []).map(u => ({ ...u, botName: botMap[u.assigned_bot_id] || null })))
-    setInvites((invitesData || []).map(i => ({ ...i, botName: botMap[i.assigned_bot_id] || null })))
+    const mappedUsers = (usersData || []).map(u => ({ ...u, botName: botMap[u.assigned_bot_id] || null }))
+    const mappedInvites = (invitesData || []).map(i => ({ ...i, botName: botMap[i.assigned_bot_id] || null }))
+    setUsers(mappedUsers)
+    setInvites(mappedInvites)
     setBots(botsData || [])
+    setCache('users_data', { users: mappedUsers, invites: mappedInvites, bots: botsData || [] })
     setLoading(false)
   }
 

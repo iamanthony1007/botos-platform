@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 import * as mammoth from 'mammoth'
 
 const WORKER_URL = 'https://sales-bot.nellakuate.workers.dev'
@@ -16,9 +17,11 @@ const ACCEPTED_TYPES = {
 
 export default function Documents() {
   const { profile } = useAuth()
-  const [docs, setDocs] = useState([])
-  const [bot, setBot] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const { get: getCache, set: setCache } = useDataCache()
+  const cached = getCache('documents_data')
+  const [docs, setDocs] = useState(cached?.data?.docs || [])
+  const [bot, setBot] = useState(cached?.data?.bot || null)
+  const [loading, setLoading] = useState(!cached?.data)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState('')
   const [toast, setToast] = useState({ msg: '', type: 'success' })
@@ -30,10 +33,13 @@ export default function Documents() {
 
   async function load() {
     if (!profile) { setLoading(false); return }
+    const hasCached = docs.length > 0
+    if (!hasCached) setLoading(true)
     const b = await getAssignedBot(profile)
     if (b) setBot(b)
     const { data } = await supabase.from('bot_documents').select('*').eq('bot_id', b?.id).order('created_at', { ascending: false })
     setDocs(data || [])
+    setCache('documents_data', { docs: data || [], bot: b })
     setLoading(false)
   }
 
