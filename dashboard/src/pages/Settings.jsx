@@ -64,11 +64,12 @@ export default function Settings() {
         setAiBehavior({ ...DEFAULT_AI_BEHAVIOR, ...saved })
       }
 
-      // Load automation stats
-      const { data: reviews } = await supabase
-        .from('reviews')
-        .select('id, status, confidence, created_at')
-        .eq('bot_id', data.id)
+     // Load automation stats
+	const { data: reviews } = await supabase
+  	.from('reviews')
+ 	.select('id, status, confidence, created_at')
+  	.eq('bot_id', data.id)
+  	.not('customer_id', 'ilike', 'tester_%')
 
       if (reviews) {
         const total = reviews.length

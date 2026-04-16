@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
-import { useDataCache } from '../lib/DataCache'
 
 const TIME_RANGES = ['Today', 'Last 7 Days', 'Last 30 Days']
 const STAGE_SEQUENCE = [
@@ -35,21 +34,19 @@ function Tooltip({ text }) {
 export default function Analytics() {
   const { profile } = useAuth()
   const navigate = useNavigate()
-  const { get: getCache, set: setCache } = useDataCache()
   const adminRole = profile?.role === 'admin' || profile?.role === 'superadmin'
   const [timeRange, setTimeRange] = useState('Last 7 Days')
-  const cachedAnalytics = getCache('analytics_data')
-  const [stats, setStats] = useState(cachedAnalytics?.data?.stats || {
+  const [stats, setStats] = useState({
     active: 0, qualified: 0, qualifiedPct: 0, aiAssisted: 0,
     booked: 0, conversionRate: 0, closeRate: 0,
     needsReply: 0, highIntent: 0, aiMessagesSent: 0
   })
-  const [funnelData, setFunnelData] = useState(cachedAnalytics?.data?.funnelData || [])
-  const [stageData, setStageData] = useState(cachedAnalytics?.data?.stageData || [])
-  const [stageLeadsMap, setStageLeadsMap] = useState({})
+  const [funnelData, setFunnelData] = useState([])
+  const [stageData, setStageData] = useState([])
+  const [stageLeadsMap, setStageLeadsMap] = useState({}) // stage -> array of lead objects
   const [expandedStage, setExpandedStage] = useState(null)
-  const [systemPerf, setSystemPerf] = useState(cachedAnalytics?.data?.systemPerf || { bookingRate: 0, reviewsSent: 0, autoSendRate: 0 })
-  const [loading, setLoading] = useState(!cachedAnalytics?.data)
+  const [systemPerf, setSystemPerf] = useState({ bookingRate: 0, reviewsSent: 0, autoSendRate: 0 })
+  const [loading, setLoading] = useState(true)
   const [botName, setBotName] = useState('Bombers Blueprint')
   const [lastUpdated, setLastUpdated] = useState(null)
 
@@ -95,8 +92,7 @@ export default function Analytics() {
 
   async function load() {
     if (!profile) return
-    const hasCached = stats.active > 0 || funnelData.length > 0
-    if (!hasCached) setLoading(true)
+    setLoading(true)
     try {
       const isAdmin = profile.role === 'admin' || profile.role === 'superadmin'
       let botQuery = supabase.from('bots').select('id, name')
@@ -113,7 +109,7 @@ export default function Analytics() {
 
       const [{ data: convos }, { data: reviewData }, { data: pendingReviews }] = await Promise.all([
         supabase.from('conversations').select('customer_id, username, profile_name, channel, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').gte('updated_at', since),
-        supabase.from('reviews').select('customer_id, action_type, status').eq('bot_id', bot.id).gte('created_at', since),
+        supabase.from('reviews').select('customer_id, action_type, status').eq('bot_id', bot.id).gte('created_at', since).not('customer_id', 'ilike', 'tester_%'),
         supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
       ])
 
@@ -174,7 +170,6 @@ export default function Analytics() {
         const dropped = Math.max(0, prev - s.count)
         return { ...s, dropoffPct: prev > 0 ? Math.round((dropped / prev) * 100) : 0, entered: prev, dropped }
       }))
-      setCache('analytics_data', { stats: { active, qualified, qualifiedPct, aiAssisted, booked, conversionRate, closeRate, needsReply, highIntent, aiMessagesSent }, funnelData: [{ label: 'Conversations Started', value: active }, { label: 'Qualified Leads (Medium + High Intent)', value: qualified }, { label: 'Calls Booked', value: booked }], stageData: strictStages, systemPerf: { bookingRate, reviewsSent: allReviews.length, autoSendRate } })
     } catch (e) { console.error(e) }
     setLoading(false)
   }
