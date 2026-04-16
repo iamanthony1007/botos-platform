@@ -387,7 +387,7 @@ export default function Inbox() {
     return matchesSearch && matchesFilter
   })
 
-  const totalPending = leads.reduce((a, l) => a + l.pending_count, 0)
+  const totalPending = leads.filter(l => l.pending_count > 0).length
   const timeline = selectedLead ? buildTimeline() : []
 
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
