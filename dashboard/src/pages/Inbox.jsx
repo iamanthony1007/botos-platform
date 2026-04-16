@@ -5,7 +5,7 @@ import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 import { useDataCache } from '../lib/DataCache'
 
-const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved']
+const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved', 'Test']
 const STAGES = ['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE']
 
 export default function Inbox() {
@@ -120,7 +120,7 @@ export default function Inbox() {
       }
     })
 
-    ;(allReviews || []).filter(r => !String(r.customer_id).startsWith('tester_')).forEach(r => {
+    ;(allReviews || []).forEach(r => {
       if (!leadsMap[r.customer_id]) {
         leadsMap[r.customer_id] = {
           customer_id: r.customer_id, identity: null, channel: 'tester',
@@ -434,7 +434,15 @@ export default function Inbox() {
 
   const filteredLeads = sortedLeads.filter(l => {
     const matchesSearch = !search || getLeadName(l).toLowerCase().includes(search.toLowerCase()) || String(l.customer_id).includes(search) || (l.username && l.username.toLowerCase().includes(search.toLowerCase().replace('@', ''))) || (l.profile_name && l.profile_name.toLowerCase().includes(search.toLowerCase()))
-    const matchesFilter = filter === 'All' ? true : filter === 'Pending' ? l.pending_count > 0 : filter === 'Escalated' ? l.handoff_count > 0 : filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0 : true
+    const isTester = String(l.customer_id).startsWith('tester_')
+    const matchesFilter = filter === 'Test'
+      ? isTester
+      : isTester ? false
+      : filter === 'All' ? true
+      : filter === 'Pending' ? l.pending_count > 0
+      : filter === 'Escalated' ? l.handoff_count > 0
+      : filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0
+      : true
     return matchesSearch && matchesFilter
   })
 
@@ -460,17 +468,24 @@ export default function Inbox() {
         <div style={{ padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: '4px' }}>
             {FILTERS.map(f => {
-              const count = f === 'Pending' ? totalPending : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0) : null
+              const count = f === 'Pending' ? totalPending : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0) : f === 'Test' ? leads.filter(l => String(l.customer_id).startsWith('tester_')).length : null
               return (
                 <button key={f} onClick={() => setFilter(f)} style={{
                   flex: 1, padding: '5px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
                   fontSize: '.72rem', fontWeight: filter === f ? 600 : 400,
-                  background: filter === f ? 'var(--acc)' : 'var(--surf2)',
-                  color: filter === f ? '#fff' : 'var(--tx2)',
+                  background: filter === f ? (f === 'Test' ? '#6b7280' : 'var(--acc)') : 'var(--surf2)',
+                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : 'var(--tx2)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all .15s'
                 }}>
                   {f}
-                  {count > 0 && <span style={{ background: filter === f ? 'rgba(255,255,255,.3)' : '#e53e3e', color: '#fff', borderRadius: '999px', fontSize: '.6rem', minWidth: '14px', height: '14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>{count}</span>}
+                  {count > 0 && (
+                    <span style={{
+                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : '#e53e3e',
+                      color: '#fff', borderRadius: '999px', fontSize: '.6rem',
+                      minWidth: '14px', height: '14px', display: 'inline-flex',
+                      alignItems: 'center', justifyContent: 'center', padding: '0 3px'
+                    }}>{count}</span>
+                  )}
                 </button>
               )
             })}

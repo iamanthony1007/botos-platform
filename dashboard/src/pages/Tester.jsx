@@ -35,14 +35,31 @@ function calcTypingDelay(text) {
 export default function Tester() {
   const { profile, can } = useAuth()
   const canEdit = can('bot_tester_edit')
-  const [messages, setMessages] = useState([])
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tester_messages')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch {}
+    return []
+  })
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [bot, setBot] = useState(null)
   const [learnings, setLearnings] = useState([])
   const [toast, setToast] = useState('')
   const [modal, setModal] = useState(null)
-  const [customerId] = useState('tester_' + Math.random().toString(36).substr(2, 9))
+  const [customerId, setCustomerId] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tester_customer_id')
+      if (saved) return saved
+      const newId = 'tester_' + Math.random().toString(36).substr(2, 9)
+      localStorage.setItem('tester_customer_id', newId)
+      return newId
+    } catch { return 'tester_' + Math.random().toString(36).substr(2, 9) }
+  })
   const [isTyping, setIsTyping] = useState(false)
   const [saving, setSaving] = useState(false)
   const bottomRef = useRef(null)
@@ -50,19 +67,29 @@ export default function Tester() {
   useEffect(() => { loadBot() }, [profile])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isTyping])
 
+  // Persist messages and customerId to localStorage whenever they change
+  useEffect(() => {
+    if (messages.length === 0) return
+    try { localStorage.setItem('tester_messages', JSON.stringify(messages)) } catch {}
+  }, [messages])
+
   async function loadBot() {
     if (!profile) { setLoading(false); return }
     const data = await getAssignedBot(profile)
     if (data) setBot(data)
-    setMessages([{
-      role: 'assistant',
-      botMessages: ["G'day mate. How long have you been playing golf for?"],
-      stage: 'Entry & Context',
-      intent: 'LOW',
-      conf: 92,
-      editable: false,
-      editMessages: ["G'day mate. How long have you been playing golf for?"]
-    }])
+    // Only set initial message if no saved conversation exists
+    setMessages(prev => {
+      if (prev.length > 0) return prev
+      return [{
+        role: 'assistant',
+        botMessages: ["G'day mate. How long have you been playing golf for?"],
+        stage: 'Entry & Context',
+        intent: 'LOW',
+        conf: 92,
+        editable: false,
+        editMessages: ["G'day mate. How long have you been playing golf for?"]
+      }]
+    })
   }
 
   async function send() {
@@ -224,6 +251,12 @@ export default function Tester() {
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 3500) }
 
   function clearChat() {
+    const newId = 'tester_' + Math.random().toString(36).substr(2, 9)
+    try {
+      localStorage.setItem('tester_customer_id', newId)
+      localStorage.removeItem('tester_messages')
+    } catch {}
+    setCustomerId(newId)
     setIsTyping(false)
     setMessages([{
       role: 'assistant',
