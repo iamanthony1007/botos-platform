@@ -90,7 +90,7 @@ export default function Dashboard() {
       setLastUpdated(new Date())
 
       const scored = allConvos
-        .filter(c => c.status !== 'booked')
+        .filter(c => c.status !== 'booked' && c.lead_intent !== 'LOW')
         .map(c => {
           const stageScore = STAGE_PRIORITY[c.conversation_stage] ?? 0
           const intentScore = INTENT_SCORE[c.lead_intent] ?? 0

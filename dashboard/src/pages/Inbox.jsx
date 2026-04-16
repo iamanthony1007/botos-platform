@@ -541,7 +541,7 @@ export default function Inbox() {
                           )}
                           {!isLead && botMessages.map((bubble, bi) => (
                             <div key={bi} onClick={() => isPending ? (setActiveReview(review), setReplyMessages(getReviewMessages(review))) : null}
-                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? '#eef2ff' : isManual ? '#e8f0fe' : 'var(--acc)', color: isPending ? '#3730a3' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid #6366f1' : isPending ? '1.5px dashed #a5b4fc' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
+                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? 'var(--accl)' : isManual ? '#e8f0fe' : 'var(--acc)', color: isPending ? 'var(--accm)' : isManual ? '#1a3a8f' : '#fff', border: isActive ? '2px solid var(--acc)' : isPending ? '1.5px dashed var(--acc)' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
                               {isPending && bi === 0 && '\uD83D\uDCAC '}{bubble}
                             </div>
                           ))}
