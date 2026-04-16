@@ -219,44 +219,34 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* ── Activity ── */}
-      <div>
-        <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Activity</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-          <StatCard value={stats.active} label="Active Conversations" sub={timeRange}
-            tooltip="Total unique leads with at least one message in the selected period." />
-          <StatCard value={stats.needsReply} label="Needs Reply" sub="Pending in inbox"
-            color="#e53e3e" border="#e53e3e" urgent={stats.needsReply > 0}
-            tooltip="Leads with AI replies currently waiting for approval in the inbox." />
-          <StatCard value={stats.highIntent} label="High Intent Leads" sub="High urgency leads"
-            color="var(--amb)" border="var(--amb)"
-            tooltip="Leads currently tagged as HIGH intent — showing strong motivation or urgency to act." />
-        </div>
-      </div>
-
-      {/* ── Performance ── */}
-      <div>
-        <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Performance</div>
-        <div className="stats-grid">
-          <StatCard value={stats.qualified} label="Qualified Leads" sub="Medium + High intent"
-            color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct}
-            tooltip="Leads tagged MEDIUM or HIGH intent. These are showing real interest and readiness." />
-          {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply"
-            color="var(--blu)" border="var(--blu)"
-            tooltip="Conversations where the AI generated at least one reply, auto-sent or manually approved." />}
-          <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Approved + auto-sent"
-            color="var(--blu)" border="var(--blu)"
-            tooltip="AI replies approved and sent, either automatically or manually by a setter." />
-          <StatCard value={stats.booked} label="Calls Booked" sub={timeRange}
-            color="#16a34a" border="#16a34a"
-            tooltip="Leads who reached the CALL BOOKING stage." />
-          <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations"
-            color="var(--acc)" border="var(--acc)"
-            tooltip="Calls Booked divided by total conversations started. Shows overall system effectiveness." />
-          <StatCard value={`${stats.closeRate}%`} label="Close Rate" sub="Booked / Qualified Leads"
-            color="#16a34a" border="#16a34a"
-            tooltip="Calls Booked divided by Qualified Leads (Medium + High intent). Shows how well qualified leads are converted." />
-        </div>
+      {/* ── Unified stats grid — Option A ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+        <StatCard value={stats.needsReply} label="Needs Reply" sub="Pending in inbox"
+          color="#e53e3e" border="#e53e3e" urgent={stats.needsReply > 0}
+          tooltip="Leads with AI replies currently waiting for approval in the inbox." />
+        <StatCard value={stats.active} label="Active Conversations" sub={timeRange}
+          tooltip="Total unique leads with at least one message in the selected period." />
+        <StatCard value={stats.booked} label="Calls Booked" sub={timeRange}
+          color="#16a34a" border="#16a34a"
+          tooltip="Leads who reached the CALL BOOKING stage." />
+        <StatCard value={stats.highIntent} label="High Intent Leads" sub="High urgency leads"
+          color="var(--amb)" border="var(--amb)"
+          tooltip="Leads currently tagged as HIGH intent — showing strong motivation or urgency to act." />
+        <StatCard value={stats.qualified} label="Qualified Leads" sub="Medium + High intent"
+          color="var(--amb)" border="var(--amb)" pct={stats.qualifiedPct}
+          tooltip="Leads tagged MEDIUM or HIGH intent. These are showing real interest and readiness." />
+        <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations"
+          color="var(--acc)" border="var(--acc)"
+          tooltip="Calls Booked divided by total conversations started. Shows overall system effectiveness." />
+        <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Approved + auto-sent"
+          color="var(--blu)" border="var(--blu)"
+          tooltip="AI replies approved and sent, either automatically or manually by a setter." />
+        {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply"
+          color="var(--blu)" border="var(--blu)"
+          tooltip="Conversations where the AI generated at least one reply, auto-sent or manually approved." />}
+        <StatCard value={`${stats.closeRate}%`} label="Close Rate" sub="Booked / Qualified Leads"
+          color="#16a34a" border="#16a34a"
+          tooltip="Calls Booked divided by Qualified Leads (Medium + High intent). Shows how well qualified leads are converted." />
       </div>
 
       <div className="grid-2col">
