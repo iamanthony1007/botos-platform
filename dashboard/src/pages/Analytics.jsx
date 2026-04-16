@@ -110,7 +110,7 @@ export default function Analytics() {
       const [{ data: convos }, { data: reviewData }, { data: pendingReviews }] = await Promise.all([
         supabase.from('conversations').select('customer_id, username, profile_name, channel, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').gte('updated_at', since),
         supabase.from('reviews').select('customer_id, action_type, status').eq('bot_id', bot.id).gte('created_at', since),
-        supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending')
+        supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
       ])
 
       const allConvos = (convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test'))

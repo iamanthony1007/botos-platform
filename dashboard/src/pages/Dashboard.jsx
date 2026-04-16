@@ -73,7 +73,8 @@ export default function Dashboard() {
       const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }] = await Promise.all([
         supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
         supabase.from('reviews').select('id, status').in('bot_id', botIds).gte('created_at', since),
-        supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending')
+        // Exclude tester leads — same logic as Inbox pendingOnly query
+        supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
       ])
 
       const allConvos = (convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test'))
@@ -188,6 +189,12 @@ export default function Dashboard() {
           <StatCard value={stats.highIntent} label="High Intent Leads" sub="High urgency leads"
             color="var(--amb)" border="var(--amb)"
             tooltip="Leads currently tagged as HIGH intent. Indicates strong motivation or urgency to act." />
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Performance</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
           <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Auto-approved"
             color="var(--blu)" border="var(--blu)"
             tooltip="AI replies approved and sent, either automatically or manually by a setter." />
@@ -225,16 +232,20 @@ export default function Dashboard() {
                       <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: i === 0 ? 'var(--acc)' : 'var(--surf3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.72rem', fontWeight: 700, color: i === 0 ? '#fff' : 'var(--tx3)', flexShrink: 0 }}>{i + 1}</div>
-                          <span style={{ fontWeight: 600, fontSize: '.95rem', color: 'var(--tx)' }}>{getLeadName(c)}</span>
+                          <span style={{ fontWeight: 600, fontSize: '.86rem', color: 'var(--tx)' }}>{getLeadName(c)}</span>
                         </div>
                       </td>
                       <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
-                        <span style={{ fontSize: '.86rem', fontWeight: 500, color: stageColor(c.conversation_stage) }}>{c.conversation_stage || 'Entry'}</span>
+                        <span style={{ fontSize: '.76rem', color: stageColor(c.conversation_stage), fontWeight: 500 }}>{c.conversation_stage || '—'}</span>
                       </td>
                       <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>
-                        <span style={{ fontSize: '.84rem', fontWeight: 700, padding: '3px 12px', borderRadius: '999px', color: ii.color, background: ii.bg, border: ii.border }}>{ii.emoji} {ii.label}</span>
+                        <span style={{ fontSize: '.72rem', fontWeight: 700, padding: '3px 10px', borderRadius: '999px', background: ii.bg, color: ii.color, border: ii.border }}>
+                          {ii.emoji} {ii.label}
+                        </span>
                       </td>
-                      <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)', fontSize: '.88rem', color: 'var(--tx2)' }}>{fmtTime(c.updated_at)}</td>
+                      <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)', fontSize: '.82rem', color: 'var(--tx3)' }}>
+                        {fmtTime(c.updated_at)}
+                      </td>
                     </tr>
                   )
                 })}
@@ -243,27 +254,6 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-
-      {adminRole && bots.length > 0 && (
-        <div className="card">
-          <div className="card-title">Your Bots</div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr><th>Bot Name</th><th>Model</th><th>Status</th><th>Created</th></tr></thead>
-              <tbody>
-                {bots.map(b => (
-                  <tr key={b.id}>
-                    <td>{b.name}</td>
-                    <td style={{ fontSize: '.78rem', color: 'var(--tx3)', fontFamily: 'monospace' }}>{b.model}</td>
-                    <td><span className={`badge ${b.status === 'active' ? 'badge-green' : b.status === 'trial' ? 'badge-blue' : 'badge-gray'}`}>{b.status}</span></td>
-                    <td style={{ fontSize: '.78rem', color: 'var(--tx3)' }}>{new Date(b.created_at).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
