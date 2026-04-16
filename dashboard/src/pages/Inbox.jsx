@@ -96,7 +96,7 @@ export default function Inbox() {
         }
       }
       leadsMap[r.customer_id].all_reviews.push(r)
-      if (r.status === 'pending') leadsMap[r.customer_id].pending_count++
+      if (r.status === 'pending') leadsMap[r.customer_id].pending_count = 1
       if ((r.action_type === 'ESCALATE_TO_HUMAN' || r.action_type === 'HANDOFF_TO_SETTER') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
       if (!leadsMap[r.customer_id].latest_preview) leadsMap[r.customer_id].latest_preview = r.bot_reply || ''
     })
