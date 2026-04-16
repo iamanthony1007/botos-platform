@@ -350,6 +350,17 @@ var index_default = {
         // Primary reply = all messages joined (for memory + logging)
         const joinedReply = dedupedMessages.join(" ");
 
+        // ── Intent validation guardrail ────────────────────────────────────
+        // Prevent AI from over-classifying intent on shallow conversations
+        const userMessageCount = memory.messages.filter(m => m.role === "user").length;
+        if (userMessageCount <= 1 && botResponse.lead_intent === "HIGH") {
+          botResponse.lead_intent = "LOW";
+          botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Intent downgraded from HIGH to LOW - only 1 user message, not enough context]";
+        } else if (userMessageCount <= 2 && botResponse.lead_intent === "HIGH") {
+          botResponse.lead_intent = "MEDIUM";
+          botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Intent downgraded from HIGH to MEDIUM - only 2 user messages, need more signals]";
+        }
+
         // ── Memory update ──────────────────────────────────────────────────
         const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts, memory);

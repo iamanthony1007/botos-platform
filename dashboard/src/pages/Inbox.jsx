@@ -3,13 +3,18 @@ import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 
 const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved']
 const STAGES = ['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE']
 
 export default function Inbox() {
   const { profile } = useAuth()
-  const [leads, setLeads] = useState([])
+  const { get: getCache, set: setCache, isFresh } = useDataCache()
+  const [leads, setLeads] = useState(() => {
+    const cached = getCache('inbox_leads')
+    return cached?.data || []
+  })
   const [filter, setFilter] = useState('All')
   const [sortBy, setSortBy] = useState('lastInteraction')
   const location = useLocation()
@@ -20,7 +25,11 @@ export default function Inbox() {
   const [activeReview, setActiveReview] = useState(null)
   const [replyMessages, setReplyMessages] = useState([])
   const [sending, setSending] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => {
+    // If we have cached data, skip initial loading spinner
+    const cached = getCache('inbox_leads')
+    return !cached?.data?.length
+  })
   const [threadLoading, setThreadLoading] = useState(false)
   const [toast, setToast] = useState({ msg: '', type: '' })
   const [showTrainModal, setShowTrainModal] = useState(false)
@@ -69,7 +78,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
     ])
 
@@ -78,13 +87,16 @@ export default function Inbox() {
     ;(convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test')).forEach(c => {
       let identity = null, pf = {}
       try { pf = typeof c.profile_facts === 'string' ? JSON.parse(c.profile_facts) : (c.profile_facts || {}); identity = pf?.golf_identity || null } catch {}
+      // Get the last user message for preview
+      const msgs = Array.isArray(c.messages) ? c.messages : []
+      const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user')
       leadsMap[c.customer_id] = {
         customer_id: c.customer_id, identity, username: c.username || null, profile_name: c.profile_name || null,
         lead_intent: c.lead_intent || null, channel: c.channel,
         primary_goal: c.primary_goal,
         conversation_stage: c.conversation_stage, running_summary: c.running_summary,
         profile_facts: pf, last_activity: c.updated_at,
-        pending_count: 0, handoff_count: 0, latest_preview: '', all_reviews: []
+        pending_count: 0, handoff_count: 0, latest_preview: '', last_user_message: lastUserMsg?.content || '', all_reviews: []
       }
     })
 
@@ -94,7 +106,7 @@ export default function Inbox() {
           customer_id: r.customer_id, identity: null, channel: 'tester',
           lead_intent: null, primary_goal: null, conversation_stage: r.conversation_stage,
           running_summary: null, profile_facts: {}, last_activity: r.created_at,
-          pending_count: 0, handoff_count: 0, latest_preview: '', all_reviews: []
+          pending_count: 0, handoff_count: 0, latest_preview: '', last_user_message: '', all_reviews: []
         }
       }
       leadsMap[r.customer_id].all_reviews.push(r)
@@ -111,9 +123,10 @@ export default function Inbox() {
       return new Date(b.last_activity) - new Date(a.last_activity)
     })
 
-    // Unique leads with pending reviews — same logic as needsReply in Dashboard/Analytics
+    // Unique leads with pending reviews
     setPendingLeadCount(new Set((pendingOnly || []).map(r => r.customer_id)).size)
     setLeads(sorted)
+    setCache('inbox_leads', sorted)
     setLoading(false)
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
@@ -453,7 +466,7 @@ export default function Inbox() {
                       {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\uD83D\uDEA8'}</span>}
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                     </div>
-                    <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{lead.latest_preview || lead.conversation_stage || 'No messages yet'}</div>
+                    <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{lead.last_user_message || lead.latest_preview || lead.conversation_stage || 'No messages yet'}</div>
                   </div>
                   <div style={{ fontSize: '.68rem', color: 'var(--tx3)', flexShrink: 0 }}>{fmtTime(lead.last_activity)}</div>
                 </div>
@@ -514,7 +527,11 @@ export default function Inbox() {
                     const isPending = review?.status === 'pending'
                     const isActive = activeReview?.id === review?.id
                     const isSent = review && (review.status === 'approved' || review.status === 'edited')
-                    const botMessages = item.botMessages || [item.content]
+                    // Fix 1: Show final/edited messages if available, otherwise show original
+                    const displayMessages = (!isLead && isSent && review.final_messages && review.final_messages.length > 0)
+                      ? review.final_messages
+                      : item.botMessages || [item.content]
+                    const botMessages = displayMessages
                     const showMultiple = !isLead && botMessages.length > 1
                     return (
                       <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', marginBottom: '6px' }}>
@@ -524,8 +541,8 @@ export default function Inbox() {
                           )}
                           {!isLead && botMessages.map((bubble, bi) => (
                             <div key={bi} onClick={() => isPending ? (setActiveReview(review), setReplyMessages(getReviewMessages(review))) : null}
-                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? '#fffbeb' : isManual ? '#e8f0fe' : 'var(--acc)', color: isPending ? '#78350f' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isPending ? '1.5px solid #fcd34d' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
-                              {isPending && bi === 0 && '\u26A0 '}{bubble}
+                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? '#eef2ff' : isManual ? '#e8f0fe' : 'var(--acc)', color: isPending ? '#3730a3' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid #6366f1' : isPending ? '1.5px dashed #a5b4fc' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
+                              {isPending && bi === 0 && '\uD83D\uDCAC '}{bubble}
                             </div>
                           ))}
                         </div>

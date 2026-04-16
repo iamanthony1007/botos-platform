@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/AuthContext'
+import { DataCacheProvider } from './lib/DataCache'
 import Layout from './components/Layout'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
@@ -47,30 +48,32 @@ function PermissionRoute({ permission, children }) {
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          {/* Public routes — redirect to dashboard if already logged in */}
-          <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
-          <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-          <Route path="/accept-invite" element={<AcceptInvite />} />
+      <DataCacheProvider>
+        <Router>
+          <Routes>
+            {/* Public routes */}
+            <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
+            <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+            <Route path="/accept-invite" element={<AcceptInvite />} />
 
-          {/* Protected dashboard routes */}
-          <Route path="/dashboard" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-            <Route index element={<Dashboard />} />
-            <Route path="settings"  element={<PermissionRoute permission="settings_admin"><Settings /></PermissionRoute>} />
-            <Route path="inbox"     element={<PermissionRoute permission="inbox"><Inbox /></PermissionRoute>} />
-            <Route path="tester"    element={<PermissionRoute permission="bot_tester"><Tester /></PermissionRoute>} />
-            <Route path="train"     element={<PermissionRoute permission="train_bot"><TrainBot /></PermissionRoute>} />
-            <Route path="learnings" element={<PermissionRoute permission="learnings"><Learnings /></PermissionRoute>} />
-            <Route path="prompt"    element={<PermissionRoute permission="prompt_editor"><PromptEditor /></PermissionRoute>} />
-            <Route path="documents" element={<PermissionRoute permission="documents"><Documents /></PermissionRoute>} />
-            <Route path="analytics" element={<PermissionRoute permission="analytics"><Analytics /></PermissionRoute>} />
-            <Route path="users"     element={<PermissionRoute permission="user_management"><UserManagement /></PermissionRoute>} />
-          </Route>
+            {/* Protected dashboard routes */}
+            <Route path="/dashboard" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+              <Route index element={<Dashboard />} />
+              <Route path="settings"  element={<PermissionRoute permission="settings_admin"><Settings /></PermissionRoute>} />
+              <Route path="inbox"     element={<PermissionRoute permission="inbox"><Inbox /></PermissionRoute>} />
+              <Route path="tester"    element={<PermissionRoute permission="bot_tester"><Tester /></PermissionRoute>} />
+              <Route path="train"     element={<PermissionRoute permission="train_bot"><TrainBot /></PermissionRoute>} />
+              <Route path="learnings" element={<PermissionRoute permission="learnings"><Learnings /></PermissionRoute>} />
+              <Route path="prompt"    element={<PermissionRoute permission="prompt_editor"><PromptEditor /></PermissionRoute>} />
+              <Route path="documents" element={<PermissionRoute permission="documents"><Documents /></PermissionRoute>} />
+              <Route path="analytics" element={<PermissionRoute permission="analytics"><Analytics /></PermissionRoute>} />
+              <Route path="users"     element={<PermissionRoute permission="user_management"><UserManagement /></PermissionRoute>} />
+            </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Router>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Router>
+      </DataCacheProvider>
     </AuthProvider>
   )
 }
