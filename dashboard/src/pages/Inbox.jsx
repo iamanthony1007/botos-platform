@@ -71,7 +71,8 @@ export default function Inbox() {
   }, [location.state?.openLead, leads.length, botId])
 
   async function loadData() {
-    setLoading(true)
+    const hasCached = leads.length > 0
+    if (!hasCached) setLoading(true)
     const bot = await getAssignedBot(profile, 'id')
     if (!bot) { setLoading(false); return }
     setBotId(bot.id)

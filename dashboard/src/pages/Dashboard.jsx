@@ -58,7 +58,8 @@ export default function Dashboard() {
 
   async function loadData() {
     if (!profile) return
-    setLoading(true)
+    const hasCached = closestToBooking.length > 0 || stats.newConversations > 0
+    if (!hasCached) setLoading(true)
     try {
       let botsData = []
       if (adminRole && profile.organization_id) {

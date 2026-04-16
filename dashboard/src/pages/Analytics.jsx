@@ -95,7 +95,8 @@ export default function Analytics() {
 
   async function load() {
     if (!profile) return
-    setLoading(true)
+    const hasCached = stats.active > 0 || funnelData.length > 0
+    if (!hasCached) setLoading(true)
     try {
       const isAdmin = profile.role === 'admin' || profile.role === 'superadmin'
       let botQuery = supabase.from('bots').select('id, name')
