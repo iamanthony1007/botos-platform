@@ -32,6 +32,7 @@ export default function Inbox() {
   const [showMobileThread, setShowMobileThread] = useState(false)
   const [manualReply, setManualReply] = useState('')
   const [manualSending, setManualSending] = useState(false)
+  const [pendingLeadCount, setPendingLeadCount] = useState(0)
   const channelRef = useRef(null)
   const selectedLeadRef = useRef(null)
   const msgEndRef = useRef(null)
@@ -66,9 +67,10 @@ export default function Inbox() {
     if (!bot) { setLoading(false); return }
     setBotId(bot.id)
 
-    const [{ data: allReviews }, { data: convos }] = await Promise.all([
+    const [{ data: allReviews }, { data: convos }, { data: pendingOnly }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false })
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
+      supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
     ])
 
     const leadsMap = {}
@@ -109,6 +111,8 @@ export default function Inbox() {
       return new Date(b.last_activity) - new Date(a.last_activity)
     })
 
+    // Unique leads with pending reviews — same logic as needsReply in Dashboard/Analytics
+    setPendingLeadCount(new Set((pendingOnly || []).map(r => r.customer_id)).size)
     setLeads(sorted)
     setLoading(false)
 
@@ -387,7 +391,7 @@ export default function Inbox() {
     return matchesSearch && matchesFilter
   })
 
-  const totalPending = leads.filter(l => l.pending_count > 0).length
+  const totalPending = pendingLeadCount
   const timeline = selectedLead ? buildTimeline() : []
 
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>
