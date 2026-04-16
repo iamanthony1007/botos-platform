@@ -3,13 +3,18 @@ import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 
 const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved']
 const STAGES = ['ENTRY / OPEN LOOP','LOCATION ANCHOR','GOAL LOCK','GOAL DEPTH (MAKE IT SPECIFIC)',"WHAT THEY'VE TRIED (PAST + CURRENT)",'TRANSLATION / PROGRESS CHECK','BODY LINK ACCEPTANCE + MOBILITY HISTORY','PROGRESS CHECK','PRIORITY GATE','COACHING HAT','CALL BOOK BRIDGE','CALL OFFERED','CALL BOOKING','LONG TERM NURTURE']
 
 export default function Inbox() {
   const { profile } = useAuth()
-  const [leads, setLeads] = useState([])
+  const { get: getCache, set: setCache } = useDataCache()
+  const [leads, setLeads] = useState(() => {
+    const cached = getCache('inbox_leads')
+    return cached?.data || []
+  })
   const [filter, setFilter] = useState('All')
   const [sortBy, setSortBy] = useState('lastInteraction')
   const location = useLocation()
@@ -20,7 +25,10 @@ export default function Inbox() {
   const [activeReview, setActiveReview] = useState(null)
   const [replyMessages, setReplyMessages] = useState([])
   const [sending, setSending] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => {
+    const cached = getCache('inbox_leads')
+    return !cached?.data?.length
+  })
   const [threadLoading, setThreadLoading] = useState(false)
   const [toast, setToast] = useState({ msg: '', type: '' })
   const [showTrainModal, setShowTrainModal] = useState(false)
@@ -67,7 +75,8 @@ export default function Inbox() {
   }, [location.state?.openLead, leads.length, botId])
 
   async function loadData() {
-    setLoading(true)
+    const hasCached = leads.length > 0
+    if (!hasCached) setLoading(true)
     const bot = await getAssignedBot(profile, 'id')
     if (!bot) { setLoading(false); return }
     setBotId(bot.id)
@@ -137,6 +146,7 @@ export default function Inbox() {
     // Unique leads with pending reviews — same logic as needsReply in Dashboard/Analytics
     setPendingLeadCount(new Set((pendingOnly || []).map(r => r.customer_id)).size)
     setLeads(sorted)
+    setCache('inbox_leads', sorted)
     setLoading(false)
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
