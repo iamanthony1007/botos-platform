@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 
 const STAGE_PRIORITY = {
   'CALL BOOKING': 14, 'CALL OFFERED': 13, 'CALL BOOK BRIDGE': 12,
@@ -36,11 +37,13 @@ function Tooltip({ text }) {
 export default function Dashboard() {
   const { profile } = useAuth()
   const navigate = useNavigate()
+  const { get: getCache, set: setCache } = useDataCache()
   const [timeRange, setTimeRange] = useState('Last 7 Days')
-  const [stats, setStats] = useState({ newConversations: 0, needsReply: 0, highIntent: 0, aiMessagesSent: 0, booked: 0, conversionRate: 0 })
-  const [closestToBooking, setClosestToBooking] = useState([])
+  const cachedDash = getCache('dashboard_data')
+  const [stats, setStats] = useState(cachedDash?.data?.stats || { newConversations: 0, needsReply: 0, highIntent: 0, aiMessagesSent: 0, booked: 0, conversionRate: 0 })
+  const [closestToBooking, setClosestToBooking] = useState(cachedDash?.data?.closestToBooking || [])
   const [bots, setBots] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!cachedDash?.data)
   const [lastUpdated, setLastUpdated] = useState(null)
   const adminRole = profile?.role === 'admin' || profile?.role === 'superadmin'
 
@@ -102,6 +105,7 @@ export default function Dashboard() {
         .slice(0, 7)
 
       setClosestToBooking(scored)
+      setCache('dashboard_data', { stats: { newConversations, needsReply, highIntent, aiMessagesSent, booked, conversionRate }, closestToBooking: scored })
     } catch (e) { console.error(e) }
     setLoading(false)
   }
