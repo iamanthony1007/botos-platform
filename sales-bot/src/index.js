@@ -1,4 +1,4 @@
-﻿var __defProp = Object.defineProperty;
+var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
@@ -299,7 +299,7 @@ var index_default = {
 
         const autoSendEnabled = botSettings.auto_send_enabled === true;
         const systemPrompt = botSettings.system_prompt || FALLBACK_SYSTEM_PROMPT;
-        const botModel = botSettings.model || 'gpt-5.4-mini';
+        const botModel = botSettings.model || 'claude-sonnet-4-6';
         const intentDefs = botSettings.intent_definitions || {
           LOW: "Vague, just browsing, avoids answering, says maybe later, no pain expressed",
           MEDIUM: "Has a goal, some engagement, mild frustration but no urgency",
@@ -329,7 +329,7 @@ var index_default = {
           fetchActiveDocuments(env)
         ]);
 
-        const botResponse = await callOpenAI(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
+        const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
         if (!botResponse || (!botResponse.reply && !botResponse.messages)) throw new Error("Invalid bot response structure");
 
         // ── Multi-message normalisation ────────────────────────────────────
@@ -587,11 +587,16 @@ var index_default = {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": env.ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01"
+          },
           body: JSON.stringify({
-            model: "gpt-5.4",
+            model: "claude-sonnet-4-6",
+            max_tokens: 4096,
             messages: [
               { role: "system", content: `You are a prompt engineering assistant for an AI appointment setter bot. The user will give you a plain English instruction to update the bot's system prompt. Your job: 1. Identify exactly which section(s) of the prompt need to change 2. Make ONLY the requested change 3. Preserve all existing structure, formatting, and sections 4. If the instruction is vague, ask for clarification. Return ONLY valid JSON: { "updated_prompt": "full updated prompt", "explanation": "what changed and why", "changes": ["change 1"], "needs_clarification": false }. If clarification needed: { "needs_clarification": true, "question": "your question" }` },
               { role: "user", content: `Current system prompt:\n\n${current_prompt}\n\n---\n\nInstruction: ${instruction}` }
@@ -600,9 +605,11 @@ var index_default = {
             response_format: { type: "json_object" }
           })
         });
-        if (!response.ok) throw new Error(`OpenAI error: ${await response.text()}`);
+        if (!response.ok) throw new Error(`Claude error: ${await response.text()}`);
         const data = await response.json();
-        const parsed = JSON.parse(data.choices[0].message.content);
+        const rawText = data.content[0].text;
+        const cleanText = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+        const parsed = JSON.parse(cleanText);
         return new Response(JSON.stringify(parsed), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (error) {
         console.error("Train error:", error);
@@ -620,11 +627,16 @@ var index_default = {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": env.ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01"
+          },
           body: JSON.stringify({
-            model: "gpt-5.4",
+            model: "claude-sonnet-4-6",
+            max_tokens: 4096,
             messages: [
               { role: "system", content: `You are a sales psychology expert analysing corrections made to an AI appointment setter for a golf fitness coaching business. Explain the psychological reasoning behind the correction so the AI can learn the pattern. Your explanation should: identify the psychological mistake in the original, explain what the corrected version does better, state the pattern for future situations, be 2-4 sentences, focus on NEPQ principles. Return ONLY valid JSON: { "reason": "your explanation" }` },
               { role: "user", content: `Stage: ${conversation_stage || "Unknown"}\nContext:\n${recent_context || "Not provided"}\nOriginal: "${original_reply}"\nCorrected: "${corrected_reply}"` }
@@ -633,9 +645,11 @@ var index_default = {
             response_format: { type: "json_object" }
           })
         });
-        if (!response.ok) throw new Error(`OpenAI error: ${await response.text()}`);
+        if (!response.ok) throw new Error(`Claude error: ${await response.text()}`);
         const data = await response.json();
-        const parsed = JSON.parse(data.choices[0].message.content);
+        const rawText = data.content[0].text;
+        const cleanText = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+        const parsed = JSON.parse(cleanText);
         return new Response(JSON.stringify(parsed), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (error) {
         console.error("Explain-learning error:", error);
@@ -789,7 +803,7 @@ async function fetchActiveDocuments(env) {
 }
 __name(fetchActiveDocuments, "fetchActiveDocuments");
 
-async function callOpenAI(env, memory, learnings = [], documents = [], systemPrompt, model = 'gpt-5.4-mini', intentDefs = {}, campaignConfig = {}) {
+async function callClaude(env, memory, learnings = [], documents = [], systemPrompt, model = 'claude-sonnet-4-6', intentDefs = {}, campaignConfig = {}) {
   const lastMessages = (memory.messages || []).slice(-10);
 
   const learningsSection = learnings && learnings.length > 0 ? `
@@ -871,36 +885,42 @@ ${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").sli
 
   const finalSystemPrompt = learningsSection + documentSection + campaignSection + systemPrompt;
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01"
+    },
     body: JSON.stringify({
       model: model,
+      max_tokens: 1024,
+      system: finalSystemPrompt,
       messages: [
-        { role: "system", content: finalSystemPrompt },
         { role: "user", content: buildDeveloperPrompt(memory, lastMessages) }
       ],
-      temperature: 0.7,
-      response_format: { type: "json_object" }
+      temperature: 0.7
     })
   });
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`OpenAI API error: ${error}`);
+    throw new Error(`Claude API error: ${error}`);
   }
   const data = await response.json();
-  const content = data.choices[0].message.content;
+  const rawContent = data.content[0].text;
+  // Strip any markdown code fences Claude may add
+  const cleanContent = rawContent.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
   let parsed;
-  try { parsed = JSON.parse(content); }
-  catch (e) { throw new Error(`Failed to parse OpenAI response as JSON: ${content}`); }
+  try { parsed = JSON.parse(cleanContent); }
+  catch (e) { throw new Error(`Failed to parse Claude response as JSON: ${rawContent}`); }
 
   // Support both old (reply only) and new (messages array) response formats
   if (!parsed.messages && !parsed.reply) {
-    throw new Error("OpenAI response missing required fields");
+    throw new Error("Claude response missing required fields");
   }
   if (!parsed.conversation_stage || !parsed.next_action) {
-    throw new Error("OpenAI response missing conversation_stage or next_action");
+    throw new Error("Claude response missing conversation_stage or next_action");
   }
 
   // Normalise — ensure both fields always exist
@@ -925,7 +945,7 @@ ${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").sli
 
   return parsed;
 }
-__name(callOpenAI, "callOpenAI");
+__name(callClaude, "callClaude");
 
 async function sendToSlack(env, data) {
   if (!env.SLACK_WEBHOOK_URL) return;
