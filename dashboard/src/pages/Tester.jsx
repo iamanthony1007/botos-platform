@@ -6,20 +6,16 @@ import { useAuth } from '../lib/AuthContext'
 const WORKER_URL = 'https://sales-bot.nellakuate.workers.dev'
 
 const STAGES = [
-  'ENTRY / OPEN LOOP',
-  'LOCATION ANCHOR',
-  'GOAL LOCK',
-  'GOAL DEPTH (MAKE IT SPECIFIC)',
-  "WHAT THEY'VE TRIED (PAST + CURRENT)",
-  'TRANSLATION / PROGRESS CHECK',
-  'BODY LINK ACCEPTANCE + MOBILITY HISTORY',
-  'PROGRESS CHECK',
-  'PRIORITY GATE',
-  'COACHING HAT',
-  'CALL BOOK BRIDGE',
-  'CALL OFFERED',
-  'CALL BOOKING',
-  'LONG TERM NURTURE'
+  'HOOK / ENTRY',
+  'GOAL',
+  'DIAGNOSTIC',
+  'INSIGHT',
+  'PRIORITY',
+  'DECISION',
+  'INVITE',
+  'SCHEDULE',
+  'BOOKED',
+  'FOLLOW-UP'
 ]
 
 function calcTypingDelay(text) {

@@ -42,7 +42,7 @@ You can split your reply into 2-3 separate messages to sound more human and natu
 You MUST respond with ONLY a valid JSON object (no markdown, no explanation) with this EXACT structure:
 
 {
-  "conversation_stage": "ENTRY / OPEN LOOP|LOCATION ANCHOR|GOAL LOCK|GOAL DEPTH (MAKE IT SPECIFIC)|WHAT THEY'VE TRIED (PAST + CURRENT)|TRANSLATION / PROGRESS CHECK|BODY LINK ACCEPTANCE + MOBILITY HISTORY|PROGRESS CHECK|PRIORITY GATE|COACHING HAT|CALL BOOK BRIDGE|CALL OFFERED|CALL BOOKING|LONG TERM NURTURE",
+  "conversation_stage": "HOOK / ENTRY|GOAL|DIAGNOSTIC|INSIGHT|PRIORITY|DECISION|INVITE|SCHEDULE|BOOKED|FOLLOW-UP",
   "confidence": 0.0-1.0,
   "messages": ["first message", "second message (optional)", "third message with question (optional)"],
   "reply": "all messages joined into one string — for logging only",
@@ -87,7 +87,7 @@ CRITICAL RULES:
 - If lead asks a question you do not know the answer to, set next_action to ESCALATE_TO_HUMAN
 - If lead_intent is LOW, always set next_action to SEND_TO_INBOX_REVIEW
 - If lead_intent is HIGH and situation_clarity >= 0.85 and response_quality >= 0.90, set next_action to AUTO_SEND
-- If lead_intent is MEDIUM and situation_clarity >= 0.80 and response_quality >= 0.85 and stage is early (ENTRY/GOAL LOCK/NURTURE), set next_action to AUTO_SEND
+- If lead_intent is MEDIUM and situation_clarity >= 0.80 and response_quality >= 0.85 and stage is early (HOOK / ENTRY/GOAL/FOLLOW-UP), set next_action to AUTO_SEND
 - confidence field = (situation_clarity * 0.4) + (response_quality * 0.6) — calculate this yourself
 - NEVER set AUTO_SEND if asking a question the lead already answered
 - SETTER CORRECTIONS at the top of the system prompt OVERRIDE your defaults. Check them FIRST before responding.
@@ -173,23 +173,19 @@ __name(getBotSettings, "getBotSettings");
 
 // Stages that are safe to auto-send for MEDIUM intent leads
 const MEDIUM_INTENT_AUTO_STAGES = [
-  "ENTRY / OPEN LOOP",
-  "LOCATION ANCHOR",
-  "GOAL LOCK",
-  "LONG TERM NURTURE"
+  "HOOK / ENTRY",
+  "GOAL",
+  "FOLLOW-UP"
 ];
 
 // Profile fact keys mapped to conversation stages
 // If the fact is already known, skip auto-sending that stage
 const STAGE_FACT_REQUIREMENTS = {
-  "GOAL LOCK":                     "primary_goal",
-  "GOAL DEPTH (MAKE IT SPECIFIC)": "primary_goal",
-  "WHAT THEY'VE TRIED (PAST + CURRENT)": "what_theyve_tried",
-  "TRANSLATION / PROGRESS CHECK":  "current_approach_working",
-  "BODY LINK ACCEPTANCE + MOBILITY HISTORY": "what_theyve_tried",
-  "PROGRESS CHECK":                "current_approach_working",
-  "PRIORITY GATE":                 "priority_level",
-  "CALL BOOK BRIDGE":              "primary_goal",
+  "GOAL":       "primary_goal",
+  "DIAGNOSTIC": "what_theyve_tried",
+  "INSIGHT":    "current_approach_working",
+  "PRIORITY":   "primary_goal",
+  "INVITE":     "primary_goal",
 };
 
 function profileFactAlreadyKnown(stage, profileFacts) {
@@ -350,15 +346,74 @@ var index_default = {
         // Primary reply = all messages joined (for memory + logging)
         const joinedReply = dedupedMessages.join(" ");
 
-        // ── Intent validation guardrail ────────────────────────────────────
-        // Prevent AI from over-classifying intent on shallow conversations
+        // ── Intent classification from lead's last message ─────────────────
+        // Intent must reflect the LEAD's words, not the bot's response.
+        // We re-score here using the lead's actual last message as the source of truth.
+        const lastUserMessage = (message || "").toLowerCase();
+        const stage = (botResponse.conversation_stage || "").toUpperCase();
+
+        function classifyIntentFromLeadMessage(msg, stage) {
+          // HIGH intent signals — lead's own words showing urgency or commitment
+          const highSignals = [
+            /bomber/i,
+            /back pain|knee pain|hip pain|shoulder pain/i,
+            /struggling.*(month|year|week)/i,
+            /affects my sleep/i,
+            /very motivated|determined|ready to|want to start|need to fix/i,
+            /cure me|sign me up|let.s do it|yes definitely|yeah for sure|yes sir|sounds good/i,
+            /nothing.*(working|sticking|helping)/i,
+            /tried everything/i,
+            /restrict|can.t rotate|can.t swing/i,
+            /high priority|urgent/i
+          ];
+          // LOW intent signals — delay, vague, or avoidance language
+          const lowSignals = [
+            /just curious|just browsing|just looking/i,
+            /maybe later|sometime this year|eventually/i,
+            /start with free|free content first|what do you suggest first/i,
+            /hipflow|15min|speedandpower/i,
+            /saw your post/i,
+            /not sure yet|just exploring/i
+          ];
+          // MEDIUM intent signals — interested but no urgency
+          const mediumSignals = [
+            /improve consistency|more distance|reduce pain|move better/i,
+            /interested in your program|wanted more info|heard about/i,
+            /how much does it cost|what are the fees|how does it work|what does it involve/i,
+            /I.d like to|I would like to|I want to work on/i
+          ];
+
+          const isHigh = highSignals.some(r => r.test(msg));
+          const isMedium = !isHigh && mediumSignals.some(r => r.test(msg));
+          const isLow = lowSignals.some(r => r.test(msg));
+
+          // Stage-based overrides for late stages
+          if (["SCHEDULE", "BOOKED"].includes(stage)) return "HIGH";
+          if (stage === "FOLLOW-UP") return "LOW";
+          if (stage === "INVITE") return "MEDIUM";
+
+          if (isHigh) return "HIGH";
+          if (isMedium) return "MEDIUM";
+          if (isLow) return "LOW";
+
+          // Fall back to Claude's classification if no signals detected
+          return null;
+        }
+
+        const detectedIntent = classifyIntentFromLeadMessage(lastUserMessage, stage);
+        if (detectedIntent) {
+          if (detectedIntent !== botResponse.lead_intent) {
+            botResponse.internal_notes = (botResponse.internal_notes || "") +
+              ` [System: Intent corrected from ${botResponse.lead_intent} to ${detectedIntent} based on lead message signals]`;
+            botResponse.lead_intent = detectedIntent;
+          }
+        }
+
+        // Safety net: cannot be HIGH on first message unless bomber or strong pain signal
         const userMessageCount = memory.messages.filter(m => m.role === "user").length;
-        if (userMessageCount <= 1 && botResponse.lead_intent === "HIGH") {
+        if (userMessageCount <= 1 && botResponse.lead_intent === "HIGH" && detectedIntent !== "HIGH") {
           botResponse.lead_intent = "LOW";
-          botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Intent downgraded from HIGH to LOW - only 1 user message, not enough context]";
-        } else if (userMessageCount <= 2 && botResponse.lead_intent === "HIGH") {
-          botResponse.lead_intent = "MEDIUM";
-          botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Intent downgraded from HIGH to MEDIUM - only 2 user messages, need more signals]";
+          botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Intent reset to LOW - first message, no high-intent signals detected]";
         }
 
         // ── Memory update ──────────────────────────────────────────────────
@@ -395,7 +450,7 @@ var index_default = {
           bot_id: BOT_ID,
           customer_id: String(customer_id),
           channel,
-          status: botResponse.conversation_stage === "CALL BOOKING" ? "booked" : "active",
+          status: (botResponse.conversation_stage === "BOOKED" || botResponse.conversation_stage === "SCHEDULE") ? "booked" : "active",
           lead_intent: botResponse.lead_intent || "LOW",
           primary_goal: botResponse.primary_goal || null,
           conversation_stage: botResponse.conversation_stage || null,
