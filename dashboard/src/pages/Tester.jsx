@@ -745,7 +745,7 @@ export default function Tester() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', alignSelf: 'flex-end' }}>
                       {m.stage && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: 'var(--accl)', color: 'var(--acc)', fontWeight: 500 }}>{m.stage}</span>}
                       {m.intent && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', fontWeight: 600, background: m.intent === 'HIGH' ? '#fff5f5' : m.intent === 'MEDIUM' ? '#fffbeb' : 'var(--surf2)', color: m.intent === 'HIGH' ? '#e53e3e' : m.intent === 'MEDIUM' ? '#d97706' : '#6b7280' }}>{m.intent}</span>}
-                      {m.conf > 0 && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: m.conf >= 75 ? 'var(--accl)' : 'var(--ambbg)', color: m.conf >= 75 ? 'var(--acc)' : 'var(--amb)', fontWeight: 500 }}>{m.conf}%</span>}
+
                     </div>
                   )}
 
