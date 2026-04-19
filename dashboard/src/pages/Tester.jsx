@@ -199,6 +199,7 @@ export default function Tester() {
   })
   const [isTyping, setIsTyping] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [leadTagModal, setLeadTagModal] = useState(null) // { msgIdx, stage, intent, leadText }
   const bottomRef = useRef(null)
 
   // Library state
@@ -263,6 +264,47 @@ export default function Tester() {
   function showToast(msg) {
     setToast(msg)
     setTimeout(() => setToast(''), 3000)
+  }
+
+  function openLeadTagModal(msgIdx) {
+    const m = messages[msgIdx]
+    setLeadTagModal({ msgIdx, stage: m.stage || '', intent: m.intent || 'LOW', leadText: m.text || '' })
+  }
+
+  async function saveLeadTags() {
+    if (!leadTagModal) return
+    const { msgIdx, stage, intent, leadText } = leadTagModal
+
+    // Update the message in state
+    setMessages(prev => prev.map((m, i) =>
+      i === msgIdx ? { ...m, stage, intent } : m
+    ))
+
+    // Find the next assistant message to get its reviewId
+    const nextBot = messages.slice(msgIdx + 1).find(m => m.role === 'assistant')
+    const reviewId = nextBot?.reviewId || null
+
+    // Save as a learning so the correction is remembered
+    try {
+      await supabase.from('learnings').insert({
+        bot_id: bot?.id,
+        customer_id: customerId,
+        review_id: reviewId,
+        conversation_stage: stage,
+        situation_context: `Lead said: "${leadText.slice(0, 120)}"`,
+        original_reply: `Stage was: ${messages[msgIdx].stage || 'Unknown'}, Intent was: ${messages[msgIdx].intent || 'LOW'}`,
+        corrected_reply: `Corrected to Stage: ${stage}, Intent: ${intent}`,
+        reason: `Manual stage/intent correction on lead message`,
+        source: 'tester',
+        created_at: new Date().toISOString()
+      })
+      showToast('✅ Stage & intent updated')
+    } catch (e) {
+      console.error('Save lead tags error:', e)
+      showToast('✅ Updated locally')
+    }
+
+    setLeadTagModal(null)
   }
 
   // ── Normal send ──────────────────────────────────────────────────────────
@@ -468,11 +510,14 @@ export default function Tester() {
   // ── Edit & Train modal ───────────────────────────────────────────────────
   function openTrainModal(msgIdx) {
     const msg = messages[msgIdx]
+    // Restore any draft reason that was auto-saved
+    let draftReason = ''
+    try { draftReason = localStorage.getItem('tester_draft_reason') || '' } catch {}
     setModal({
       msgIdx,
       originalMessages: msg.originalMessages || msg.editMessages || [],
       editedMessages: [...(msg.editMessages || msg.botMessages || [])],
-      reason: '',
+      reason: draftReason,
       stage: msg.stage || '',
       context: '',
       reviewId: msg.reviewId || null,
@@ -480,7 +525,10 @@ export default function Tester() {
     })
   }
 
-  function closeModal() { setModal(null) }
+  function closeModal() {
+    setModal(null)
+    try { localStorage.removeItem('tester_draft_reason') } catch {}
+  }
 
   async function saveTraining() {
     if (!modal) return
@@ -554,8 +602,8 @@ export default function Tester() {
 
       {/* Edit & Train Modal */}
       {modal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={closeModal}>
-          <div style={{ background: 'var(--surf)', borderRadius: 'var(--rlg)', width: '100%', maxWidth: 600, maxHeight: '92vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,.3)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: 'var(--surf)', borderRadius: 'var(--rlg)', width: '100%', maxWidth: 600, maxHeight: '92vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}>
 
             <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--bdr)', display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ flex: 1 }}>
@@ -619,7 +667,11 @@ export default function Tester() {
                 <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>🧠 Edit Reason <span style={{ color: '#e53e3e' }}>*</span></label>
                 <textarea
                   value={modal.reason}
-                  onChange={e => setModal(prev => ({ ...prev, reason: e.target.value }))}
+                  onChange={e => {
+                    const val = e.target.value
+                    setModal(prev => ({ ...prev, reason: val }))
+                    try { localStorage.setItem('tester_draft_reason', val) } catch {}
+                  }}
                   placeholder="Why was the bot's reply wrong? What should it do instead? Be specific — this becomes the learning rule the bot follows forever."
                   rows={4}
                   style={{ width: '100%', background: 'var(--surf2)', border: '1.5px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.84rem', padding: '8px 10px', borderRadius: 'var(--rsm)', outline: 'none', resize: 'vertical', lineHeight: 1.6, boxSizing: 'border-box' }}
@@ -652,6 +704,61 @@ export default function Tester() {
               <button onClick={closeModal} style={{ background: 'var(--surf2)', border: '1px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.84rem', padding: '8px 16px', borderRadius: 'var(--rsm)', cursor: 'pointer' }}>Cancel</button>
               <button onClick={saveTraining} disabled={saving} style={{ background: 'var(--acc)', border: 'none', color: '#fff', fontFamily: 'var(--fn)', fontSize: '.84rem', fontWeight: 600, padding: '8px 20px', borderRadius: 'var(--rsm)', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? .7 : 1 }}>
                 {saving ? 'Saving...' : '💾 Save & Train'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lead Tag Edit Modal */}
+      {leadTagModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: 'var(--surf)', borderRadius: 'var(--rlg)', width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,.3)', overflow: 'hidden' }}>
+
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--bdr)', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '.95rem', fontWeight: 700, color: 'var(--tx)' }}>✏️ Edit Stage & Intent</div>
+                <div style={{ fontSize: '.72rem', color: 'var(--tx3)', marginTop: 2 }}>Correct how the bot classified this lead message</div>
+              </div>
+              <button onClick={() => setLeadTagModal(null)} style={{ background: 'none', border: 'none', fontSize: '1.3rem', cursor: 'pointer', color: 'var(--tx3)' }}>×</button>
+            </div>
+
+            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+              {/* Lead message preview */}
+              <div style={{ background: 'var(--blubg)', border: '1px solid var(--blubd)', borderRadius: 'var(--rsm)', padding: '8px 12px', fontSize: '.82rem', color: 'var(--blu)', lineHeight: 1.5 }}>
+                "{leadTagModal.leadText.slice(0, 150)}{leadTagModal.leadText.length > 150 ? '...' : ''}"
+              </div>
+
+              {/* Stage */}
+              <div>
+                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>Conversation Stage</label>
+                <select value={leadTagModal.stage} onChange={e => setLeadTagModal(prev => ({ ...prev, stage: e.target.value }))}
+                  style={{ width: '100%', background: 'var(--surf2)', border: '1.5px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.84rem', padding: '8px 10px', borderRadius: 'var(--rsm)', outline: 'none' }}>
+                  <option value="">Select stage...</option>
+                  {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+
+              {/* Intent */}
+              <div>
+                <label style={{ fontSize: '.75rem', fontWeight: 600, color: 'var(--tx2)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>Lead Intent</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['LOW', 'MEDIUM', 'HIGH'].map(i => (
+                    <button key={i} onClick={() => setLeadTagModal(prev => ({ ...prev, intent: i }))}
+                      style={{ flex: 1, padding: '8px', borderRadius: 'var(--rsm)', border: 'none', cursor: 'pointer', fontSize: '.82rem', fontWeight: 600,
+                        background: leadTagModal.intent === i ? (i === 'HIGH' ? '#e53e3e' : i === 'MEDIUM' ? '#d97706' : '#6b7280') : 'var(--surf2)',
+                        color: leadTagModal.intent === i ? '#fff' : 'var(--tx3)'
+                      }}>{i}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: '12px 20px', borderTop: '1px solid var(--bdr)', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setLeadTagModal(null)} style={{ background: 'var(--surf2)', border: '1px solid var(--bdr)', color: 'var(--tx)', fontFamily: 'var(--fn)', fontSize: '.84rem', padding: '8px 16px', borderRadius: 'var(--rsm)', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={saveLeadTags} style={{ background: 'var(--acc)', border: 'none', color: '#fff', fontFamily: 'var(--fn)', fontSize: '.84rem', fontWeight: 600, padding: '8px 20px', borderRadius: 'var(--rsm)', cursor: 'pointer' }}>
+                Save
               </button>
             </div>
           </div>
@@ -740,12 +847,16 @@ export default function Tester() {
                     </div>
                   )}
 
-                  {/* Intent/Stage tags — shown under the LEAD message that triggered the response */}
+                  {/* Intent/Stage tags — clickable to edit stage & intent */}
                   {m.role === 'user' && m.stage && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', alignSelf: 'flex-end' }}>
+                    <div
+                      onClick={() => canEdit && openLeadTagModal(idx)}
+                      title={canEdit ? 'Click to edit stage & intent' : ''}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', alignSelf: 'flex-end', cursor: canEdit ? 'pointer' : 'default' }}
+                    >
                       {m.stage && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: 'var(--accl)', color: 'var(--acc)', fontWeight: 500 }}>{m.stage}</span>}
                       {m.intent && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', fontWeight: 600, background: m.intent === 'HIGH' ? '#fff5f5' : m.intent === 'MEDIUM' ? '#fffbeb' : 'var(--surf2)', color: m.intent === 'HIGH' ? '#e53e3e' : m.intent === 'MEDIUM' ? '#d97706' : '#6b7280' }}>{m.intent}</span>}
-
+                      {canEdit && <span style={{ fontSize: '.65rem', color: 'var(--tx3)', opacity: 0.6 }}>✏</span>}
                     </div>
                   )}
 
