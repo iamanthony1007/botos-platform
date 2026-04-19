@@ -294,13 +294,17 @@ export default function Tester() {
 
       setLoading(false)
 
+      // Attach intent/stage to the LEAD's message (the one that caused this response)
+      setMessages(prev => prev.map((m, i) =>
+        i === prev.length - 1 && m.role === 'user'
+          ? { ...m, stage: data.conversation_stage || 'Unknown', intent: data.lead_intent || 'LOW', conf: Math.round((data.confidence || 0) * 100) }
+          : m
+      ))
+
       const tempId = Date.now()
       setMessages(prev => [...prev, {
         role: 'assistant',
         botMessages: [],
-        stage: data.conversation_stage || 'Unknown',
-        intent: data.lead_intent || 'LOW',
-        conf: Math.round((data.confidence || 0) * 100),
         reviewId: data.review_id,
         originalMessages: [...botMsgs],
         editable: true,
@@ -406,17 +410,21 @@ export default function Tester() {
         setLoading(false)
         const tempId = Date.now()
 
+        // Attach intent/stage to the lead's message
+        setMessages(prev => prev.map((m, i) =>
+          i === prev.length - 1 && m.role === 'user'
+            ? { ...m, stage: data.conversation_stage || 'Unknown', intent: data.lead_intent || 'LOW', conf: Math.round((data.confidence || 0) * 100) }
+            : m
+        ))
+
         setMessages(prev => [...prev, {
           role: 'assistant',
           botMessages: [],
-          stage: data.conversation_stage || 'Unknown',
-          intent: data.lead_intent || 'LOW',
-          conf: Math.round((data.confidence || 0) * 100),
           reviewId: data.review_id,
           originalMessages: [...botMsgs],
           editable: true,
           editMessages: [...botMsgs],
-          realReply,       // what coach shaun actually said — shown below bot reply
+          realReply,
           _tempId: tempId
         }])
 
@@ -732,6 +740,15 @@ export default function Tester() {
                     </div>
                   )}
 
+                  {/* Intent/Stage tags — shown under the LEAD message that triggered the response */}
+                  {m.role === 'user' && m.stage && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', alignSelf: 'flex-end' }}>
+                      {m.stage && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: 'var(--accl)', color: 'var(--acc)', fontWeight: 500 }}>{m.stage}</span>}
+                      {m.intent && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', fontWeight: 600, background: m.intent === 'HIGH' ? '#fff5f5' : m.intent === 'MEDIUM' ? '#fffbeb' : 'var(--surf2)', color: m.intent === 'HIGH' ? '#e53e3e' : m.intent === 'MEDIUM' ? '#d97706' : '#6b7280' }}>{m.intent}</span>}
+                      {m.conf > 0 && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: m.conf >= 75 ? 'var(--accl)' : 'var(--ambbg)', color: m.conf >= 75 ? 'var(--acc)' : 'var(--amb)', fontWeight: 500 }}>{m.conf}%</span>}
+                    </div>
+                  )}
+
                   {/* Bot message */}
                   {m.role === 'assistant' && m.botMessages && m.botMessages.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxWidth: '80%' }}>
@@ -750,12 +767,9 @@ export default function Tester() {
                     </div>
                   )}
 
-                  {/* Meta tags + Edit button */}
+                  {/* Edit & Train button — under bot message only */}
                   {m.role === 'assistant' && m.botMessages && m.botMessages.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      {m.stage && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: 'var(--accl)', color: 'var(--acc)', fontWeight: 500 }}>{m.stage}</span>}
-                      {m.intent && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', fontWeight: 600, background: m.intent === 'HIGH' ? '#fff5f5' : m.intent === 'MEDIUM' ? '#fffbeb' : 'var(--surf2)', color: m.intent === 'HIGH' ? '#e53e3e' : m.intent === 'MEDIUM' ? '#d97706' : '#6b7280' }}>{m.intent}</span>}
-                      {m.conf > 0 && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: m.conf >= 75 ? 'var(--accl)' : 'var(--ambbg)', color: m.conf >= 75 ? 'var(--acc)' : 'var(--amb)', fontWeight: 500 }}>{m.conf}%</span>}
                       {m.trained && <span style={{ fontSize: '.68rem', padding: '2px 8px', borderRadius: '100px', background: '#f0fff4', color: '#276749', fontWeight: 600 }}>✓ Trained</span>}
                       {m.editable && canEdit && (
                         <span
