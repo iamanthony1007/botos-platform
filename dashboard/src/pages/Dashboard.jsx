@@ -4,12 +4,10 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 
 const STAGE_PRIORITY = {
-  'CALL BOOKING': 14, 'CALL OFFERED': 13, 'CALL BOOK BRIDGE': 12,
-  'COACHING HAT': 11, 'PRIORITY GATE': 10, 'PROGRESS CHECK': 9,
-  'BODY LINK ACCEPTANCE + MOBILITY HISTORY': 8, 'TRANSLATION / PROGRESS CHECK': 7,
-  "WHAT THEY'VE TRIED (PAST + CURRENT)": 6, 'GOAL DEPTH (MAKE IT SPECIFIC)': 5,
-  'GOAL LOCK': 4, 'LOCATION ANCHOR': 3, 'OPEN LOOP': 2, 'ENTRY / OPEN LOOP': 2,
-  'ENTRY': 1, 'LONG TERM NURTURE': 0
+  'BOOKED': 9, 'SCHEDULE': 8, 'INVITE': 7,
+  'DECISION': 6, 'PRIORITY': 5, 'INSIGHT': 4,
+  'DIAGNOSTIC': 3, 'GOAL': 2, 'HOOK / ENTRY': 1,
+  'FOLLOW-UP': 0
 }
 const INTENT_SCORE = { HIGH: 3, MEDIUM: 2, LOW: 1 }
 const TIME_RANGES = ['Today', 'Last 7 Days', 'Last 30 Days']
@@ -118,7 +116,7 @@ export default function Dashboard() {
   }
 
   function intentInfo(intent, stage) {
-    if (stage === 'CALL BOOKING') return { emoji: '✅', label: 'Booked', color: '#16a34a', bg: '#f0fdf4', border: '1px solid #bbf7d0' }
+    if (stage === 'BOOKED' || stage === 'SCHEDULE') return { emoji: '✅', label: 'Booked', color: '#16a34a', bg: '#f0fdf4', border: '1px solid #bbf7d0' }
     if (intent === 'HIGH') return { emoji: '🔴', label: 'HIGH', color: '#e53e3e', bg: '#fff5f5', border: '1px solid #fed7d7' }
     if (intent === 'MEDIUM') return { emoji: '🟡', label: 'MEDIUM', color: '#d97706', bg: '#fffbeb', border: '1px solid #fde68a' }
     return { emoji: '⚪', label: 'LOW', color: '#6b7280', bg: '#f9fafb', border: '1px solid #e5e7eb' }
@@ -139,8 +137,8 @@ export default function Dashboard() {
 
   function stageColor(stage) {
     if (!stage) return '#829082'
-    if (stage.includes('CALL')) return '#1a4d8a'
-    if (stage.includes('PRIORITY') || stage.includes('COACHING')) return '#a06800'
+    if (stage === 'BOOKED' || stage === 'SCHEDULE' || stage === 'INVITE' || stage === 'DECISION') return '#1a4d8a'
+    if (stage === 'PRIORITY') return '#a06800'
     return '#2d6a4f'
   }
 
