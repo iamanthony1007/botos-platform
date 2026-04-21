@@ -311,7 +311,37 @@ var index_default = {
           aiBehavior: botSettings.ai_behavior_settings || {}
         };
 
-        const memory = memoryData || { messages: [], running_summary: "", profile_facts: {} };
+        let memory = memoryData || { messages: [], running_summary: "", profile_facts: {} };
+
+        // ── GHL History Merge ─────────────────────────────────────────────────
+        // If this is a new lead (no KV memory) and we have their username,
+        // check Supabase for GHL historical conversation data and seed memory with it.
+        // This gives the AI and setters full context on returning leads.
+        if (!memoryData && username) {
+          try {
+            const ghlResp = await fetch(
+              `${SUPABASE_URL}/rest/v1/conversations?bot_id=eq.${BOT_ID}&username=eq.${encodeURIComponent(username.toLowerCase())}&history_source=eq.ghl_import&select=messages,running_summary,profile_facts,total_messages&limit=1`,
+              { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
+            );
+            if (ghlResp.ok) {
+              const ghlData = await ghlResp.json();
+              if (ghlData && ghlData.length > 0 && ghlData[0].messages && ghlData[0].messages.length > 0) {
+                const ghlRecord = ghlData[0];
+                // Seed memory with GHL history — keep last 30 messages as context
+                const historicalMsgs = (ghlRecord.messages || []).slice(-30);
+                memory.messages = historicalMsgs;
+                memory.running_summary = ghlRecord.running_summary || "";
+                memory.profile_facts = ghlRecord.profile_facts || {};
+                memory.ghl_history_loaded = true;
+                memory.ghl_total_messages = ghlRecord.total_messages || 0;
+                console.log(`GHL history loaded for @${username}: ${historicalMsgs.length} messages seeded`);
+              }
+            }
+          } catch (ghlErr) {
+            console.error("GHL history lookup error:", ghlErr);
+            // Non-fatal — continue without history
+          }
+        }
 
         // Handle tester init — don't add the trigger to memory, just get opening message
         const isTesterInit = message === "__tester_init__";
