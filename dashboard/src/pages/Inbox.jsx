@@ -132,7 +132,16 @@ export default function Inbox() {
       leadsMap[r.customer_id].all_reviews.push(r)
       if (r.status === 'pending') leadsMap[r.customer_id].pending_count = 1
       if ((r.action_type === 'ESCALATE_TO_HUMAN' || r.action_type === 'HANDOFF_TO_SETTER') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
-      if (!leadsMap[r.customer_id].latest_preview) leadsMap[r.customer_id].latest_preview = r.bot_reply || ''
+      // Update latest_preview: prefer final_reply of sent messages, fallback to bot_reply for drafts
+      const previewText = r.final_reply || r.bot_reply || ''
+      const isSentReview = r.status === 'approved' || r.status === 'edited' || r.status === 'auto_sent'
+      if (!leadsMap[r.customer_id].latest_preview) {
+        leadsMap[r.customer_id].latest_preview = previewText
+      } else if (isSentReview && !leadsMap[r.customer_id]._previewIsSent) {
+        // Upgrade preview to a confirmed-sent message if we haven't already
+        leadsMap[r.customer_id].latest_preview = previewText
+        leadsMap[r.customer_id]._previewIsSent = true
+      }
     })
 
     const sorted = Object.values(leadsMap).sort((a, b) => {
@@ -213,6 +222,11 @@ export default function Inbox() {
   }
 
   function getReviewMessages(review) {
+    // For sent reviews, show what was actually delivered (final), not the original draft
+    if (review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent') {
+      if (Array.isArray(review.final_messages) && review.final_messages.length > 0) return review.final_messages
+      if (review.final_reply) return [review.final_reply]
+    }
     if (Array.isArray(review.bot_messages) && review.bot_messages.length > 0) return review.bot_messages
     return [review.bot_reply || '']
   }
@@ -259,12 +273,33 @@ export default function Inbox() {
       ...(correctedStage ? { conversation_stage: correctedStage } : {}),
       ...(correctedIntent ? { lead_intent: correctedIntent } : {})
     }).eq('id', activeReview.id)
-    if (correctedStage || correctedIntent) {
+
+    // Update the matching message in conversations so the thread shows
+    // the final sent text instead of the original draft
+    if (conversation) {
+      const updatedMessages = (conversation.messages || []).map(m => {
+        if (m.review_id === activeReview.id) {
+          return {
+            ...m,
+            content: joinedReply,
+            bot_messages: validMessages,
+            final_sent: true,
+          }
+        }
+        return m
+      })
+      await supabase.from('conversations').update({
+        messages: updatedMessages,
+        ...(correctedStage ? { conversation_stage: correctedStage } : {}),
+        ...(correctedIntent ? { lead_intent: correctedIntent } : {})
+      }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
+    } else if (correctedStage || correctedIntent) {
       await supabase.from('conversations').update({
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
+
     await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [])
     showToast('Approved - reply sent to lead', 'success')
     setSending(false)
@@ -289,12 +324,33 @@ export default function Inbox() {
       original_reply: originalJoined, corrected_reply: joinedReply, corrected_messages: validMessages,
       reason: trainReason, source: 'inbox'
     })
-    if (correctedStage || correctedIntent) {
+
+    // Update the matching message in conversations so the thread shows
+    // the final edited text instead of the original draft
+    if (conversation) {
+      const updatedMessages = (conversation.messages || []).map(m => {
+        if (m.review_id === activeReview.id) {
+          return {
+            ...m,
+            content: joinedReply,
+            bot_messages: validMessages,
+            final_sent: true,
+          }
+        }
+        return m
+      })
+      await supabase.from('conversations').update({
+        messages: updatedMessages,
+        ...(correctedStage ? { conversation_stage: correctedStage } : {}),
+        ...(correctedIntent ? { lead_intent: correctedIntent } : {})
+      }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
+    } else if (correctedStage || correctedIntent) {
       await supabase.from('conversations').update({
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
+
     await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [])
     setShowTrainModal(false)
     showToast('Edited - reply sent to lead', 'success')
@@ -575,9 +631,13 @@ export default function Inbox() {
                     const review = item._review
                     const isPending = review?.status === 'pending'
                     const isActive = activeReview?.id === review?.id
-                    const isSent = review && (review.status === 'approved' || review.status === 'edited')
-                    const botMessages = item.botMessages || [item.content]
-                    const showMultiple = !isLead && botMessages.length > 1
+                    const isSent = review && (review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent')
+                    const isDiscarded = review?.status === 'discarded'
+                    // For sent reviews show final delivered text; for pending show draft; fallback to message content
+                    const botMessages = isLead ? null
+                      : isSent ? (Array.isArray(review.final_messages) && review.final_messages.length > 0 ? review.final_messages : review.final_reply ? [review.final_reply] : (item.botMessages || [item.content]))
+                      : (item.botMessages || [item.content])
+                    const showMultiple = !isLead && botMessages && botMessages.length > 1
                     return (
                       <div key={item.key} style={{ display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', marginBottom: '6px' }}>
                         <div style={{ maxWidth: 'min(80%, 560px)', display: 'flex', flexDirection: 'column', alignItems: isLead ? 'flex-start' : 'flex-end', gap: showMultiple ? '4px' : 0 }}>
@@ -586,7 +646,7 @@ export default function Inbox() {
                           )}
                           {!isLead && botMessages.map((bubble, bi) => (
                             <div key={bi} onClick={() => isPending ? (setActiveReview(review), setReplyMessages(getReviewMessages(review))) : null}
-                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isPending ? '#fffbeb' : isManual ? '#e8f0fe' : 'var(--acc)', color: isPending ? '#78350f' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isPending ? '1.5px solid #fcd34d' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s' }}>
+                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isDiscarded ? 'var(--surf2)' : isPending ? '#fffbeb' : isManual ? '#e8f0fe' : 'var(--acc)', color: isDiscarded ? 'var(--tx3)' : isPending ? '#78350f' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isDiscarded ? '1px dashed var(--bdr)' : isPending ? '1.5px solid #fcd34d' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s', opacity: isDiscarded ? 0.5 : 1, textDecoration: isDiscarded ? 'line-through' : 'none' }}>
                               {isPending && bi === 0 && '\u26A0 '}{bubble}
                             </div>
                           ))}
