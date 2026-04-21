@@ -642,6 +642,20 @@ var index_default = {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
+
+        // Build the user message — keep prompt and instruction clearly separated
+        const userMessage = [
+          "CURRENT SYSTEM PROMPT (do not alter structure, only apply the instruction below):",
+          "---BEGIN PROMPT---",
+          current_prompt,
+          "---END PROMPT---",
+          "",
+          "INSTRUCTION: " + instruction,
+          "",
+          "Return ONLY a raw JSON object (no markdown fences, no explanation outside the JSON) with these exact keys:",
+          '{ "updated_prompt": "...", "explanation": "...", "changes": ["..."], "needs_clarification": false }'
+        ].join("\n");
+
         const response = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -651,19 +665,40 @@ var index_default = {
           },
           body: JSON.stringify({
             model: "claude-sonnet-4-6",
-            max_tokens: 4096,
-            system: `You are a prompt engineering assistant for an AI appointment setter bot. The user will give you a plain English instruction to update the bot's system prompt. Your job: 1. Identify exactly which section(s) of the prompt need to change 2. Make ONLY the requested change 3. Preserve all existing structure, formatting, and sections 4. If the instruction is vague, ask for clarification. Return ONLY valid JSON: { "updated_prompt": "full updated prompt", "explanation": "what changed and why", "changes": ["change 1"], "needs_clarification": false }. If clarification needed: { "needs_clarification": true, "question": "your question" }`,
+            max_tokens: 8000,
+            system: "You are a prompt engineering assistant. You receive a system prompt and a plain-English instruction. Make ONLY the requested change. Preserve all formatting. Return a raw JSON object with keys: updated_prompt, explanation, changes (array), needs_clarification (bool). If clarification is needed set needs_clarification to true and add a question key. Output NOTHING except the JSON object — no markdown, no preamble.",
             messages: [
-              { role: "user", content: `Current system prompt:\n\n${current_prompt}\n\n---\n\nInstruction: ${instruction}` }
+              { role: "user", content: userMessage }
             ],
-            temperature: 0.3
+            temperature: 0.2
           })
         });
+
         if (!response.ok) throw new Error(`Claude error: ${await response.text()}`);
         const data = await response.json();
-        const rawText = data.content[0].text;
-        const cleanText = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-        const parsed = JSON.parse(cleanText);
+        const rawText = data.content[0].text.trim();
+
+        // Strip markdown fences if Claude added them
+        const cleanText = rawText
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim();
+
+        let parsed;
+        try {
+          parsed = JSON.parse(cleanText);
+        } catch (parseErr) {
+          // JSON.parse failed — likely special chars in updated_prompt
+          // Return the raw text so the dashboard can still show what changed
+          console.error("Train JSON parse error:", parseErr.message);
+          return new Response(JSON.stringify({
+            error: "parse_error",
+            raw_response: cleanText,
+            message: "Claude responded but the JSON could not be parsed. The prompt may contain special characters."
+          }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
         return new Response(JSON.stringify(parsed), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (error) {
         console.error("Train error:", error);
