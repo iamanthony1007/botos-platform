@@ -8,7 +8,16 @@ const WORKER_URL = 'https://sales-bot.nellakuate.workers.dev'
 export default function TrainBot() {
   const { profile } = useAuth()
   const [bot, setBot] = useState(null)
-  const [messages, setMessages] = useState([])
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem('trainbot_messages')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch {}
+    return []
+  })
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState({ msg: '', type: 'success' })
@@ -17,15 +26,25 @@ export default function TrainBot() {
   useEffect(() => { loadBot() }, [profile])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
+  // Persist messages so navigation away doesn't wipe pending changes
+  useEffect(() => {
+    if (messages.length === 0) return
+    try { localStorage.setItem('trainbot_messages', JSON.stringify(messages)) } catch {}
+  }, [messages])
+
   async function loadBot() {
     if (!profile) { setLoading(false); return }
     const data = await getAssignedBot(profile)
     if (data) {
       setBot(data)
-      setMessages([{
-        role: 'system',
-        text: `Hey! I'm your prompt trainer. Tell me in plain English how you want the bot to behave and I'll update it automatically.\n\nExamples:\n• "Change the greeting to say Hey, thanks for following"\n• "The bot is too formal, make it more casual"\n• "Never ask about distance first, always start with pain"\n• "Add a rule: if someone mentions surgery, slow down and show more empathy"`
-      }])
+      // Only set the welcome message if there's nothing saved — otherwise restore saved state
+      setMessages(prev => {
+        if (prev.length > 0) return prev
+        return [{
+          role: 'system',
+          text: `Hey! I'm your prompt trainer. Tell me in plain English how you want the bot to behave and I'll update it automatically.\n\nExamples:\n• "Change the greeting to say Hey, thanks for following"\n• "The bot is too formal, make it more casual"\n• "Never ask about distance first, always start with pain"\n• "Add a rule: if someone mentions surgery, slow down and show more empathy"`
+        }]
+      })
     }
   }
 
@@ -74,6 +93,7 @@ export default function TrainBot() {
     await supabase.from('prompt_versions').insert({ bot_id: bot.id, version_number: nextVersion, prompt: updatedPrompt, label: `v${nextVersion} · Trained ${new Date().toLocaleDateString()}` })
 
     setMessages(prev => prev.map((m, i) => i === msgIdx ? { ...m, type: 'applied' } : m))
+    try { localStorage.removeItem('trainbot_messages') } catch {}
     showToast('Prompt updated and live — bot will use this on the next message', 'success')
   }
 
@@ -95,7 +115,13 @@ export default function TrainBot() {
 
       <div className="page-header">
         <div>
-          <div className="page-title">AI Behavior</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="page-title">AI Behavior</div>
+            <button onClick={() => {
+              setMessages([])
+              try { localStorage.removeItem('trainbot_messages') } catch {}
+            }} style={{ fontSize: '.72rem', padding: '3px 10px', borderRadius: '999px', background: 'var(--surf2)', border: '1px solid var(--bdr)', color: 'var(--tx3)', cursor: 'pointer' }}>🗑 Clear</button>
+          </div>
           <div className="page-sub">Define how the AI should respond and behave across all conversations.</div>
         </div>
         <span className="badge badge-green" style={{ fontSize: '.7rem' }}>🤖 {bot?.name || 'Bot'}</span>
