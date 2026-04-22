@@ -49,6 +49,7 @@ export default function Inbox() {
   const selectedLeadRef = useRef(null)
   const msgEndRef = useRef(null)
   const searchRef = useRef(null)
+  const manualInputRef = useRef(null)
   const activeReviewRef = useRef(null)
 
   useEffect(() => {
@@ -822,19 +823,32 @@ export default function Inbox() {
                 </div>
 
                 {/* Manual Reply Input */}
-                <div style={{ padding: '10px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
-                  <input
+                <div style={{ padding: '10px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf)', display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0 }}>
+                  <textarea
+                    ref={manualInputRef}
                     value={manualReply}
-                    onChange={e => setManualReply(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendManualReply() } }}
+                    onChange={e => {
+                      setManualReply(e.target.value)
+                      const el = e.target
+                      el.style.height = 'auto'
+                      el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        sendManualReply()
+                        if (manualInputRef.current) manualInputRef.current.style.height = 'auto'
+                      }
+                    }}
                     placeholder="Type a manual reply..."
                     disabled={manualSending}
-                    style={{ flex: 1, padding: '10px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '12px', fontSize: '.84rem', color: 'var(--tx)', outline: 'none', fontFamily: 'var(--fn)', boxSizing: 'border-box', opacity: manualSending ? .6 : 1 }}
+                    rows={1}
+                    style={{ flex: 1, padding: '10px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '12px', fontSize: '.84rem', color: 'var(--tx)', outline: 'none', fontFamily: 'var(--fn)', boxSizing: 'border-box', opacity: manualSending ? .6 : 1, resize: 'none', lineHeight: 1.5, maxHeight: '120px', overflowY: 'auto' }}
                   />
                   <button
-                    onClick={sendManualReply}
+                    onClick={() => { sendManualReply(); if (manualInputRef.current) manualInputRef.current.style.height = 'auto' }}
                     disabled={!manualReply.trim() || manualSending}
-                    style={{ padding: '10px 18px', background: manualReply.trim() && !manualSending ? 'var(--acc)' : 'var(--surf2)', border: 'none', borderRadius: '12px', cursor: manualReply.trim() && !manualSending ? 'pointer' : 'default', fontSize: '.84rem', color: manualReply.trim() && !manualSending ? '#fff' : 'var(--tx3)', fontWeight: 600, transition: 'all .15s' }}
+                    style={{ padding: '10px 18px', background: manualReply.trim() && !manualSending ? 'var(--acc)' : 'var(--surf2)', border: 'none', borderRadius: '12px', cursor: manualReply.trim() && !manualSending ? 'pointer' : 'default', fontSize: '.84rem', color: manualReply.trim() && !manualSending ? '#fff' : 'var(--tx3)', fontWeight: 600, transition: 'all .15s', flexShrink: 0 }}
                   >{manualSending ? 'Sending...' : 'Send'}</button>
                 </div>
               </div>
