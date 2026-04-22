@@ -5,7 +5,8 @@ import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 import { useDataCache } from '../lib/DataCache'
 
-const FILTERS = ['All', 'Pending', 'Escalated', 'Resolved', 'Test']
+const FILTERS = ['All', 'Pending', 'Follow Ups', 'Escalated', 'Resolved', 'Test']
+const FOLLOW_UP_HOURS = 21
 const STAGES = ['HOOK / ENTRY','GOAL','DIAGNOSTIC','INSIGHT','PRIORITY','DECISION','INVITE','SCHEDULE','BOOKED','FOLLOW-UP']
 
 export default function Inbox() {
@@ -42,6 +43,8 @@ export default function Inbox() {
   const [manualSending, setManualSending] = useState(false)
   const [pendingLeadCount, setPendingLeadCount] = useState(0)
   const [aiProgress, setAiProgress] = useState(null)
+  const [editingUsername, setEditingUsername] = useState(false)
+  const [usernameInput, setUsernameInput] = useState('')
   const channelRef = useRef(null)
   const selectedLeadRef = useRef(null)
   const msgEndRef = useRef(null)
@@ -83,7 +86,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }, { data: progressReviews }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
       supabase.from('reviews').select('id, status, confidence').eq('bot_id', bot.id).not('customer_id', 'ilike', 'tester_%')
     ])
@@ -110,13 +113,21 @@ export default function Inbox() {
     ;(convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test')).forEach(c => {
       let identity = null, pf = {}
       try { pf = typeof c.profile_facts === 'string' ? JSON.parse(c.profile_facts) : (c.profile_facts || {}); identity = pf?.golf_identity || null } catch {}
+      // Extract the last message sent by the lead (role: user/Lead) for the preview
+      const msgs = Array.isArray(c.messages) ? c.messages : []
+      let lastLeadMsg = ''
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i]
+        if (m.role === 'user' || m.role === 'Lead') { lastLeadMsg = m.content || ''; break }
+      }
       leadsMap[c.customer_id] = {
         customer_id: c.customer_id, identity, username: c.username || null, profile_name: c.profile_name || null,
         lead_intent: c.lead_intent || null, channel: c.channel,
         primary_goal: c.primary_goal,
         conversation_stage: c.conversation_stage, running_summary: c.running_summary,
         profile_facts: pf, last_activity: c.updated_at,
-        pending_count: 0, handoff_count: 0, latest_preview: '', all_reviews: []
+        last_bot_sent_at: null,
+        pending_count: 0, handoff_count: 0, latest_preview: lastLeadMsg, all_reviews: []
       }
     })
 
@@ -132,15 +143,11 @@ export default function Inbox() {
       leadsMap[r.customer_id].all_reviews.push(r)
       if (r.status === 'pending') leadsMap[r.customer_id].pending_count = 1
       if ((r.action_type === 'ESCALATE_TO_HUMAN' || r.action_type === 'HANDOFF_TO_SETTER') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
-      // Update latest_preview: prefer final_reply of sent messages, fallback to bot_reply for drafts
-      const previewText = r.final_reply || r.bot_reply || ''
-      const isSentReview = r.status === 'approved' || r.status === 'edited' || r.status === 'auto_sent'
-      if (!leadsMap[r.customer_id].latest_preview) {
-        leadsMap[r.customer_id].latest_preview = previewText
-      } else if (isSentReview && !leadsMap[r.customer_id]._previewIsSent) {
-        // Upgrade preview to a confirmed-sent message if we haven't already
-        leadsMap[r.customer_id].latest_preview = previewText
-        leadsMap[r.customer_id]._previewIsSent = true
+      // Track when the bot last sent a message (approved, edited, auto_sent)
+      const isSentByBot = r.status === 'approved' || r.status === 'edited' || r.status === 'auto_sent'
+      if (isSentByBot && r.resolved_at) {
+        const prev = leadsMap[r.customer_id].last_bot_sent_at
+        if (!prev || r.resolved_at > prev) leadsMap[r.customer_id].last_bot_sent_at = r.resolved_at
       }
     })
 
@@ -408,6 +415,22 @@ export default function Inbox() {
 
   function showToast(msg, type = 'success') { setToast({ msg, type }); setTimeout(() => setToast({ msg: '' }), 3000) }
 
+  async function saveUsername() {
+    if (!selectedLead || !botId) return
+    const newUsername = usernameInput.trim().replace(/^@/, '')
+    if (!newUsername) return
+    const { error } = await supabase.from('conversations')
+      .update({ username: newUsername, updated_at: new Date().toISOString() })
+      .eq('bot_id', botId)
+      .eq('customer_id', selectedLead.customer_id)
+    if (error) { showToast('Failed to save username', 'error'); return }
+    // Update local state so it reflects immediately
+    setSelectedLead(prev => ({ ...prev, username: newUsername }))
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, username: newUsername } : l))
+    setEditingUsername(false)
+    showToast('Username updated', 'success')
+  }
+
   function getLeadName(lead) {
     if (!lead) return ''
     if (String(lead.customer_id).startsWith('tester_')) return 'Bot Tester'
@@ -490,12 +513,24 @@ export default function Inbox() {
 
   const filteredLeads = sortedLeads.filter(l => {
     const matchesSearch = !search || getLeadName(l).toLowerCase().includes(search.toLowerCase()) || String(l.customer_id).includes(search) || (l.username && l.username.toLowerCase().includes(search.toLowerCase().replace('@', ''))) || (l.profile_name && l.profile_name.toLowerCase().includes(search.toLowerCase()))
-    const isTester = String(l.customer_id).startsWith('tester_')
+    const isTester = String(l.customer_id).startsWith('tester_') || l.channel === 'tester'
+    // Follow Ups: bot sent last message, lead hasn't replied in 21+ hours, no pending review
+    const isFollowUp = (() => {
+      if (isTester || l.pending_count > 0 || !l.last_bot_sent_at) return false
+      const hoursSinceBotSent = (Date.now() - new Date(l.last_bot_sent_at).getTime()) / 3600000
+      // Only flag if last_activity hasn't been updated significantly after the bot sent
+      // i.e. the lead hasn't replied (last_activity ~ last_bot_sent_at)
+      const lastActivityMs = new Date(l.last_activity).getTime()
+      const lastBotMs = new Date(l.last_bot_sent_at).getTime()
+      const leadRepliedAfter = lastActivityMs > lastBotMs + 5 * 60000 // 5 min buffer
+      return hoursSinceBotSent >= FOLLOW_UP_HOURS && !leadRepliedAfter
+    })()
     const matchesFilter = filter === 'Test'
       ? isTester
       : isTester ? false
       : filter === 'All' ? true
       : filter === 'Pending' ? l.pending_count > 0
+      : filter === 'Follow Ups' ? isFollowUp
       : filter === 'Escalated' ? l.handoff_count > 0
       : filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0
       : true
@@ -522,21 +557,31 @@ export default function Inbox() {
         </div>
 
         <div style={{ padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
-          <div style={{ display: 'flex', gap: '4px' }}>
+          <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '2px', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
             {FILTERS.map(f => {
-              const count = f === 'Pending' ? totalPending : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0) : f === 'Test' ? leads.filter(l => String(l.customer_id).startsWith('tester_')).length : null
+              const followUpLeads = leads.filter(l => {
+                if (String(l.customer_id).startsWith('tester_') || l.channel === 'tester' || l.pending_count > 0 || !l.last_bot_sent_at) return false
+                const hrs = (Date.now() - new Date(l.last_bot_sent_at).getTime()) / 3600000
+                const leadReplied = new Date(l.last_activity).getTime() > new Date(l.last_bot_sent_at).getTime() + 5 * 60000
+                return hrs >= FOLLOW_UP_HOURS && !leadReplied
+              })
+              const count = f === 'Pending' ? totalPending
+                : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0)
+                : f === 'Follow Ups' ? followUpLeads.length
+                : f === 'Test' ? leads.filter(l => String(l.customer_id).startsWith('tester_') || l.channel === 'tester').length
+                : null
               return (
                 <button key={f} onClick={() => setFilter(f)} style={{
-                  flex: 1, padding: '5px 4px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                  fontSize: '.72rem', fontWeight: filter === f ? 600 : 400,
-                  background: filter === f ? (f === 'Test' ? '#6b7280' : 'var(--acc)') : 'var(--surf2)',
-                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : 'var(--tx2)',
+                  flexShrink: 0, padding: '5px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                  fontSize: '.72rem', fontWeight: filter === f ? 600 : 400, whiteSpace: 'nowrap',
+                  background: filter === f ? (f === 'Test' ? '#6b7280' : f === 'Follow Ups' ? '#d97706' : 'var(--acc)') : 'var(--surf2)',
+                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : f === 'Follow Ups' ? '#d97706' : 'var(--tx2)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all .15s'
                 }}>
                   {f}
                   {count > 0 && (
                     <span style={{
-                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : '#e53e3e',
+                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : f === 'Follow Ups' ? '#d97706' : '#e53e3e',
                       color: '#fff', borderRadius: '999px', fontSize: '.6rem',
                       minWidth: '14px', height: '14px', display: 'inline-flex',
                       alignItems: 'center', justifyContent: 'center', padding: '0 3px'
@@ -558,6 +603,12 @@ export default function Inbox() {
             <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--tx3)', fontSize: '.84rem' }}>{search ? 'No leads match your search' : 'No conversations yet'}</div>
           ) : filteredLeads.map(lead => {
             const isSelected = selectedLead?.customer_id === lead.customer_id
+            const isFollowUpLead = (() => {
+              if (String(lead.customer_id).startsWith('tester_') || lead.channel === 'tester' || lead.pending_count > 0 || !lead.last_bot_sent_at) return false
+              const hrs = (Date.now() - new Date(lead.last_bot_sent_at).getTime()) / 3600000
+              const leadReplied = new Date(lead.last_activity).getTime() > new Date(lead.last_bot_sent_at).getTime() + 5 * 60000
+              return hrs >= FOLLOW_UP_HOURS && !leadReplied
+            })()
             return (
               <div key={lead.customer_id} onClick={() => selectLead(lead)} style={{ padding: '12px 14px', cursor: 'pointer', borderBottom: '1px solid var(--bdr)', background: isSelected ? 'var(--accp)' : 'transparent', borderLeft: isSelected ? '3px solid var(--acc)' : '3px solid transparent', transition: 'background .15s' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -570,6 +621,7 @@ export default function Inbox() {
                       {lead.lead_intent === 'LOW' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\u26AA'}</span>}
                       {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\uD83D\uDEA8'}</span>}
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
+                      {isFollowUpLead && <span style={{ fontSize: '.68rem', background: '#fff7ed', color: '#d97706', border: '1px solid #fed7aa', padding: '1px 5px', borderRadius: '999px', flexShrink: 0 }}>⏰ Follow up</span>}
                     </div>
                     <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{lead.latest_preview || lead.conversation_stage || 'No messages yet'}</div>
                   </div>
@@ -644,18 +696,40 @@ export default function Inbox() {
                           {isLead && (
                             <div style={{ padding: '9px 13px', borderRadius: '2px 16px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#fff', color: 'var(--tx)', border: '1px solid rgba(0,0,0,.06)', boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>{item.content}</div>
                           )}
-                          {!isLead && botMessages.map((bubble, bi) => (
-                            <div key={bi} onClick={() => isPending ? (setActiveReview(review), setReplyMessages(getReviewMessages(review))) : null}
-                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isDiscarded ? 'var(--surf2)' : isPending ? '#fffbeb' : isManual ? '#e8f0fe' : 'var(--acc)', color: isDiscarded ? 'var(--tx3)' : isPending ? '#78350f' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isDiscarded ? '1px dashed var(--bdr)' : isPending ? '1.5px solid #fcd34d' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: isPending ? 'pointer' : 'default', transition: 'all .15s', opacity: isDiscarded ? 0.5 : 1, textDecoration: isDiscarded ? 'line-through' : 'none' }}>
-                              {isPending && bi === 0 && '\u26A0 '}{bubble}
+                          {/* AI suggested — small button below lead's last message, opens review panel on click */}
+                          {isLead && (() => {
+                            const nextPendingReview = reviews.find(r => r.status === 'pending')
+                            const timelineItems = timeline.filter(t => t.type === 'message')
+                            const thisIdx = timelineItems.findIndex(t => t.key === item.key)
+                            const nextItem = timelineItems[thisIdx + 1]
+                            const isLastLeadMsg = !nextItem || (nextItem._review?.status === 'pending')
+                            if (!nextPendingReview || !isLastLeadMsg) return null
+                            return (
+                              <div style={{ marginTop: '6px', display: 'flex', justifyContent: 'flex-end' }}>
+                                <button
+                                  onClick={() => { setActiveReview(nextPendingReview); setReplyMessages(getReviewMessages(nextPendingReview)) }}
+                                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: '999px', fontSize: '.72rem', fontWeight: 600, cursor: 'pointer', transition: 'all .15s' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = '#fde68a' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = '#fef3c7' }}
+                                >
+                                  🤖 AI Reply Ready — Review
+                                </button>
+                              </div>
+                            )
+                          })()}
+                          {/* Pending bot bubble — hidden from thread (shown only in sidebar via the button above) */}
+                          {!isLead && !isPending && botMessages.map((bubble, bi) => (
+                            <div key={bi} onClick={() => null}
+                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isDiscarded ? 'var(--surf2)' : isManual ? '#e8f0fe' : 'var(--acc)', color: isDiscarded ? 'var(--tx3)' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isDiscarded ? '1px dashed var(--bdr)' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: 'default', transition: 'all .15s', opacity: isDiscarded ? 0.5 : 1, textDecoration: isDiscarded ? 'line-through' : 'none' }}>
+                              {bubble}
                             </div>
                           ))}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
                           <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{item.timestamp ? fmtTime(new Date(item.timestamp)) : ''}</span>
-                          {!isLead && isManual && <span style={{ fontSize: '.65rem', color: '#6b7280', fontWeight: 500 }}>Manual</span>}
-                          {!isLead && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
-                          {!isLead && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'}</span>}
+                          {!isLead && isManual && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'} Sent</span>}
+                          {!isLead && !isManual && botMessages && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
+                          {!isLead && !isManual && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'} Sent</span>}
                           {!isLead && review?.status === 'discarded' && <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{'\u2715'} Discarded</span>}
                         </div>
                       </div>
@@ -841,14 +915,37 @@ export default function Inbox() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '12px 0', borderBottom: '1px solid var(--bdr)' }}>
                     <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', fontWeight: 700, color: '#fff' }}>{getLeadName(selectedLead).charAt(0).toUpperCase()}</div>
                     {selectedLead.profile_name && <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center', color: 'var(--tx)' }}>{selectedLead.profile_name}</div>}
-                    {selectedLead.username && <div style={{ fontSize: '.82rem', color: 'var(--tx3)', textAlign: 'center' }}>@{selectedLead.username}</div>}
-                    {!selectedLead.profile_name && !selectedLead.username && <div style={{ fontWeight: 600, fontSize: '.9rem', textAlign: 'center' }}>{getLeadName(selectedLead)}</div>}
+
+                    {/* Editable username */}
+                    {editingUsername ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%' }}>
+                        <input
+                          value={usernameInput}
+                          onChange={e => setUsernameInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') saveUsername(); if (e.key === 'Escape') setEditingUsername(false) }}
+                          autoFocus
+                          placeholder="Enter username..."
+                          style={{ flex: 1, padding: '5px 8px', border: '1.5px solid var(--acc)', borderRadius: '8px', fontSize: '.8rem', fontFamily: 'var(--fn)', color: 'var(--tx)', background: 'var(--surf2)', outline: 'none' }}
+                        />
+                        <button onClick={saveUsername} style={{ padding: '5px 10px', background: 'var(--acc)', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: '#fff', fontWeight: 600 }}>Save</button>
+                        <button onClick={() => setEditingUsername(false)} style={{ padding: '5px 8px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', cursor: 'pointer', fontSize: '.75rem', color: 'var(--tx3)' }}>✕</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ fontSize: '.82rem', color: 'var(--tx3)', textAlign: 'center' }}>
+                          {selectedLead.username ? `@${selectedLead.username}` : <span style={{ color: 'var(--tx3)', fontStyle: 'italic' }}>No username</span>}
+                        </div>
+                        <button onClick={() => { setUsernameInput(selectedLead.username || ''); setEditingUsername(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tx3)', fontSize: '.72rem', padding: '2px 5px', borderRadius: '4px' }} title="Edit username">✏</button>
+                      </div>
+                    )}
+
                     {selectedLead.username && (selectedLead.channel === 'manychat' || (selectedLead.channel || '').toLowerCase().includes('instagram') || (selectedLead.channel || '').toLowerCase() === 'ig') && (
                       <a href={`https://www.instagram.com/${selectedLead.username.replace('@','')}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '.75rem', color: '#e1306c', fontWeight: 600, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '999px', background: '#fff0f5', border: '1px solid #f9c0d0' }}>
                         <span>{'\uD83D\uDCF8'}</span> View Instagram
                       </a>
                     )}
-                    <div style={{ fontSize: '.72rem', color: 'var(--tx3)' }}>ID: {selectedLead.customer_id}</div>
+                    {/* Lead ID — always visible so setter can identify leads without usernames */}
+                    <div style={{ fontSize: '.68rem', color: 'var(--tx3)', background: 'var(--surf2)', border: '1px solid var(--bdr)', padding: '2px 8px', borderRadius: '999px', fontFamily: 'monospace' }}>ID: {selectedLead.customer_id}</div>
                   </div>
                   {[
                     { label: 'Lead Intent', value: selectedLead.lead_intent },
