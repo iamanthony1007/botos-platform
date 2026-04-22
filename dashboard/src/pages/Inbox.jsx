@@ -284,17 +284,28 @@ export default function Inbox() {
     // Update the matching message in conversations so the thread shows
     // the final sent text instead of the original draft
     if (conversation) {
-      const updatedMessages = (conversation.messages || []).map(m => {
-        if (m.review_id === activeReview.id) {
-          return {
-            ...m,
-            content: joinedReply,
-            bot_messages: validMessages,
-            final_sent: true,
+      const currentMessages = conversation.messages || []
+      const hasMatch = currentMessages.some(m => m.review_id === activeReview.id)
+      let updatedMessages
+      if (hasMatch) {
+        updatedMessages = currentMessages.map(m => {
+          if (m.review_id === activeReview.id) {
+            return { ...m, content: joinedReply, bot_messages: validMessages, final_sent: true }
           }
-        }
-        return m
-      })
+          return m
+        })
+      } else {
+        // No matching message found - append the approved reply to the conversation
+        updatedMessages = [...currentMessages, {
+          role: 'assistant',
+          content: joinedReply,
+          bot_messages: validMessages,
+          timestamp: Date.now(),
+          review_id: activeReview.id,
+          final_sent: true,
+          message_count: validMessages.length
+        }]
+      }
       await supabase.from('conversations').update({
         messages: updatedMessages,
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
@@ -335,17 +346,28 @@ export default function Inbox() {
     // Update the matching message in conversations so the thread shows
     // the final edited text instead of the original draft
     if (conversation) {
-      const updatedMessages = (conversation.messages || []).map(m => {
-        if (m.review_id === activeReview.id) {
-          return {
-            ...m,
-            content: joinedReply,
-            bot_messages: validMessages,
-            final_sent: true,
+      const currentMessages = conversation.messages || []
+      const hasMatch = currentMessages.some(m => m.review_id === activeReview.id)
+      let updatedMessages
+      if (hasMatch) {
+        updatedMessages = currentMessages.map(m => {
+          if (m.review_id === activeReview.id) {
+            return { ...m, content: joinedReply, bot_messages: validMessages, final_sent: true }
           }
-        }
-        return m
-      })
+          return m
+        })
+      } else {
+        // No matching message found - append the edited reply to the conversation
+        updatedMessages = [...currentMessages, {
+          role: 'assistant',
+          content: joinedReply,
+          bot_messages: validMessages,
+          timestamp: Date.now(),
+          review_id: activeReview.id,
+          final_sent: true,
+          message_count: validMessages.length
+        }]
+      }
       await supabase.from('conversations').update({
         messages: updatedMessages,
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
@@ -431,11 +453,15 @@ export default function Inbox() {
   async function unmarkBooked() {
     if (!selectedLead || !botId) return
     if (!confirm('Remove booked status from this lead?')) return
+    // Restore the previous stage from the conversation, or default to HOOK / ENTRY
+    const previousStage = conversation?.conversation_stage === 'BOOKED' ? 'HOOK / ENTRY' : (conversation?.conversation_stage || 'HOOK / ENTRY')
     await supabase.from('conversations').update({
       status: 'active',
+      conversation_stage: previousStage,
       updated_at: new Date().toISOString()
     }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
-    setConversation(prev => prev ? { ...prev, status: 'active' } : prev)
+    setConversation(prev => prev ? { ...prev, status: 'active', conversation_stage: previousStage } : prev)
+    setSelectedLead(prev => prev ? { ...prev, conversation_stage: previousStage } : prev)
     showToast('Booked status removed', 'info')
     loadData()
   }

@@ -197,9 +197,9 @@ export default function Dashboard() {
       <div>
         <div style={{ fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--tx3)', marginBottom: '10px' }}>Performance</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-          <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Auto-approved"
+          <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Approved (unedited) + auto-sent"
             color="var(--blu)" border="var(--blu)"
-            tooltip="AI replies approved and sent, either automatically or manually by a setter." />
+            tooltip="AI replies that were approved without editing, or auto-sent by the system. Edited replies are not counted here." />
           <StatCard value={stats.booked} label="Calls Booked" sub={timeRange}
             color="#16a34a" border="#16a34a"
             tooltip="Leads who reached the CALL BOOKING stage in the conversation." />

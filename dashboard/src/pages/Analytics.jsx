@@ -240,7 +240,7 @@ export default function Analytics() {
         <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations"
           color="var(--acc)" border="var(--acc)"
           tooltip="Calls Booked divided by total conversations started. Shows overall system effectiveness." />
-        <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Approved + auto-sent"
+        <StatCard value={stats.aiMessagesSent} label="AI Messages Sent" sub="Approved (unedited) + auto-sent"
           color="var(--blu)" border="var(--blu)"
           tooltip="AI replies approved and sent, either automatically or manually by a setter." />
         {adminRole && <StatCard value={stats.aiAssisted} label="AI-Assisted Conversations" sub="Bot generated reply"
