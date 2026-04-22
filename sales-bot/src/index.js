@@ -376,15 +376,15 @@ var index_default = {
         }
 
         // ── Message batching ─────────────────────────────────────────────────
-        // If a lead sends multiple messages within 20 seconds, batch them into
+        // If a lead sends multiple messages within 60 seconds, batch them into
         // one AI response instead of creating separate reviews for each.
-        // Check if there's a pending review created in the last 20 seconds.
+        // Check if there's a pending review created in the last 60 seconds.
         let batchReviewId = null;
         if (!isTesterInit) {
           try {
-            const twentySecsAgo = new Date(Date.now() - 20000).toISOString();
+            const sixtySecsAgo = new Date(Date.now() - 60000).toISOString();
             const batchResp = await fetch(
-              `${SUPABASE_URL}/rest/v1/reviews?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&status=eq.pending&created_at=gte.${twentySecsAgo}&order=created_at.desc&limit=1`,
+              `${SUPABASE_URL}/rest/v1/reviews?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&status=eq.pending&created_at=gte.${sixtySecsAgo}&order=created_at.desc&limit=1`,
               { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
             );
             if (batchResp.ok) {
@@ -401,7 +401,38 @@ var index_default = {
             }
           } catch (batchErr) {
             console.error("Batch check error:", batchErr);
-            // Non-fatal — continue without batching
+          }
+
+          // ── Auto-discard stale pending reviews ─────────────────────────────
+          // If this is NOT a batched message (no recent pending review found),
+          // discard ALL old pending reviews for this lead. They are outdated
+          // because the conversation has moved on or the lead was responded
+          // to outside the system.
+          if (!batchReviewId) {
+            try {
+              const discardResp = await fetch(
+                `${SUPABASE_URL}/rest/v1/reviews?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&status=eq.pending`,
+                {
+                  method: "PATCH",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+                    "apikey": env.SUPABASE_SERVICE_KEY,
+                    "Prefer": "return=minimal"
+                  },
+                  body: JSON.stringify({
+                    status: "discarded",
+                    resolved_at: new Date().toISOString(),
+                    internal_notes: "[System: Auto-discarded - lead sent a new message, old review is outdated]"
+                  })
+                }
+              );
+              if (discardResp.ok) {
+                console.log(`Auto-discarded old pending reviews for ${customer_id}`);
+              }
+            } catch (discardErr) {
+              console.error("Auto-discard error:", discardErr);
+            }
           }
         }
 
