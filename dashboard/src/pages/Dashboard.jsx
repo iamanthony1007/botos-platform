@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
+import { useDataCache } from '../lib/DataCache'
 
 const STAGE_PRIORITY = {
   'BOOKED': 9, 'SCHEDULE': 8, 'INVITE': 7,
@@ -34,11 +35,13 @@ function Tooltip({ text }) {
 export default function Dashboard() {
   const { profile } = useAuth()
   const navigate = useNavigate()
+  const { get: getCache, set: setCache } = useDataCache()
   const [timeRange, setTimeRange] = useState('Last 7 Days')
-  const [stats, setStats] = useState({ newConversations: 0, needsReply: 0, highIntent: 0, aiMessagesSent: 0, booked: 0, conversionRate: 0 })
-  const [closestToBooking, setClosestToBooking] = useState([])
+  const cachedDash = getCache('dashboard_data')
+  const [stats, setStats] = useState(cachedDash?.data?.stats || { newConversations: 0, needsReply: 0, highIntent: 0, aiMessagesSent: 0, booked: 0, conversionRate: 0 })
+  const [closestToBooking, setClosestToBooking] = useState(cachedDash?.data?.closestToBooking || [])
   const [bots, setBots] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!cachedDash?.data)
   const [lastUpdated, setLastUpdated] = useState(null)
   const adminRole = profile?.role === 'admin' || profile?.role === 'superadmin'
 
@@ -53,7 +56,8 @@ export default function Dashboard() {
 
   async function loadData() {
     if (!profile) return
-    setLoading(true)
+    const hasCached = closestToBooking.length > 0 || stats.newConversations > 0
+    if (!hasCached) setLoading(true)
     try {
       let botsData = []
       if (adminRole && profile.organization_id) {
@@ -71,7 +75,6 @@ export default function Dashboard() {
       const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }] = await Promise.all([
         supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
         supabase.from('reviews').select('id, status').in('bot_id', botIds).gte('created_at', since).not('customer_id', 'ilike', 'tester_%'),
-        // Exclude tester leads — same logic as Inbox pendingOnly query
         supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
       ])
 
@@ -88,7 +91,7 @@ export default function Dashboard() {
       setLastUpdated(new Date())
 
       const scored = allConvos
-        .filter(c => c.status !== 'booked')
+        .filter(c => c.status !== 'booked' && c.lead_intent !== 'LOW')
         .map(c => {
           const stageScore = STAGE_PRIORITY[c.conversation_stage] ?? 0
           const intentScore = INTENT_SCORE[c.lead_intent] ?? 0
@@ -100,6 +103,7 @@ export default function Dashboard() {
         .slice(0, 7)
 
       setClosestToBooking(scored)
+      setCache('dashboard_data', { stats: { newConversations, needsReply, highIntent, aiMessagesSent, booked, conversionRate }, closestToBooking: scored })
     } catch (e) { console.error(e) }
     setLoading(false)
   }
