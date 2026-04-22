@@ -501,6 +501,27 @@ var index_default = {
           botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Intent reset to LOW - first message, no high-intent signals detected]";
         }
 
+        // ── Stage classification guardrail ────────────────────────────────
+        // Prevent AI from over-classifying stage on shallow conversations.
+        // Early stages only until enough conversation depth exists.
+        const EARLY_STAGES = ["HOOK / ENTRY", "GOAL", "DIAGNOSTIC"];
+        const MID_STAGES = ["HOOK / ENTRY", "GOAL", "DIAGNOSTIC", "INSIGHT", "PRIORITY"];
+        const currentStage = botResponse.conversation_stage || "";
+
+        if (userMessageCount <= 1 && !EARLY_STAGES.includes(currentStage)) {
+          const originalStage = currentStage;
+          botResponse.conversation_stage = "HOOK / ENTRY";
+          botResponse.internal_notes = (botResponse.internal_notes || "") + ` [System: Stage downgraded from ${originalStage} to HOOK / ENTRY - only 1 user message]`;
+        } else if (userMessageCount <= 2 && !EARLY_STAGES.includes(currentStage)) {
+          const originalStage = currentStage;
+          botResponse.conversation_stage = "GOAL";
+          botResponse.internal_notes = (botResponse.internal_notes || "") + ` [System: Stage downgraded from ${originalStage} to GOAL - only 2 user messages]`;
+        } else if (userMessageCount <= 4 && !MID_STAGES.includes(currentStage)) {
+          const originalStage = currentStage;
+          botResponse.conversation_stage = "INSIGHT";
+          botResponse.internal_notes = (botResponse.internal_notes || "") + ` [System: Stage capped from ${originalStage} to INSIGHT - only ${userMessageCount} user messages]`;
+        }
+
         // ── Memory update ──────────────────────────────────────────────────
         const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts, memory);

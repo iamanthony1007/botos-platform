@@ -415,6 +415,31 @@ export default function Inbox() {
 
   function showToast(msg, type = 'success') { setToast({ msg, type }); setTimeout(() => setToast({ msg: '' }), 3000) }
 
+  async function markAsBooked() {
+    if (!selectedLead || !botId) return
+    await supabase.from('conversations').update({
+      status: 'booked',
+      conversation_stage: 'BOOKED',
+      updated_at: new Date().toISOString()
+    }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
+    setConversation(prev => prev ? { ...prev, status: 'booked', conversation_stage: 'BOOKED' } : prev)
+    setSelectedLead(prev => prev ? { ...prev, conversation_stage: 'BOOKED' } : prev)
+    showToast('Lead marked as booked', 'success')
+    loadData()
+  }
+
+  async function unmarkBooked() {
+    if (!selectedLead || !botId) return
+    if (!confirm('Remove booked status from this lead?')) return
+    await supabase.from('conversations').update({
+      status: 'active',
+      updated_at: new Date().toISOString()
+    }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
+    setConversation(prev => prev ? { ...prev, status: 'active' } : prev)
+    showToast('Booked status removed', 'info')
+    loadData()
+  }
+
   async function saveUsername() {
     if (!selectedLead || !botId) return
     const newUsername = usernameInput.trim().replace(/^@/, '')
@@ -654,6 +679,11 @@ export default function Inbox() {
                   <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', ...intentBadgeStyle(selectedLead.lead_intent, selectedLead.conversation_stage) }}>
                     {intentEmoji(selectedLead.lead_intent, selectedLead.conversation_stage)} {(selectedLead.conversation_stage === 'BOOKED' || selectedLead.conversation_stage === 'SCHEDULE') ? 'Booked' : selectedLead.lead_intent}
                   </span>
+                )}
+                {conversation?.status !== 'booked' ? (
+                  <button onClick={markAsBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600 }}>{'\u2705'} Mark Booked</button>
+                ) : (
+                  <button onClick={unmarkBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600, opacity: 0.8 }}>{'\u2705'} Booked</button>
                 )}
                 <button onClick={() => setShowProfile(p => !p)} style={{ background: showProfile ? 'var(--accl)' : 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.75rem', color: showProfile ? 'var(--acc)' : 'var(--tx2)', fontWeight: showProfile ? 600 : 400 }}>Profile</button>
               </div>
