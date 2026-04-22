@@ -698,21 +698,48 @@ export default function Inbox() {
                           )}
                           {/* AI suggested — small button below lead's last message, opens review panel on click */}
                           {isLead && (() => {
-                            const nextPendingReview = reviews.find(r => r.status === 'pending')
+                            // Find the next assistant message after this lead message
+                            // and check if its review is pending
                             const timelineItems = timeline.filter(t => t.type === 'message')
                             const thisIdx = timelineItems.findIndex(t => t.key === item.key)
                             const nextItem = timelineItems[thisIdx + 1]
-                            const isLastLeadMsg = !nextItem || (nextItem._review?.status === 'pending')
-                            if (!nextPendingReview || !isLastLeadMsg) return null
+                            // The next item should be an assistant message with a pending review
+                            if (!nextItem || nextItem.role === 'user' || nextItem.role === 'Lead') {
+                              // No assistant reply follows this lead message
+                              // Check if there's ANY pending review for the last lead message (no bot reply yet in timeline)
+                              const isLastMessage = thisIdx === timelineItems.length - 1
+                              if (isLastMessage) {
+                                // This is the very last message in the thread - find the most recent pending review
+                                const latestPending = [...reviews].reverse().find(r => r.status === 'pending')
+                                if (latestPending) {
+                                  return (
+                                    <div style={{ marginTop: '6px', display: 'flex', justifyContent: 'flex-end' }}>
+                                      <button
+                                        onClick={() => { setActiveReview(latestPending); setReplyMessages(getReviewMessages(latestPending)) }}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', background: 'var(--accl)', color: 'var(--accm)', border: '1px solid var(--acc)', borderRadius: '999px', fontSize: '.72rem', fontWeight: 600, cursor: 'pointer', transition: 'all .15s' }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--acc)'; e.currentTarget.style.color = '#fff' }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--accl)'; e.currentTarget.style.color = 'var(--accm)' }}
+                                      >
+                                        {'\uD83E\uDD16'} AI Reply Ready — Review
+                                      </button>
+                                    </div>
+                                  )
+                                }
+                              }
+                              return null
+                            }
+                            // Next item is an assistant message - check if its review is pending
+                            const matchedReview = nextItem._review
+                            if (!matchedReview || matchedReview.status !== 'pending') return null
                             return (
                               <div style={{ marginTop: '6px', display: 'flex', justifyContent: 'flex-end' }}>
                                 <button
-                                  onClick={() => { setActiveReview(nextPendingReview); setReplyMessages(getReviewMessages(nextPendingReview)) }}
-                                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: '999px', fontSize: '.72rem', fontWeight: 600, cursor: 'pointer', transition: 'all .15s' }}
-                                  onMouseEnter={e => { e.currentTarget.style.background = '#fde68a' }}
-                                  onMouseLeave={e => { e.currentTarget.style.background = '#fef3c7' }}
+                                  onClick={() => { setActiveReview(matchedReview); setReplyMessages(getReviewMessages(matchedReview)) }}
+                                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 10px', background: 'var(--accl)', color: 'var(--accm)', border: '1px solid var(--acc)', borderRadius: '999px', fontSize: '.72rem', fontWeight: 600, cursor: 'pointer', transition: 'all .15s' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--acc)'; e.currentTarget.style.color = '#fff' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = 'var(--accl)'; e.currentTarget.style.color = 'var(--accm)' }}
                                 >
-                                  🤖 AI Reply Ready — Review
+                                  {'\uD83E\uDD16'} AI Reply Ready — Review
                                 </button>
                               </div>
                             )
