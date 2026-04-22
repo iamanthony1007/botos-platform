@@ -127,6 +127,31 @@ async function supabaseInsert(env, table, data) {
 }
 __name(supabaseInsert, "supabaseInsert");
 
+async function supabaseUpdate(env, table, id, data) {
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        "apikey": env.SUPABASE_SERVICE_KEY,
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) {
+      const error = await response.text();
+      console.error(`Supabase update error (${table}):`, error);
+      return { success: false, error: error };
+    }
+    return { success: true };
+  } catch (error) {
+    console.error(`Supabase update exception (${table}):`, error);
+    return { success: false, error: error.message };
+  }
+}
+__name(supabaseUpdate, "supabaseUpdate");
+
 async function supabaseUpsert(env, table, data, onConflict) {
   try {
     const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
@@ -350,6 +375,36 @@ var index_default = {
           if (memory.messages.length > 15) memory.messages = memory.messages.slice(-15);
         }
 
+        // ── Message batching ─────────────────────────────────────────────────
+        // If a lead sends multiple messages within 20 seconds, batch them into
+        // one AI response instead of creating separate reviews for each.
+        // Check if there's a pending review created in the last 20 seconds.
+        let batchReviewId = null;
+        if (!isTesterInit) {
+          try {
+            const twentySecsAgo = new Date(Date.now() - 20000).toISOString();
+            const batchResp = await fetch(
+              `${SUPABASE_URL}/rest/v1/reviews?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&status=eq.pending&created_at=gte.${twentySecsAgo}&order=created_at.desc&limit=1`,
+              { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
+            );
+            if (batchResp.ok) {
+              const batchData = await batchResp.json();
+              if (batchData && batchData.length > 0) {
+                batchReviewId = batchData[0].id;
+                console.log(`Batching: found recent pending review ${batchReviewId} for ${customer_id}, will update instead of creating new`);
+                // Remove the previous assistant message from memory since we're regenerating
+                const lastAssistantIdx = memory.messages.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i >= 0).pop();
+                if (lastAssistantIdx !== undefined && lastAssistantIdx >= 0) {
+                  memory.messages.splice(lastAssistantIdx, 1);
+                }
+              }
+            }
+          } catch (batchErr) {
+            console.error("Batch check error:", batchErr);
+            // Non-fatal — continue without batching
+          }
+        }
+
         const [learnings, documents] = await Promise.all([
           fetchRelevantLearnings(env, memory),
           fetchActiveDocuments(env)
@@ -494,6 +549,7 @@ var index_default = {
 
         // ── DEBUG: track review insert result ──────────────────────────────
         let reviewResult = { success: false, error: "no_review_path_hit" };
+        let review_id_final = review_id;
 
         if (finalAction === "SEND_TO_INBOX_REVIEW" || finalAction === "ESCALATE_TO_HUMAN") {
           await sendToSlack(env, {
@@ -505,53 +561,96 @@ var index_default = {
             typing_delays: typingDelays,
             bot_reply: joinedReply,
             internal_notes: botResponse.internal_notes,
-            review_id, auto_send_enabled: autoSendEnabled
+            review_id: batchReviewId || review_id, auto_send_enabled: autoSendEnabled
           });
 
-          reviewResult = await supabaseInsert(env, "reviews", {
-            id: review_id, bot_id: BOT_ID,
-            customer_id: String(customer_id),
-            action_type: finalAction,
-            conversation_stage: botResponse.conversation_stage || null,
-            confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
-            bot_reply: joinedReply,
-            bot_messages: dedupedMessages,
-            typing_delays: typingDelays,
-            internal_notes: botResponse.internal_notes || null,
-            escalation_reason: botResponse.escalation_reason || null,
-            emotional_state: botResponse.emotional_state || null,
-            last_messages: memory.messages.slice(-5),
-            status: "pending",
-            created_at: new Date().toISOString(),
-            ...(username ? { username: String(username) } : {}),
-            ...(profile_name ? { profile_name: String(profile_name) } : {})
-          });
+          if (batchReviewId) {
+            // Batching: update existing pending review with regenerated AI response
+            reviewResult = await supabaseUpdate(env, "reviews", batchReviewId, {
+              action_type: finalAction,
+              conversation_stage: botResponse.conversation_stage || null,
+              confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
+              bot_reply: joinedReply,
+              bot_messages: dedupedMessages,
+              typing_delays: typingDelays,
+              internal_notes: (botResponse.internal_notes || "") + " [Batched: multiple lead messages combined]",
+              escalation_reason: botResponse.escalation_reason || null,
+              emotional_state: botResponse.emotional_state || null,
+              last_messages: memory.messages.slice(-5),
+              lead_intent: botResponse.lead_intent || "LOW",
+              ...(username ? { username: String(username) } : {}),
+              ...(profile_name ? { profile_name: String(profile_name) } : {})
+            });
+            // Use the batch review ID for the response
+            review_id_final = batchReviewId;
+          } else {
+            reviewResult = await supabaseInsert(env, "reviews", {
+              id: review_id, bot_id: BOT_ID,
+              customer_id: String(customer_id),
+              action_type: finalAction,
+              conversation_stage: botResponse.conversation_stage || null,
+              confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
+              bot_reply: joinedReply,
+              bot_messages: dedupedMessages,
+              typing_delays: typingDelays,
+              internal_notes: botResponse.internal_notes || null,
+              escalation_reason: botResponse.escalation_reason || null,
+              emotional_state: botResponse.emotional_state || null,
+              last_messages: memory.messages.slice(-5),
+              status: "pending",
+              created_at: new Date().toISOString(),
+              ...(username ? { username: String(username) } : {}),
+              ...(profile_name ? { profile_name: String(profile_name) } : {})
+            });
+            review_id_final = review_id;
+          }
         }
 
         // AUTO_SEND — send via Scenario 2 directly + write review record
         if (finalAction === "AUTO_SEND") {
           ctx.waitUntil(sendToMakeScenario2(String(customer_id), dedupedMessages, typingDelays));
-          reviewResult = await supabaseInsert(env, "reviews", {
-            id: review_id, bot_id: BOT_ID,
-            customer_id: String(customer_id),
-            action_type: "AUTO_SEND",
-            conversation_stage: botResponse.conversation_stage || null,
-            confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
-            bot_reply: joinedReply,
-            bot_messages: dedupedMessages,
-            typing_delays: typingDelays,
-            internal_notes: botResponse.internal_notes || null,
-            last_messages: memory.messages.slice(-5),
-            status: "auto_sent",
-            resolved_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            ...(username ? { username: String(username) } : {}),
-            ...(profile_name ? { profile_name: String(profile_name) } : {})
-          });
+          if (batchReviewId) {
+            // Batching: update existing review to auto_sent
+            reviewResult = await supabaseUpdate(env, "reviews", batchReviewId, {
+              action_type: "AUTO_SEND",
+              conversation_stage: botResponse.conversation_stage || null,
+              confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
+              bot_reply: joinedReply,
+              bot_messages: dedupedMessages,
+              typing_delays: typingDelays,
+              internal_notes: (botResponse.internal_notes || "") + " [Batched: multiple lead messages combined]",
+              last_messages: memory.messages.slice(-5),
+              status: "auto_sent",
+              resolved_at: new Date().toISOString(),
+              lead_intent: botResponse.lead_intent || "LOW",
+              ...(username ? { username: String(username) } : {}),
+              ...(profile_name ? { profile_name: String(profile_name) } : {})
+            });
+            review_id_final = batchReviewId;
+          } else {
+            reviewResult = await supabaseInsert(env, "reviews", {
+              id: review_id, bot_id: BOT_ID,
+              customer_id: String(customer_id),
+              action_type: "AUTO_SEND",
+              conversation_stage: botResponse.conversation_stage || null,
+              confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
+              bot_reply: joinedReply,
+              bot_messages: dedupedMessages,
+              typing_delays: typingDelays,
+              internal_notes: botResponse.internal_notes || null,
+              last_messages: memory.messages.slice(-5),
+              status: "auto_sent",
+              resolved_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              ...(username ? { username: String(username) } : {}),
+              ...(profile_name ? { profile_name: String(profile_name) } : {})
+            });
+            review_id_final = review_id;
+          }
         }
 
         return new Response(JSON.stringify({
-          review_id,
+          review_id: review_id_final,
           customer_id,
           user_message: message,
 
@@ -584,6 +683,8 @@ var index_default = {
           debug: {
             review_insert: reviewResult,
             final_action: finalAction,
+            batched: batchReviewId ? true : false,
+            batch_review_id: batchReviewId || null,
             auto_send_db_value: botSettings.auto_send_enabled,
             auto_send_resolved: autoSendEnabled,
             bot_suggested_action: botResponse.next_action,
