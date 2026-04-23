@@ -5,8 +5,9 @@ import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 import { useDataCache } from '../lib/DataCache'
 
-const FILTERS = ['All', 'Pending', 'Follow Ups', 'Escalated', 'Resolved', 'Test']
+const FILTERS = ['All', 'Pending', 'Needs Response', 'Follow Ups', 'Escalated', 'Resolved', 'Test']
 const FOLLOW_UP_HOURS = 21
+const IG_WINDOW_HOURS = 24
 const STAGES = ['HOOK / ENTRY','GOAL','DIAGNOSTIC','INSIGHT','PRIORITY','DECISION','INVITE','SCHEDULE','BOOKED','FOLLOW-UP']
 
 export default function Inbox() {
@@ -87,7 +88,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }, { data: progressReviews }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
       supabase.from('reviews').select('id, status, confidence').eq('bot_id', bot.id).not('customer_id', 'ilike', 'tester_%')
     ])
@@ -115,12 +116,22 @@ export default function Inbox() {
       let identity = null, pf = {}
       try { pf = typeof c.profile_facts === 'string' ? JSON.parse(c.profile_facts) : (c.profile_facts || {}); identity = pf?.golf_identity || null } catch {}
       // Extract the last message sent by the lead (role: user/Lead) for the preview
+      // Also find the timestamp of the last user message and last bot message
       const msgs = Array.isArray(c.messages) ? c.messages : []
-      let lastLeadMsg = ''
+      let lastLeadMsg = '', lastUserMsgAt = null, lastBotMsgAt = null
       for (let i = msgs.length - 1; i >= 0; i--) {
         const m = msgs[i]
-        if (m.role === 'user' || m.role === 'Lead') { lastLeadMsg = m.content || ''; break }
+        if ((m.role === 'user' || m.role === 'Lead') && !lastUserMsgAt) {
+          lastLeadMsg = m.content || ''
+          lastUserMsgAt = m.timestamp || null
+        }
+        if (m.role === 'assistant' && !lastBotMsgAt) {
+          lastBotMsgAt = m.timestamp || null
+        }
+        if (lastUserMsgAt && lastBotMsgAt) break
       }
+      // Lead needs response if their last message came AFTER the last bot message (or no bot message exists)
+      const userSentLast = lastUserMsgAt && (!lastBotMsgAt || lastUserMsgAt > lastBotMsgAt)
       leadsMap[c.customer_id] = {
         customer_id: c.customer_id, identity, username: c.username || null, profile_name: c.profile_name || null,
         lead_intent: c.lead_intent || null, channel: c.channel,
@@ -128,6 +139,9 @@ export default function Inbox() {
         conversation_stage: c.conversation_stage, running_summary: c.running_summary,
         profile_facts: pf, last_activity: c.updated_at,
         last_bot_sent_at: null,
+        last_user_message_at: lastUserMsgAt || null,
+        user_sent_last: userSentLast || false,
+        followed_up: c.followed_up || false,
         pending_count: 0, handoff_count: 0, latest_preview: lastLeadMsg, all_reviews: []
       }
     })
@@ -467,6 +481,30 @@ export default function Inbox() {
     loadData()
   }
 
+  async function markAsFollowedUp() {
+    if (!selectedLead || !botId) return
+    await supabase.from('conversations').update({
+      followed_up: true,
+      updated_at: new Date().toISOString()
+    }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
+    setConversation(prev => prev ? { ...prev, followed_up: true } : prev)
+    setSelectedLead(prev => prev ? { ...prev, followed_up: true } : prev)
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followed_up: true } : l))
+    showToast('Marked as followed up', 'success')
+  }
+
+  async function unmarkFollowedUp() {
+    if (!selectedLead || !botId) return
+    await supabase.from('conversations').update({
+      followed_up: false,
+      updated_at: new Date().toISOString()
+    }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
+    setConversation(prev => prev ? { ...prev, followed_up: false } : prev)
+    setSelectedLead(prev => prev ? { ...prev, followed_up: false } : prev)
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followed_up: false } : l))
+    showToast('Followed up status removed', 'info')
+  }
+
   async function saveUsername() {
     if (!selectedLead || !botId) return
     const newUsername = usernameInput.trim().replace(/^@/, '')
@@ -570,18 +608,20 @@ export default function Inbox() {
     const isFollowUp = (() => {
       if (isTester || l.pending_count > 0 || !l.last_bot_sent_at) return false
       const hoursSinceBotSent = (Date.now() - new Date(l.last_bot_sent_at).getTime()) / 3600000
-      // Only flag if last_activity hasn't been updated significantly after the bot sent
-      // i.e. the lead hasn't replied (last_activity ~ last_bot_sent_at)
       const lastActivityMs = new Date(l.last_activity).getTime()
       const lastBotMs = new Date(l.last_bot_sent_at).getTime()
-      const leadRepliedAfter = lastActivityMs > lastBotMs + 5 * 60000 // 5 min buffer
+      const leadRepliedAfter = lastActivityMs > lastBotMs + 5 * 60000
       return hoursSinceBotSent >= FOLLOW_UP_HOURS && !leadRepliedAfter
     })()
+    // Needs Response: lead sent the last message and hasn't been responded to
+    // Includes both within and outside the 24-hour IG window
+    const needsResponse = l.user_sent_last && !l.followed_up && !isTester && l.pending_count === 0
     const matchesFilter = filter === 'Test'
       ? isTester
       : isTester ? false
       : filter === 'All' ? true
       : filter === 'Pending' ? l.pending_count > 0
+      : filter === 'Needs Response' ? needsResponse
       : filter === 'Follow Ups' ? isFollowUp
       : filter === 'Escalated' ? l.handoff_count > 0
       : filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0
@@ -617,8 +657,13 @@ export default function Inbox() {
                 const leadReplied = new Date(l.last_activity).getTime() > new Date(l.last_bot_sent_at).getTime() + 5 * 60000
                 return hrs >= FOLLOW_UP_HOURS && !leadReplied
               })
+              const needsResponseLeads = leads.filter(l => {
+                const isTester = String(l.customer_id).startsWith('tester_') || l.channel === 'tester'
+                return l.user_sent_last && !l.followed_up && !isTester && l.pending_count === 0
+              })
               const count = f === 'Pending' ? totalPending
                 : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0)
+                : f === 'Needs Response' ? needsResponseLeads.length
                 : f === 'Follow Ups' ? followUpLeads.length
                 : f === 'Test' ? leads.filter(l => String(l.customer_id).startsWith('tester_') || l.channel === 'tester').length
                 : null
@@ -626,14 +671,14 @@ export default function Inbox() {
                 <button key={f} onClick={() => setFilter(f)} style={{
                   flexShrink: 0, padding: '5px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
                   fontSize: '.72rem', fontWeight: filter === f ? 600 : 400, whiteSpace: 'nowrap',
-                  background: filter === f ? (f === 'Test' ? '#6b7280' : f === 'Follow Ups' ? '#d97706' : 'var(--acc)') : 'var(--surf2)',
-                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : f === 'Follow Ups' ? '#d97706' : 'var(--tx2)',
+                  background: filter === f ? (f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : 'var(--acc)') : 'var(--surf2)',
+                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : 'var(--tx2)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all .15s'
                 }}>
                   {f}
                   {count > 0 && (
                     <span style={{
-                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : f === 'Follow Ups' ? '#d97706' : '#e53e3e',
+                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : '#e53e3e',
                       color: '#fff', borderRadius: '999px', fontSize: '.6rem',
                       minWidth: '14px', height: '14px', display: 'inline-flex',
                       alignItems: 'center', justifyContent: 'center', padding: '0 3px'
@@ -666,14 +711,23 @@ export default function Inbox() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.9rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>{getLeadName(lead).charAt(0).toUpperCase()}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 600, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(lead)}</span>
                       {lead.lead_intent === 'HIGH' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\uD83D\uDD34'}</span>}
                       {lead.lead_intent === 'MEDIUM' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\uD83D\uDFE1'}</span>}
                       {lead.lead_intent === 'LOW' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\u26AA'}</span>}
                       {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\uD83D\uDEA8'}</span>}
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
-                      {isFollowUpLead && <span style={{ fontSize: '.68rem', background: '#fff7ed', color: '#d97706', border: '1px solid #fed7aa', padding: '1px 5px', borderRadius: '999px', flexShrink: 0 }}>⏰ Follow up</span>}
+                      {isFollowUpLead && <span style={{ fontSize: '.68rem', background: '#fff7ed', color: '#d97706', border: '1px solid #fed7aa', padding: '1px 5px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F0'} Follow up</span>}
+                      {/* 24-hour IG window timer */}
+                      {lead.user_sent_last && !lead.followed_up && lead.last_user_message_at && (() => {
+                        const msLeft = (new Date(lead.last_user_message_at).getTime() + IG_WINDOW_HOURS * 3600000) - Date.now()
+                        if (msLeft <= 0) return <span style={{ fontSize: '.65rem', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\u26A0'} Window expired</span>
+                        const hrsLeft = Math.floor(msLeft / 3600000)
+                        const minsLeft = Math.floor((msLeft % 3600000) / 60000)
+                        const isUrgent = hrsLeft < 4
+                        return <span style={{ fontSize: '.65rem', background: isUrgent ? '#fef2f2' : '#f0fdf4', color: isUrgent ? '#dc2626' : '#16a34a', border: `1px solid ${isUrgent ? '#fecaca' : '#bbf7d0'}`, padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F1'} {hrsLeft}h {minsLeft}m left</span>
+                      })()}
                     </div>
                     <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{lead.latest_preview || lead.conversation_stage || 'No messages yet'}</div>
                   </div>
@@ -712,6 +766,21 @@ export default function Inbox() {
                 ) : (
                   <button onClick={unmarkBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600, opacity: 0.8 }}>{'\u2705'} Booked</button>
                 )}
+                {selectedLead.user_sent_last && !selectedLead.followed_up && (
+                  <button onClick={markAsFollowedUp} style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#7c3aed', fontWeight: 600 }}>{'\u2709'} Mark Followed Up</button>
+                )}
+                {selectedLead.followed_up && (
+                  <button onClick={unmarkFollowedUp} style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#7c3aed', fontWeight: 600, opacity: 0.7 }}>{'\u2709'} Followed Up</button>
+                )}
+                {/* 24-hour window timer in header */}
+                {selectedLead.user_sent_last && selectedLead.last_user_message_at && !selectedLead.followed_up && (() => {
+                  const msLeft = (new Date(selectedLead.last_user_message_at).getTime() + IG_WINDOW_HOURS * 3600000) - Date.now()
+                  if (msLeft <= 0) return <span style={{ fontSize: '.68rem', fontWeight: 600, padding: '3px 8px', borderRadius: '999px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}>{'\u26A0'} IG window expired - use Business Suite</span>
+                  const hrsLeft = Math.floor(msLeft / 3600000)
+                  const minsLeft = Math.floor((msLeft % 3600000) / 60000)
+                  const isUrgent = hrsLeft < 4
+                  return <span style={{ fontSize: '.68rem', fontWeight: 600, padding: '3px 8px', borderRadius: '999px', background: isUrgent ? '#fef2f2' : '#f0fdf4', color: isUrgent ? '#dc2626' : '#16a34a', border: `1px solid ${isUrgent ? '#fecaca' : '#bbf7d0'}` }}>{'\u23F1'} {hrsLeft}h {minsLeft}m left to respond</span>
+                })()}
                 <button onClick={() => setShowProfile(p => !p)} style={{ background: showProfile ? 'var(--accl)' : 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.75rem', color: showProfile ? 'var(--acc)' : 'var(--tx2)', fontWeight: showProfile ? 600 : 400 }}>Profile</button>
               </div>
             </div>

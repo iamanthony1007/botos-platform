@@ -594,6 +594,7 @@ var index_default = {
           messages: memory.messages,
           profile_facts: memory.profile_facts,
           running_summary: memory.running_summary,
+          followed_up: false,
           updated_at: new Date().toISOString(),
           ...(username ? { username: String(username) } : {}),
           ...(profile_name ? { profile_name: String(profile_name) } : {})
