@@ -787,8 +787,8 @@ export default function Inbox() {
                 ) : (
                   <button onClick={unmarkBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600, opacity: 0.8 }}>{'\u2705'} Booked</button>
                 )}
-                {/* Smart Follow-Up button. Shows count and changes color at 2+. */}
-                {selectedLead.user_sent_last && (() => {
+                {/* Smart Follow-Up button. Visible only in the Follow Ups tab. Shows count and changes color at 2+. */}
+                {filter === 'Follow Ups' && (() => {
                   const count = conversation?.followup_count ?? selectedLead.followup_count ?? 0
                   if (count === 0) {
                     return <button onClick={markAsFollowedUp} title="Click after you send the lead a follow-up DM"
