@@ -63,6 +63,81 @@ function hasBotAlreadyAsked(proposed, memory) {
 }
 __name(hasBotAlreadyAsked, "hasBotAlreadyAsked");
 
+// ─────────────────────────────────────────────────────────────────────
+// fetchWithRetry
+// Calls Anthropic (or any) API with exponential backoff on transient errors.
+// Retries on: HTTP 429, 502, 503, 504, 529 and body { type: "error", error: { type: "overloaded_error" | "rate_limit_error" } }
+// Total attempts = 4 (original + 3 retries). Delays = 2s, 4s, 8s. Max ~14s before giving up.
+// Returns the final response (success or exhausted). Never throws.
+async function fetchWithRetry(url, opts, maxAttempts = 4) {
+  const RETRY_STATUS = [429, 502, 503, 504, 529];
+  const RETRY_ERROR_TYPES = ["overloaded_error", "rate_limit_error", "api_error"];
+  let lastResponse = null;
+  let lastBody = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(url, opts);
+
+      // HTTP status says try again
+      if (RETRY_STATUS.includes(response.status) && attempt < maxAttempts) {
+        const body = await response.text();
+        console.warn(`[retry] ${url} attempt ${attempt}/${maxAttempts} got ${response.status}: ${body.slice(0, 200)}`);
+        const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
+      // 200 but body says "overloaded_error" (rare, but Anthropic occasionally wraps errors in 200s)
+      const raw = await response.clone().text();
+      try {
+        const body = JSON.parse(raw);
+        if (body?.type === "error" && RETRY_ERROR_TYPES.includes(body?.error?.type) && attempt < maxAttempts) {
+          console.warn(`[retry] ${url} attempt ${attempt}/${maxAttempts} body-error ${body.error.type}`);
+          const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+      } catch (_) { /* not JSON, fall through */ }
+
+      // Either success or a non-retryable error - return as-is
+      return response;
+    } catch (networkErr) {
+      // Network failure (DNS, TLS, socket): retry with backoff
+      lastResponse = null;
+      lastBody = networkErr.message;
+      console.warn(`[retry] ${url} attempt ${attempt}/${maxAttempts} network error: ${networkErr.message}`);
+      if (attempt === maxAttempts) {
+        // Synthesise a response-like object so callers always get something
+        return new Response(JSON.stringify({ type: "error", error: { type: "network_error", message: networkErr.message } }), {
+          status: 599,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  return lastResponse;
+}
+__name(fetchWithRetry, "fetchWithRetry");
+
+// Detects if an error thrown from callClaude() was caused by Anthropic overload
+// (as opposed to a prompt error, parse error, etc). Used to decide whether to
+// fall back to a placeholder review row vs return 500 to Make.
+function isOverloadError(errMsg) {
+  if (!errMsg) return false;
+  const s = String(errMsg).toLowerCase();
+  return s.includes("overloaded_error") ||
+         s.includes("rate_limit_error") ||
+         s.includes("network_error") ||
+         s.includes("529") ||
+         s.includes("503") ||
+         s.includes("504") ||
+         s.includes("502");
+}
+__name(isOverloadError, "isOverloadError");
+
 var buildDeveloperPrompt = /* @__PURE__ */ __name((memory, messages) => {
   return `You are responding to a golf fitness coaching prospect via Instagram DM on behalf of Bombers Blueprint.
 
@@ -812,6 +887,86 @@ var index_default = {
 
       } catch (error) {
         console.error("Webhook error:", error);
+
+        // If Claude was overloaded (even after retries) or the network failed,
+        // don't drop the lead. Create a placeholder review row so the setter
+        // sees the inbound message in the inbox and can reply manually, and
+        // fire a Slack alert so Anthony/Nella know in real time.
+        if (isOverloadError(error?.message)) {
+          try {
+            const body = request._cachedBody || null;   // may not exist
+            // Reparse the original request body to grab customer_id + message
+            let customerId = null, username = null, profileName = null, leadMsg = null;
+            try {
+              const clone = await request.clone().json();
+              customerId = String(clone.customer_id || clone.user_id || "");
+              username = clone.ig_username || clone.username || null;
+              profileName = clone.profile_name || clone.name || null;
+              leadMsg = clone.last_input_text || clone.message || clone.text || null;
+            } catch (_) { /* request already consumed, best-effort */ }
+
+            const BOT_ID = "00000000-0000-0000-0000-000000000002";
+            if (customerId) {
+              ctx.waitUntil(supabaseInsert(env, "reviews", {
+                bot_id: BOT_ID,
+                customer_id: customerId,
+                username: username || null,
+                profile_name: profileName || null,
+                status: "pending",
+                original_reply: "",
+                bot_messages: [],
+                typing_delays: [],
+                conversation_stage: "UNKNOWN",
+                confidence: 0,
+                lead_intent: "UNKNOWN",
+                internal_notes: `[System: Claude API overloaded after 4 attempts. No AI reply generated. Please reply manually. Original error: ${String(error.message).slice(0, 300)}]`,
+                created_at: new Date().toISOString()
+              }));
+
+              // Also bump conversations.updated_at so the lead surfaces in the inbox
+              ctx.waitUntil(supabaseUpsert(env, "conversations", {
+                bot_id: BOT_ID,
+                customer_id: customerId,
+                username: username || null,
+                profile_name: profileName || null,
+                followed_up: false,
+                followup_count: 0,
+                updated_at: new Date().toISOString()
+              }, "bot_id,customer_id"));
+            }
+
+            // Fire-and-forget Slack alert
+            if (env.SLACK_WEBHOOK_URL) {
+              ctx.waitUntil(fetch(env.SLACK_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  text: "⚠️ Claude API overloaded - lead routed to inbox for manual reply",
+                  blocks: [
+                    { type: "header", text: { type: "plain_text", text: "⚠️ Claude API Overloaded" } },
+                    { type: "section", fields: [
+                      { type: "mrkdwn", text: `*Customer:*\n${customerId || "unknown"}` },
+                      { type: "mrkdwn", text: `*Username:*\n${username || "unknown"}` }
+                    ]},
+                    { type: "section", text: { type: "mrkdwn", text: `*Lead message:*\n${(leadMsg || "(unknown)").slice(0, 400)}` } },
+                    { type: "section", text: { type: "mrkdwn", text: `*What happened:*\nClaude returned overload error after 4 retry attempts. A placeholder review has been created in the inbox. Please reply to this lead manually.` } },
+                    { type: "section", text: { type: "mrkdwn", text: `*Error:*\n${String(error.message).slice(0, 300)}` } }
+                  ]
+                })
+              }).catch(() => {}));
+            }
+
+            // Tell Make the request succeeded, so it doesn't retry and fire a duplicate placeholder
+            return new Response(JSON.stringify({
+              status: "overload_fallback",
+              message: "Claude API overloaded. Lead saved to inbox for manual reply."
+            }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          } catch (fallbackErr) {
+            console.error("Overload fallback itself failed:", fallbackErr);
+            // fall through to the generic 500
+          }
+        }
+
         return new Response(JSON.stringify({ error: error.message }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
@@ -902,7 +1057,7 @@ var index_default = {
           '{ "updated_prompt": "...", "explanation": "...", "changes": ["..."], "needs_clarification": false }'
         ].join("\n");
 
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
+        const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -962,7 +1117,7 @@ var index_default = {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
+        const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1219,7 +1374,7 @@ ${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").sli
 
   const finalSystemPrompt = learningsSection + documentSection + campaignSection + systemPrompt;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

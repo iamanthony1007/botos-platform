@@ -88,7 +88,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }, { data: progressReviews }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
       supabase.from('reviews').select('id, status, confidence').eq('bot_id', bot.id).not('customer_id', 'ilike', 'tester_%')
     ])
@@ -142,6 +142,7 @@ export default function Inbox() {
         last_user_message_at: lastUserMsgAt || null,
         user_sent_last: userSentLast || false,
         followed_up: c.followed_up || false,
+        followup_count: c.followup_count || 0,
         pending_count: 0, handoff_count: 0, latest_preview: lastLeadMsg, all_reviews: []
       }
     })
@@ -323,11 +324,14 @@ export default function Inbox() {
       }
       await supabase.from('conversations').update({
         messages: updatedMessages,
+        updated_at: new Date().toISOString(),
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
-    } else if (correctedStage || correctedIntent) {
+    } else {
+      // Row 25: still bump updated_at on approve even when there's no conversation record or stage correction
       await supabase.from('conversations').update({
+        updated_at: new Date().toISOString(),
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
@@ -385,11 +389,14 @@ export default function Inbox() {
       }
       await supabase.from('conversations').update({
         messages: updatedMessages,
+        updated_at: new Date().toISOString(),
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
-    } else if (correctedStage || correctedIntent) {
+    } else {
+      // Row 25: still bump updated_at on edit even when there is no conversation record
       await supabase.from('conversations').update({
+        updated_at: new Date().toISOString(),
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
@@ -408,6 +415,11 @@ export default function Inbox() {
   async function discard() {
     if (!activeReview) return
     await supabase.from('reviews').update({ status: 'discarded', resolved_at: new Date().toISOString() }).eq('id', activeReview.id)
+    // Row 25: also bump the conversation so the inbox list reorders and the review drops out of Pending
+    await supabase.from('conversations')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('bot_id', botId)
+      .eq('customer_id', activeReview.customer_id)
     showToast('Discarded', 'info')
     setActiveReview(null)
     setReplyMessages([])
@@ -483,26 +495,35 @@ export default function Inbox() {
 
   async function markAsFollowedUp() {
     if (!selectedLead || !botId) return
+    const currentCount = conversation?.followup_count || selectedLead.followup_count || 0
+    const newCount = currentCount + 1
     await supabase.from('conversations').update({
-      followed_up: true,
+      followup_count: newCount,
+      followed_up: newCount > 0,
       updated_at: new Date().toISOString()
     }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
-    setConversation(prev => prev ? { ...prev, followed_up: true } : prev)
-    setSelectedLead(prev => prev ? { ...prev, followed_up: true } : prev)
-    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followed_up: true } : l))
-    showToast('Marked as followed up', 'success')
+    setConversation(prev => prev ? { ...prev, followup_count: newCount, followed_up: true } : prev)
+    setSelectedLead(prev => prev ? { ...prev, followup_count: newCount, followed_up: true } : prev)
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followup_count: newCount, followed_up: true } : l))
+    if (newCount >= 2) {
+      showToast('2nd follow-up logged. Lead removed from Closest to Booking until they reply.', 'success')
+    } else {
+      showToast(`Follow-up #${newCount} logged`, 'success')
+    }
   }
 
   async function unmarkFollowedUp() {
     if (!selectedLead || !botId) return
+    if (!confirm('Reset follow-up count to 0 for this lead?')) return
     await supabase.from('conversations').update({
+      followup_count: 0,
       followed_up: false,
       updated_at: new Date().toISOString()
     }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
-    setConversation(prev => prev ? { ...prev, followed_up: false } : prev)
-    setSelectedLead(prev => prev ? { ...prev, followed_up: false } : prev)
-    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followed_up: false } : l))
-    showToast('Followed up status removed', 'info')
+    setConversation(prev => prev ? { ...prev, followup_count: 0, followed_up: false } : prev)
+    setSelectedLead(prev => prev ? { ...prev, followup_count: 0, followed_up: false } : prev)
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followup_count: 0, followed_up: false } : l))
+    showToast('Follow-up count reset', 'info')
   }
 
   async function saveUsername() {
@@ -766,12 +787,20 @@ export default function Inbox() {
                 ) : (
                   <button onClick={unmarkBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600, opacity: 0.8 }}>{'\u2705'} Booked</button>
                 )}
-                {selectedLead.user_sent_last && !selectedLead.followed_up && (
-                  <button onClick={markAsFollowedUp} style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#7c3aed', fontWeight: 600 }}>{'\u2709'} Mark Followed Up</button>
-                )}
-                {selectedLead.followed_up && (
-                  <button onClick={unmarkFollowedUp} style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#7c3aed', fontWeight: 600, opacity: 0.7 }}>{'\u2709'} Followed Up</button>
-                )}
+                {/* Smart Follow-Up button. Shows count and changes color at 2+. */}
+                {selectedLead.user_sent_last && (() => {
+                  const count = conversation?.followup_count ?? selectedLead.followup_count ?? 0
+                  if (count === 0) {
+                    return <button onClick={markAsFollowedUp} title="Click after you send the lead a follow-up DM"
+                      style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#7c3aed', fontWeight: 600 }}>{'\u2709'} Mark Follow-Up</button>
+                  }
+                  if (count === 1) {
+                    return <button onClick={markAsFollowedUp} title="Click after you send a 2nd follow-up. At 2+ the lead is removed from Closest to Booking."
+                      style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#7c3aed', fontWeight: 600 }}>{'\u2709'} Follow-Up (1/2)</button>
+                  }
+                  return <button onClick={unmarkFollowedUp} title="Lead is now off the Closest to Booking list until they reply. Click to reset count."
+                    style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#92400e', fontWeight: 600 }}>{'\u2709'} Follow-Up ({count}/2) {'\u2022'} Off Priority</button>
+                })()}
                 {/* 24-hour window timer in header */}
                 {selectedLead.user_sent_last && selectedLead.last_user_message_at && !selectedLead.followed_up && (() => {
                   const msLeft = (new Date(selectedLead.last_user_message_at).getTime() + IG_WINDOW_HOURS * 3600000) - Date.now()
