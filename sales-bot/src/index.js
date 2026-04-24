@@ -9,12 +9,59 @@ const SUPABASE_URL = "https://rydkwsjwlgnivlwlvqku.supabase.co";
 const FALLBACK_SYSTEM_PROMPT = `You are Coach Shaun responding to golfers via Instagram DMs. You are an expert appointment setter. Your sole responsibility is to determine fit and book Zoom calls. You sort, not sell.`;
 
 // Typing delay calculator
-// Flat 5 second delay per message — natural but not too slow
+// Flat 10 second delay per message so replies feel human and un-hurried
 function calcTypingDelay(text) {
-  const variation = (Math.random() - 0.5) * 1000;      // ±0.5s natural variation
-  return Math.round(5000 + variation);                  // ~5s per message
+  const variation = (Math.random() - 0.5) * 2000;       // +/-1s natural variation
+  return Math.round(10000 + variation);                 // ~10s per message
 }
 __name(calcTypingDelay, "calcTypingDelay");
+
+// Row 18: Em-dash sanitizer. Replaces em-dash, en-dash, double-hyphen and
+// the horizontal-bar variant with a period + space. Runs on every bot message
+// before it is written to Supabase, sent to Make, or pushed to KV memory.
+function sanitizeBotMessage(text) {
+  if (!text || typeof text !== "string") return text;
+  return text
+    .replace(/\s*[\u2014\u2013\u2015]+\s*/g, ". ")   // em dash, en dash, horizontal bar
+    .replace(/\s--\s/g, ". ")                         // ASCII double-hyphen used as em-dash
+    .replace(/\s-\s/g, ". ")                          // ASCII single hyphen used as em-dash with spaces
+    .replace(/\.\s*\./g, ".")                         // collapse accidental double periods
+    .replace(/\s{2,}/g, " ")                          // collapse double spaces
+    .trim();
+}
+__name(sanitizeBotMessage, "sanitizeBotMessage");
+
+// Row 30: Already-asked question check. Returns true if the proposed reply
+// is too similar (>= 70% token overlap) to any assistant message in the last
+// 10 turns. Used to block repeats.
+function hasBotAlreadyAsked(proposed, memory) {
+  if (!proposed || !memory?.messages) return false;
+  const prior = memory.messages
+    .filter(m => m.role === "assistant")
+    .slice(-10)
+    .map(m => (m.content || "").toLowerCase());
+  if (prior.length === 0) return false;
+
+  const tokens = (s) => (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length >= 3);
+
+  const proposedTokens = new Set(tokens(proposed));
+  if (proposedTokens.size < 3) return false;  // too short to judge
+
+  for (const priorMsg of prior) {
+    const priorTokens = new Set(tokens(priorMsg));
+    if (priorTokens.size < 3) continue;
+    let overlap = 0;
+    for (const t of proposedTokens) if (priorTokens.has(t)) overlap++;
+    const similarity = overlap / Math.min(proposedTokens.size, priorTokens.size);
+    if (similarity >= 0.70) return true;
+  }
+  return false;
+}
+__name(hasBotAlreadyAsked, "hasBotAlreadyAsked");
 
 var buildDeveloperPrompt = /* @__PURE__ */ __name((memory, messages) => {
   return `You are responding to a golf fitness coaching prospect via Instagram DM on behalf of Bombers Blueprint.
@@ -451,9 +498,14 @@ var index_default = {
           : [botResponse.reply];
 
         // Deduplicate — safety net for the glitch where bot repeats itself
-        const dedupedMessages = rawMessages.filter((msg, idx, arr) =>
+        const dedupedMessagesRaw = rawMessages.filter((msg, idx, arr) =>
           arr.findIndex(m => m.trim().toLowerCase() === msg.trim().toLowerCase()) === idx
         );
+
+        // Row 18: Sanitize every outgoing message to remove em-dashes before any storage or send
+        const dedupedMessages = dedupedMessagesRaw
+          .map(m => sanitizeBotMessage(m))
+          .filter(m => m && m.length > 0);
 
         // Calculate typing delay per message
         const typingDelays = dedupedMessages.map(msg => calcTypingDelay(msg));
@@ -461,6 +513,15 @@ var index_default = {
 
         // Primary reply = all messages joined (for memory + logging)
         const joinedReply = dedupedMessages.join(" ");
+
+        // Row 30: If the proposed reply repeats a question the bot already asked,
+        // downgrade to review so a setter can rewrite it instead of auto-sending.
+        const alreadyAsked = hasBotAlreadyAsked(joinedReply, memory);
+        if (alreadyAsked) {
+          botResponse.next_action = "SEND_TO_INBOX_REVIEW";
+          botResponse.internal_notes = (botResponse.internal_notes || "") +
+            " [System: Repeated-question guard triggered - bot was about to ask something already asked in the last 10 turns]";
+        }
 
         // ── Intent classification from lead's last message ─────────────────
         // Intent must reflect the LEAD's words, not the bot's response.
@@ -595,6 +656,7 @@ var index_default = {
           profile_facts: memory.profile_facts,
           running_summary: memory.running_summary,
           followed_up: false,
+          followup_count: 0,
           updated_at: new Date().toISOString(),
           ...(username ? { username: String(username) } : {}),
           ...(profile_name ? { profile_name: String(profile_name) } : {})
