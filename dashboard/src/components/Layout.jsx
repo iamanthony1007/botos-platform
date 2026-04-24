@@ -27,11 +27,53 @@ export default function Layout() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
   const channelRef = useRef(null)
+  const prevCountRef = useRef(0)   // Row 28: track previous count so we can detect increases
+  const audioCtxRef = useRef(null) // Row 28: shared AudioContext for notification ping
   const closeMenu = () => setMenuOpen(false)
+
+  // Row 28: Generate a short "ping" using Web Audio API so no audio file is needed.
+  // Only plays when the tab has focus or as part of a notification.
+  function playPing() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      if (!Ctx) return
+      if (!audioCtxRef.current) audioCtxRef.current = new Ctx()
+      const ctx = audioCtxRef.current
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain); gain.connect(ctx.destination)
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(880, ctx.currentTime)
+      osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.18)
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35)
+      osc.start(ctx.currentTime)
+      osc.stop(ctx.currentTime + 0.4)
+    } catch (e) { /* ignore - some browsers block without user gesture */ }
+  }
+
+  // Row 28: Show a browser notification. Only fires if permission was granted.
+  function showDesktopNotification(newCount) {
+    try {
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+      const n = new Notification('New reply waiting for review', {
+        body: `${newCount} lead${newCount === 1 ? '' : 's'} need your attention in the Mu AI inbox.`,
+        icon: LOGO_HORIZONTAL,
+        tag: 'mu-ai-pending',   // replaces previous notification instead of stacking
+      })
+      n.onclick = () => { window.focus(); navigate('/dashboard/inbox'); n.close() }
+    } catch (e) { /* ignore */ }
+  }
 
   useEffect(() => {
     if (!profile || !can('inbox')) return
     loadUnreadCount()
+    // Row 28: ask for notification permission up front (only if not already decided)
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {})
+    }
     return () => { if (channelRef.current) supabase.removeChannel(channelRef.current) }
   }, [profile])
 
@@ -47,12 +89,22 @@ export default function Layout() {
       return new Set((data || []).map(r => r.customer_id)).size
     }
 
-    setUnreadCount(await getCount())
+    const initial = await getCount()
+    prevCountRef.current = initial
+    setUnreadCount(initial)
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
     const channel = supabase.channel(`layout-inbox-${bot.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, async () => {
-        setUnreadCount(await getCount())
+        const next = await getCount()
+        const prev = prevCountRef.current
+        // Row 28: if count just went up, ping + notify. Don't ping on decrements or equal counts.
+        if (next > prev) {
+          playPing()
+          showDesktopNotification(next)
+        }
+        prevCountRef.current = next
+        setUnreadCount(next)
       })
       .subscribe()
     channelRef.current = channel

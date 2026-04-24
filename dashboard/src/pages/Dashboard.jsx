@@ -73,7 +73,7 @@ export default function Dashboard() {
 
       const since = getDateFilter()
       const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }] = await Promise.all([
-        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
+        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status, followup_count').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
         supabase.from('reviews').select('id, status').in('bot_id', botIds).gte('created_at', since).not('customer_id', 'ilike', 'tester_%'),
         supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
       ])
@@ -91,7 +91,7 @@ export default function Dashboard() {
       setLastUpdated(new Date())
 
       const scored = allConvos
-        .filter(c => c.status !== 'booked' && c.lead_intent !== 'LOW')
+        .filter(c => c.status !== 'booked' && c.lead_intent !== 'LOW' && (c.followup_count || 0) < 2)
         .map(c => {
           const stageScore = STAGE_PRIORITY[c.conversation_stage] ?? 0
           const intentScore = INTENT_SCORE[c.lead_intent] ?? 0
