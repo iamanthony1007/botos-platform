@@ -787,8 +787,35 @@ export default function Inbox() {
                 ) : (
                   <button onClick={unmarkBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600, opacity: 0.8 }}>{'\u2705'} Booked</button>
                 )}
-                {/* Smart Follow-Up button. Visible only in the Follow Ups tab. Shows count and changes color at 2+. */}
-                {filter === 'Follow Ups' && (() => {
+                {/* Smart Follow-Up button. Visible on: Follow Ups tab, leads with expired IG window,
+                    or leads carrying the orange "Follow up" badge. Always hidden for booked,
+                    pending-review, or test leads. */}
+                {(() => {
+                  // Hard exclusions - button never shows for these
+                  const isTester = String(selectedLead.customer_id).startsWith('tester_') || selectedLead.channel === 'tester'
+                  const isBooked = conversation?.status === 'booked' || selectedLead.status === 'booked'
+                  const hasPending = selectedLead.pending_count > 0
+                  if (isTester || isBooked || hasPending) return null
+
+                  // Condition 1: user is viewing the Follow Ups tab
+                  const onFollowUpsTab = filter === 'Follow Ups'
+
+                  // Condition 2: IG 24-hour window has expired (lead sent last, >24h ago)
+                  const windowExpired = selectedLead.user_sent_last
+                    && selectedLead.last_user_message_at
+                    && (Date.now() - new Date(selectedLead.last_user_message_at).getTime()) >= IG_WINDOW_HOURS * 3600000
+
+                  // Condition 3: lead carries the orange "Follow up" list badge
+                  // (bot sent last, 21+ hours ago, lead hasn't replied since, no pending review)
+                  const hasFollowUpBadge = (() => {
+                    if (!selectedLead.last_bot_sent_at) return false
+                    const hrs = (Date.now() - new Date(selectedLead.last_bot_sent_at).getTime()) / 3600000
+                    const leadReplied = new Date(selectedLead.last_activity).getTime() > new Date(selectedLead.last_bot_sent_at).getTime() + 5 * 60000
+                    return hrs >= FOLLOW_UP_HOURS && !leadReplied
+                  })()
+
+                  if (!onFollowUpsTab && !windowExpired && !hasFollowUpBadge) return null
+
                   const count = conversation?.followup_count ?? selectedLead.followup_count ?? 0
                   if (count === 0) {
                     return <button onClick={markAsFollowedUp} title="Click after you send the lead a follow-up DM"
