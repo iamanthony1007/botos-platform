@@ -427,13 +427,41 @@ var index_default = {
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const body = await request.json();
-        const { customer_id, message, channel = "instagram", username = null, profile_name = null } = body;
+        let { customer_id, message, channel = "instagram", username = null, profile_name = null } = body;
+
+        // Row 27: Sanitize string fields. ManyChat sometimes sends an unresolved
+        // variable placeholder (e.g. "{{last_input_text}}") as plain text instead
+        // of the real value. Treat any such literal as missing rather than storing
+        // the broken string. Also trim and convert empty strings to null.
+        // Also strips known sentinel values like "null" / "undefined" / "false" that
+        // ManyChat occasionally substitutes when a variable is genuinely empty.
+        const cleanField = (v) => {
+          if (v === null || v === undefined) return null;
+          const s = String(v).trim();
+          if (!s) return null;
+          if (/^{{[^}]+}}$/.test(s)) return null;          // unresolved ManyChat placeholder
+          if (/^(null|undefined|false|none|n\/a)$/i.test(s)) return null;
+          return s;
+        };
+        username = cleanField(username);
+        profile_name = cleanField(profile_name);
+        // Note: we do NOT clean message here because the validation below requires
+        // a non-empty message and we'd rather return a proper 400 than silently
+        // proceed with no input to Claude.
+
         if (!customer_id || !message) {
           return new Response(JSON.stringify({ error: "Missing customer_id or message" }), {
             status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
+
+        // Row 27: We deliberately do NOT write a "Instagram Lead" fallback into
+        // Supabase when both username and profile_name are missing. Instead we let
+        // the dashboard's getLeadName() helper derive the display label from the
+        // channel field on the fly. This keeps the database honest (NULL means
+        // "we genuinely don't know") and lets us change display rules without
+        // running SQL migrations.
 
         const [botSettings, memoryData] = await Promise.all([
           getBotSettings(env),
@@ -900,8 +928,19 @@ var index_default = {
             try {
               const clone = await request.clone().json();
               customerId = String(clone.customer_id || clone.user_id || "");
-              username = clone.ig_username || clone.username || null;
-              profileName = clone.profile_name || clone.name || null;
+              const rawUsername = clone.ig_username || clone.username || null;
+              const rawProfile = clone.profile_name || clone.name || null;
+              // Row 27: same sanitiser as the main path - reject literal {{...}} placeholders
+              const cleanFallback = (v) => {
+                if (v === null || v === undefined) return null;
+                const s = String(v).trim();
+                if (!s) return null;
+                if (/^{{[^}]+}}$/.test(s)) return null;
+                if (/^(null|undefined|false|none|n\/a)$/i.test(s)) return null;
+                return s;
+              };
+              username = cleanFallback(rawUsername);
+              profileName = cleanFallback(rawProfile);
               leadMsg = clone.last_input_text || clone.message || clone.text || null;
             } catch (_) { /* request already consumed, best-effort */ }
 
