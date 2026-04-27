@@ -729,9 +729,10 @@ export default function Inbox() {
             })()
             return (
               <div key={lead.customer_id} onClick={() => selectLead(lead)} style={{ padding: '12px 14px', cursor: 'pointer', borderBottom: '1px solid var(--bdr)', background: isSelected ? 'var(--accp)' : 'transparent', borderLeft: isSelected ? '3px solid var(--acc)' : '3px solid transparent', transition: 'background .15s' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.9rem', fontWeight: 700, color: '#fff', flexShrink: 0 }}>{getLeadName(lead).charAt(0).toUpperCase()}</div>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                  <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.9rem', fontWeight: 700, color: '#fff', flexShrink: 0, marginTop: '2px' }}>{getLeadName(lead).charAt(0).toUpperCase()}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* Row 1: Name + intent + badges */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 600, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getLeadName(lead)}</span>
                       {lead.lead_intent === 'HIGH' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\uD83D\uDD34'}</span>}
@@ -750,9 +751,16 @@ export default function Inbox() {
                         return <span style={{ fontSize: '.65rem', background: isUrgent ? '#fef2f2' : '#f0fdf4', color: isUrgent ? '#dc2626' : '#16a34a', border: `1px solid ${isUrgent ? '#fecaca' : '#bbf7d0'}`, padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F1'} {hrsLeft}h {minsLeft}m left</span>
                       })()}
                     </div>
-                    <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{lead.latest_preview || lead.conversation_stage || 'No messages yet'}</div>
+                    {/* Row 2: Conversation stage */}
+                    <div style={{ fontSize: '.7rem', color: 'var(--acc)', fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {lead.conversation_stage || '\u00A0'}
+                    </div>
+                    {/* Row 3: Latest message preview */}
+                    <div style={{ fontSize: '.76rem', color: 'var(--tx3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '3px' }}>
+                      {lead.latest_preview || 'No messages yet'}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '.68rem', color: 'var(--tx3)', flexShrink: 0 }}>{fmtTime(lead.last_activity)}</div>
+                  <div style={{ fontSize: '.68rem', color: 'var(--tx3)', flexShrink: 0, marginTop: '4px' }}>{fmtTime(lead.last_activity)}</div>
                 </div>
               </div>
             )
