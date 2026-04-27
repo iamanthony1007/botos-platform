@@ -518,6 +518,38 @@ var index_default = {
           }
         }
 
+        // ── Bug 6: Supabase conversations fallback ────────────────────────────
+        // If KV memory is empty AND GHL didn't seed anything, look up the lead's
+        // own conversation row in Supabase and seed from there. This fixes the
+        // case where KV memory was lost (eviction, region inconsistency, manual
+        // delete) and the stage guardrail at line ~714 would otherwise downgrade
+        // a SCHEDULE-stage lead back to HOOK / ENTRY because it sees only 1 user
+        // message in memory. We are the source of truth, not the cache.
+        if (!memoryData && memory.messages.length === 0 && customer_id) {
+          try {
+            const convResp = await fetch(
+              `${SUPABASE_URL}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=messages,running_summary,profile_facts,total_messages,conversation_stage&limit=1`,
+              { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
+            );
+            if (convResp.ok) {
+              const convData = await convResp.json();
+              if (convData && convData.length > 0 && Array.isArray(convData[0].messages) && convData[0].messages.length > 0) {
+                const record = convData[0];
+                // Same window the Worker normally keeps in memory (15 messages)
+                const recentMsgs = record.messages.slice(-15);
+                memory.messages = recentMsgs;
+                memory.running_summary = record.running_summary || "";
+                memory.profile_facts = record.profile_facts || {};
+                memory.recovered_from_supabase = true;
+                console.log(`Memory rehydrated from Supabase for ${customer_id}: ${recentMsgs.length} messages, prior stage ${record.conversation_stage}`);
+              }
+            }
+          } catch (rehydrateErr) {
+            console.error("Supabase memory rehydrate error:", rehydrateErr);
+            // Non-fatal — continue without history
+          }
+        }
+
         // Handle tester init — don't add the trigger to memory, just get opening message
         const isTesterInit = message === "__tester_init__";
         if (!isTesterInit) {
