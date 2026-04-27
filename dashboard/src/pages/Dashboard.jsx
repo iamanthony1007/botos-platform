@@ -73,7 +73,7 @@ export default function Dashboard() {
 
       const since = getDateFilter()
       const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }] = await Promise.all([
-        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status, followup_count').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
+        supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status, followup_count, re_engaged').in('bot_id', botIds).neq('channel', 'tester').gte('updated_at', since),
         supabase.from('reviews').select('id, status').in('bot_id', botIds).gte('created_at', since).not('customer_id', 'ilike', 'tester_%'),
         supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
       ])
@@ -250,6 +250,7 @@ export default function Dashboard() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <div style={{ width: '26px', height: '26px', borderRadius: '50%', background: i === 0 ? 'var(--acc)' : 'var(--surf3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.72rem', fontWeight: 700, color: i === 0 ? '#fff' : 'var(--tx3)', flexShrink: 0 }}>{i + 1}</div>
                           <span style={{ fontWeight: 600, fontSize: '.86rem', color: 'var(--tx)' }}>{getLeadName(c)}</span>
+                          {c.re_engaged && <span style={{ fontSize: '.65rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '1px 7px', borderRadius: '999px', fontWeight: 700, letterSpacing: '.02em' }}>{'\u21BB'} Re-engaged</span>}
                         </div>
                       </td>
                       <td style={{ padding: '13px 16px', borderBottom: '1px solid var(--bdr)' }}>

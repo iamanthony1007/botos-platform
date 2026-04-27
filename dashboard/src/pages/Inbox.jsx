@@ -88,7 +88,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }, { data: progressReviews }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
       supabase.from('reviews').select('id, status, confidence').eq('bot_id', bot.id).not('customer_id', 'ilike', 'tester_%')
     ])
@@ -143,6 +143,7 @@ export default function Inbox() {
         user_sent_last: userSentLast || false,
         followed_up: c.followed_up || false,
         followup_count: c.followup_count || 0,
+        re_engaged: c.re_engaged || false,
         pending_count: 0, handoff_count: 0, latest_preview: lastLeadMsg, all_reviews: []
       }
     })
@@ -500,11 +501,12 @@ export default function Inbox() {
     await supabase.from('conversations').update({
       followup_count: newCount,
       followed_up: newCount > 0,
+      re_engaged: false,
       updated_at: new Date().toISOString()
     }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
-    setConversation(prev => prev ? { ...prev, followup_count: newCount, followed_up: true } : prev)
-    setSelectedLead(prev => prev ? { ...prev, followup_count: newCount, followed_up: true } : prev)
-    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followup_count: newCount, followed_up: true } : l))
+    setConversation(prev => prev ? { ...prev, followup_count: newCount, followed_up: true, re_engaged: false } : prev)
+    setSelectedLead(prev => prev ? { ...prev, followup_count: newCount, followed_up: true, re_engaged: false } : prev)
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followup_count: newCount, followed_up: true, re_engaged: false } : l))
     if (newCount >= 2) {
       showToast('2nd follow-up logged. Lead removed from Closest to Booking until they reply.', 'success')
     } else {
@@ -741,6 +743,7 @@ export default function Inbox() {
                       {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\uD83D\uDEA8'}</span>}
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                       {isFollowUpLead && <span style={{ fontSize: '.68rem', background: '#fff7ed', color: '#d97706', border: '1px solid #fed7aa', padding: '1px 5px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F0'} Follow up</span>}
+                      {lead.re_engaged && <span style={{ fontSize: '.68rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '999px', flexShrink: 0, fontWeight: 600 }}>{'\u21BB'} Re-engaged</span>}
                       {/* 24-hour IG window timer */}
                       {lead.user_sent_last && !lead.followed_up && lead.last_user_message_at && (() => {
                         const msLeft = (new Date(lead.last_user_message_at).getTime() + IG_WINDOW_HOURS * 3600000) - Date.now()

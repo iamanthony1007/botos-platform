@@ -787,6 +787,26 @@ var index_default = {
 
         await env.MEMORY_STORE.put(`memory:${customer_id}`, JSON.stringify(memory));
 
+        // Re-engaged check: if this lead was previously followed up (count >= 1)
+        // and they're now sending a message, mark them as re-engaged. We need the
+        // prior state because the upsert below resets followup_count to 0.
+        let wasFollowedUp = false;
+        try {
+          const priorResp = await fetch(
+            `${SUPABASE_URL}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=followup_count,re_engaged&limit=1`,
+            { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
+          );
+          if (priorResp.ok) {
+            const priorData = await priorResp.json();
+            if (priorData && priorData.length > 0) {
+              wasFollowedUp = (priorData[0].followup_count || 0) >= 1;
+              // Also preserve existing re_engaged=true so it persists across messages
+              // until the setter manually re-enters the follow-up cycle.
+              if (priorData[0].re_engaged === true) wasFollowedUp = true;
+            }
+          }
+        } catch (_) { /* non-fatal, default to false */ }
+
         ctx.waitUntil(supabaseUpsert(env, "conversations", {
           bot_id: BOT_ID,
           customer_id: String(customer_id),
@@ -805,6 +825,7 @@ var index_default = {
           running_summary: memory.running_summary,
           followed_up: false,
           followup_count: 0,
+          re_engaged: wasFollowedUp,
           updated_at: new Date().toISOString(),
           ...(username ? { username: String(username) } : {}),
           ...(profile_name ? { profile_name: String(profile_name) } : {})
