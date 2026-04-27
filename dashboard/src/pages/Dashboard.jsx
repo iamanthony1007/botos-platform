@@ -90,15 +90,30 @@ export default function Dashboard() {
       setStats({ newConversations, needsReply, highIntent, aiMessagesSent, booked, conversionRate })
       setLastUpdated(new Date())
 
+      // Closest to Booking scoring (Apr 27 2026 redesign):
+      //   - Stage rank as the primary signal (SCHEDULE > INVITE > DECISION etc)
+      //   - Intent as a multiplier (HIGH = 1.5x, MEDIUM = 1x, LOW excluded entirely)
+      //   - Recency decay: score halves roughly every 24 hours since last activity
+      //   - Soft stale penalty after 48 hours (lead hasn't moved in 2 days = lower priority)
+      //   - Hard cutoff at 120 hours (5 days of silence = remove from list, not "close to booking")
+      //   - 2+ followups already excluded
+      const HARD_CUTOFF_HOURS = 120  // 5 days
+      const SOFT_STALE_AFTER = 48    // 2 days
+      const STALE_PENALTY = 0.3      // multiplier when soft-stale
+
       const scored = allConvos
         .filter(c => c.status !== 'booked' && c.lead_intent !== 'LOW' && (c.followup_count || 0) < 2)
         .map(c => {
-          const stageScore = STAGE_PRIORITY[c.conversation_stage] ?? 0
-          const intentScore = INTENT_SCORE[c.lead_intent] ?? 0
           const hoursAgo = (Date.now() - new Date(c.updated_at).getTime()) / 3600000
-          const recencyScore = hoursAgo < 1 ? 3 : hoursAgo < 24 ? 2 : hoursAgo < 72 ? 1 : 0
-          return { ...c, _score: (stageScore * 3) + (intentScore * 2) + recencyScore }
+          if (hoursAgo > HARD_CUTOFF_HOURS) return null   // remove entirely
+          const stageScore = STAGE_PRIORITY[c.conversation_stage] ?? 0
+          const intentMultiplier = c.lead_intent === 'HIGH' ? 1.5 : c.lead_intent === 'MEDIUM' ? 1.0 : 0.5
+          const recencyDecay = Math.exp(-hoursAgo / 24)            // ~0.7 at 24h, ~0.4 at 48h, ~0.1 at 120h
+          const stalePenalty = hoursAgo > SOFT_STALE_AFTER ? STALE_PENALTY : 1.0
+          const _score = stageScore * intentMultiplier * recencyDecay * stalePenalty
+          return { ...c, _score, _hoursAgo: hoursAgo }
         })
+        .filter(c => c !== null)
         .sort((a, b) => b._score - a._score)
         .slice(0, 7)
 
