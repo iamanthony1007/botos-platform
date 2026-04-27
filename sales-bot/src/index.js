@@ -16,7 +16,7 @@ function calcTypingDelay(text) {
 }
 __name(calcTypingDelay, "calcTypingDelay");
 
-// Row 18: Em-dash sanitizer. Replaces em-dash, en-dash, double-hyphen and
+// Em-dash sanitizer. Replaces em-dash, en-dash, double-hyphen and
 // the horizontal-bar variant with a period + space. Runs on every bot message
 // before it is written to Supabase, sent to Make, or pushed to KV memory.
 function sanitizeBotMessage(text) {
@@ -31,9 +31,8 @@ function sanitizeBotMessage(text) {
 }
 __name(sanitizeBotMessage, "sanitizeBotMessage");
 
-// Row 30: Already-asked question check. Returns true if the proposed reply
-// is too similar (>= 70% token overlap) to any assistant message in the last
-// 10 turns. Used to block repeats.
+// Already-asked question check. Returns true if the proposed reply
+// is too similar (>= 70% token overlap) to any assistant message in the last 10 turns.
 function hasBotAlreadyAsked(proposed, memory) {
   if (!proposed || !memory?.messages) return false;
   const prior = memory.messages
@@ -49,7 +48,7 @@ function hasBotAlreadyAsked(proposed, memory) {
     .filter(w => w.length >= 3);
 
   const proposedTokens = new Set(tokens(proposed));
-  if (proposedTokens.size < 3) return false;  // too short to judge
+  if (proposedTokens.size < 3) return false;
 
   for (const priorMsg of prior) {
     const priorTokens = new Set(tokens(priorMsg));
@@ -63,23 +62,16 @@ function hasBotAlreadyAsked(proposed, memory) {
 }
 __name(hasBotAlreadyAsked, "hasBotAlreadyAsked");
 
-// ─────────────────────────────────────────────────────────────────────
-// fetchWithRetry
-// Calls Anthropic (or any) API with exponential backoff on transient errors.
-// Retries on: HTTP 429, 502, 503, 504, 529 and body { type: "error", error: { type: "overloaded_error" | "rate_limit_error" } }
-// Total attempts = 4 (original + 3 retries). Delays = 2s, 4s, 8s. Max ~14s before giving up.
-// Returns the final response (success or exhausted). Never throws.
+// fetchWithRetry — exponential backoff on transient errors
 async function fetchWithRetry(url, opts, maxAttempts = 4) {
   const RETRY_STATUS = [429, 502, 503, 504, 529];
   const RETRY_ERROR_TYPES = ["overloaded_error", "rate_limit_error", "api_error"];
   let lastResponse = null;
-  let lastBody = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const response = await fetch(url, opts);
 
-      // HTTP status says try again
       if (RETRY_STATUS.includes(response.status) && attempt < maxAttempts) {
         const body = await response.text();
         console.warn(`[retry] ${url} attempt ${attempt}/${maxAttempts} got ${response.status}: ${body.slice(0, 200)}`);
@@ -88,7 +80,6 @@ async function fetchWithRetry(url, opts, maxAttempts = 4) {
         continue;
       }
 
-      // 200 but body says "overloaded_error" (rare, but Anthropic occasionally wraps errors in 200s)
       const raw = await response.clone().text();
       try {
         const body = JSON.parse(raw);
@@ -100,15 +91,11 @@ async function fetchWithRetry(url, opts, maxAttempts = 4) {
         }
       } catch (_) { /* not JSON, fall through */ }
 
-      // Either success or a non-retryable error - return as-is
       return response;
     } catch (networkErr) {
-      // Network failure (DNS, TLS, socket): retry with backoff
       lastResponse = null;
-      lastBody = networkErr.message;
       console.warn(`[retry] ${url} attempt ${attempt}/${maxAttempts} network error: ${networkErr.message}`);
       if (attempt === maxAttempts) {
-        // Synthesise a response-like object so callers always get something
         return new Response(JSON.stringify({ type: "error", error: { type: "network_error", message: networkErr.message } }), {
           status: 599,
           headers: { "Content-Type": "application/json" }
@@ -122,107 +109,12 @@ async function fetchWithRetry(url, opts, maxAttempts = 4) {
 }
 __name(fetchWithRetry, "fetchWithRetry");
 
-// Detects if an error thrown from callClaude() was caused by Anthropic overload
-// (as opposed to a prompt error, parse error, etc). Used to decide whether to
-// fall back to a placeholder review row vs return 500 to Make.
-function isOverloadError(errMsg) {
-  if (!errMsg) return false;
-  const s = String(errMsg).toLowerCase();
-  return s.includes("overloaded_error") ||
-         s.includes("rate_limit_error") ||
-         s.includes("network_error") ||
-         s.includes("529") ||
-         s.includes("503") ||
-         s.includes("504") ||
-         s.includes("502");
+function isClaudeOverloaded(error) {
+  if (!error) return false;
+  const msg = String(error.message || error).toLowerCase();
+  return msg.includes("overloaded") || msg.includes("529") || msg.includes("rate_limit") || msg.includes("network_error");
 }
-__name(isOverloadError, "isOverloadError");
-
-var buildDeveloperPrompt = /* @__PURE__ */ __name((memory, messages) => {
-  return `You are responding to a golf fitness coaching prospect via Instagram DM on behalf of Bombers Blueprint.
-
-CUSTOMER MEMORY:
-${JSON.stringify(memory, null, 2)}
-
-RECENT CONVERSATION:
-${messages.map((m) => `${m.role === "user" ? "Lead" : "You"}: ${m.content}`).join("\n")}
-
-YOUR TASK:
-Step 1 -- Read the SETTER CORRECTIONS at the top of the system prompt. Is this situation similar to any of them? If yes, apply what the setter taught you.
-Step 2 -- Read the conversation. Where are we in the flow? What has been established?
-Step 3 -- Write the best next reply based on the system guidelines AND the setter corrections.
-
-=== MULTI-MESSAGE FORMAT ===
-You can split your reply into 2-3 separate messages to sound more human and natural.
-- Use multiple messages when reframing, coaching, or delivering a longer thought followed by a question
-- Each message should be short and feel like a real text
-- The LAST message should contain the question (if any)
-- Simple short replies should be a single message
-- NEVER send more than 3 messages
-- NEVER repeat a sentence, phrase, or question already used earlier in this conversation
-
-You MUST respond with ONLY a valid JSON object (no markdown, no explanation) with this EXACT structure:
-
-{
-  "conversation_stage": "HOOK / ENTRY|GOAL|DIAGNOSTIC|INSIGHT|PRIORITY|DECISION|INVITE|SCHEDULE|BOOKED|FOLLOW-UP",
-  "confidence": 0.0-1.0,
-  "messages": ["first message", "second message (optional)", "third message with question (optional)"],
-  "reply": "all messages joined into one string — for logging only",
-  "lead_intent": "LOW|MEDIUM|HIGH",
-  "primary_goal": "Distance|Pain/Injuries|Consistency|Unknown",
-  "next_action": "AUTO_SEND|SEND_TO_INBOX_REVIEW|ESCALATE_TO_HUMAN",
-  "escalation_reason": "only fill if ESCALATE_TO_HUMAN — one sentence why (e.g. lead asked for human, angry, second objection)",
-  "emotional_state": "NEUTRAL|ENGAGED|CONFUSED|SKEPTICAL|DISENGAGING|FRUSTRATED|OBJECTING",
-  "situation_clarity": 0.0,
-  "response_quality": 0.0,
-  "tags": ["relevant", "tags", "here"],
-  "internal_notes": "your reasoning -- what stage are we at, did any setter corrections apply, what are you trying to achieve with this reply",
-  "memory_update": {
-    "profile_facts": {
-      "golf_identity": "",
-      "primary_goal": "",
-      "what_theyve_tried": "",
-      "timeframe": "",
-      "current_approach_working": "",
-      "priority_level": ""
-    },
-    "running_summary": "concise summary of conversation so far"
-  }
-}
-
-LEAD INTENT CLASSIFICATION (you MUST output one of these per response):
-- LOW: Vague, just browsing, avoids answering questions, says maybe later, no pain expressed
-- MEDIUM: Has a goal, some engagement, mild frustration but no urgency, still exploring  
-- HIGH: Clear pain point, time pressure, frustration, uses buyer language, ready to act now
-
-CRITICAL RULES:
-- Reply must sound like Australian coach -- short, natural, no corporate language
-- Acknowledge then brief bridge then question when appropriate
-- NO exclamation points, minimal punctuation
-- One main question per message set (in the last message)
-- Mirror their message length or go shorter
-- If confidence < 0.75, set next_action to SEND_TO_INBOX_REVIEW
-- If lead explicitly asks for a human, or shows anger/frustration, set next_action to ESCALATE_TO_HUMAN and fill escalation_reason
-- If lead shows second objection in same conversation, set next_action to ESCALATE_TO_HUMAN
-- If lead is DISENGAGING or CONFUSED and confidence < 0.70, set next_action to ESCALATE_TO_HUMAN
-- If lead mentions a link, form, payment, or contract, set next_action to ESCALATE_TO_HUMAN
-- If lead asks a question you do not know the answer to, set next_action to ESCALATE_TO_HUMAN
-- If lead_intent is LOW, always set next_action to SEND_TO_INBOX_REVIEW
-- If lead_intent is HIGH and situation_clarity >= 0.85 and response_quality >= 0.90, set next_action to AUTO_SEND
-- If lead_intent is MEDIUM and situation_clarity >= 0.80 and response_quality >= 0.85 and stage is early (HOOK / ENTRY/GOAL/FOLLOW-UP), set next_action to AUTO_SEND
-- confidence field = (situation_clarity * 0.4) + (response_quality * 0.6) — calculate this yourself
-- NEVER set AUTO_SEND if asking a question the lead already answered
-- SETTER CORRECTIONS at the top of the system prompt OVERRIDE your defaults. Check them FIRST before responding.
-- Move through stages based on what has been established, not linearly
-- NEVER mention pricing, program details, or provide coaching advice
-- NEVER give workouts or exercises in DMs
-- NEVER repeat anything already said earlier in this conversation
-- The "reply" field must equal all messages joined with a space (for logging)
-
-Focus on: What do they want. What have they tried. Is it working. Is this a priority now. What have they tried. Is it working. Is this a priority now.`;
-}, "buildDeveloperPrompt");
-
-// Supabase helpers
+__name(isClaudeOverloaded, "isClaudeOverloaded");
 
 async function supabaseInsert(env, table, data) {
   try {
@@ -300,12 +192,7 @@ async function getBotSettings(env) {
   try {
     const response = await fetch(
       `${SUPABASE_URL}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings`,
-      {
-        headers: {
-          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-          "apikey": env.SUPABASE_SERVICE_KEY
-        }
-      }
+      { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
     );
     if (!response.ok) return { auto_send_enabled: false, system_prompt: null };
     const data = await response.json();
@@ -318,15 +205,8 @@ async function getBotSettings(env) {
 }
 __name(getBotSettings, "getBotSettings");
 
-// Stages that are safe to auto-send for MEDIUM intent leads
-const MEDIUM_INTENT_AUTO_STAGES = [
-  "HOOK / ENTRY",
-  "GOAL",
-  "FOLLOW-UP"
-];
+const MEDIUM_INTENT_AUTO_STAGES = ["HOOK / ENTRY", "GOAL", "FOLLOW-UP"];
 
-// Profile fact keys mapped to conversation stages
-// If the fact is already known, skip auto-sending that stage
 const STAGE_FACT_REQUIREMENTS = {
   "GOAL":       "primary_goal",
   "DIAGNOSTIC": "what_theyve_tried",
@@ -337,60 +217,37 @@ const STAGE_FACT_REQUIREMENTS = {
 
 function profileFactAlreadyKnown(stage, profileFacts) {
   const requiredFact = STAGE_FACT_REQUIREMENTS[stage];
-  if (!requiredFact) return false; // no requirement for this stage
+  if (!requiredFact) return false;
   const value = profileFacts?.[requiredFact];
-  return value && value !== "" && value !== "Unknown" && value !== "unknown";
+  return value && String(value).trim().length > 0;
 }
+__name(profileFactAlreadyKnown, "profileFactAlreadyKnown");
 
-function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}, memory = {}) {
-  const emotionalState = botResponse.emotional_state || "NEUTRAL";
-  const intent = botResponse.lead_intent || "LOW";
+function resolveNextAction(botResponse, autoSendEnabled, profileFacts, memory) {
+  const action = botResponse.next_action || "SEND_TO_INBOX_REVIEW";
   const stage = botResponse.conversation_stage || "";
-  const situationClarity = botResponse.situation_clarity || 0;
-  const responseQuality = botResponse.response_quality || 0;
+  const intent = botResponse.lead_intent || "LOW";
 
-  // Compute weighted confidence
-  const confidence = (situationClarity * 0.4) + (responseQuality * 0.6);
-
-  // ── 7 ESCALATION TRIGGERS ──────────────────────────────────────────────────
-  // 1. Bot explicitly decided to escalate
-  if (botResponse.next_action === "ESCALATE_TO_HUMAN") return "ESCALATE_TO_HUMAN";
-  // 2. Lead asked for a human
-  if (botResponse.escalation_reason && botResponse.escalation_reason.toLowerCase().includes("asked for human")) return "ESCALATE_TO_HUMAN";
-  // 3. Lead is angry/frustrated
-  if (emotionalState === "FRUSTRATED") return "ESCALATE_TO_HUMAN";
-  // 4. Second objection detected
-  const objectionCount = memory?.objection_count || 0;
-  if (objectionCount >= 2) return "ESCALATE_TO_HUMAN";
-  // 5. Lead disengaging AND low confidence
-  if (emotionalState === "DISENGAGING" && confidence < 0.70) return "ESCALATE_TO_HUMAN";
-  // 6. Lead confused AND very low confidence
-  if (emotionalState === "CONFUSED" && confidence < 0.60) return "ESCALATE_TO_HUMAN";
-  // 7. Unknown question or link/form/payment mentioned (bot flags this in escalation_reason)
-  if (botResponse.escalation_reason && botResponse.escalation_reason.length > 5) return "ESCALATE_TO_HUMAN";
-
-  // Auto-send must be enabled in settings
+  if (action === "ESCALATE_TO_HUMAN") return "ESCALATE_TO_HUMAN";
   if (!autoSendEnabled) return "SEND_TO_INBOX_REVIEW";
-
-  // LOW intent — always send to review
   if (intent === "LOW") return "SEND_TO_INBOX_REVIEW";
 
-  // Context check — if the info this message collects is already known, review first
-  if (profileFactAlreadyKnown(stage, profileFacts)) return "SEND_TO_INBOX_REVIEW";
+  if (intent === "MEDIUM") {
+    if (!MEDIUM_INTENT_AUTO_STAGES.includes(stage)) return "SEND_TO_INBOX_REVIEW";
+    if (profileFactAlreadyKnown(stage, profileFacts)) return "SEND_TO_INBOX_REVIEW";
+    return "AUTO_SEND";
+  }
 
-  // HIGH intent — auto-send if confidence is high
-  if (intent === "HIGH" && situationClarity >= 0.85 && responseQuality >= 0.90) return "AUTO_SEND";
+  if (intent === "HIGH") {
+    if (["INVITE", "SCHEDULE", "BOOKED", "DECISION"].includes(stage)) return "SEND_TO_INBOX_REVIEW";
+    if (profileFactAlreadyKnown(stage, profileFacts)) return "SEND_TO_INBOX_REVIEW";
+    return "AUTO_SEND";
+  }
 
-  // MEDIUM intent — auto-send only safe early stages
-  if (intent === "MEDIUM" && situationClarity >= 0.80 && responseQuality >= 0.85 && MEDIUM_INTENT_AUTO_STAGES.includes(stage)) return "AUTO_SEND";
-
-  // Everything else — review
   return "SEND_TO_INBOX_REVIEW";
 }
 __name(resolveNextAction, "resolveNextAction");
 
-
-// Send messages directly to Make Scenario 2
 async function sendToMakeScenario2(customerId, messages, typingDelays) {
   try {
     await fetch("https://hook.eu2.make.com/jknvsf64c05m0urc1f7qph523pi310st", {
@@ -406,9 +263,278 @@ async function sendToMakeScenario2(customerId, messages, typingDelays) {
     console.error("Make Scenario 2 error:", e);
   }
 }
+__name(sendToMakeScenario2, "sendToMakeScenario2");
 
-// Main Worker
+async function fetchRelevantLearnings(env, memory, limit = 30) {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/learnings?bot_id=eq.${BOT_ID}&order=created_at.desc&limit=${limit}`,
+      { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
+    );
+    if (!response.ok) { console.error("Error fetching learnings:", await response.text()); return []; }
+    const data = await response.json();
+    return data.map(l => ({
+      conversation_stage: l.conversation_stage,
+      situation_context: l.situation_context,
+      original_reply: l.original_reply,
+      edited_reply: l.corrected_reply,
+      reason: l.reason,
+      tags: l.tags || []
+    }));
+  } catch (error) {
+    console.error("Error fetching learnings:", error);
+    return [];
+  }
+}
+__name(fetchRelevantLearnings, "fetchRelevantLearnings");
 
+async function fetchActiveDocuments(env) {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&status=eq.active&select=name,content,usage_count`,
+      { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data || [];
+  } catch (error) {
+    console.error("Error fetching documents:", error);
+    return [];
+  }
+}
+__name(fetchActiveDocuments, "fetchActiveDocuments");
+
+function buildDeveloperPrompt(memory, lastMessages) {
+  const profileFactsStr = memory.profile_facts && Object.keys(memory.profile_facts).length > 0
+    ? Object.entries(memory.profile_facts).map(([k, v]) => `${k}: ${v}`).join("\n")
+    : "None collected yet";
+
+  const summaryStr = memory.running_summary || "No summary yet";
+  const ghlNote = memory.ghl_history_loaded
+    ? `\n[Historical GHL context loaded: ${memory.ghl_total_messages || 0} total messages in CRM history]`
+    : "";
+  const recoveredNote = memory.recovered_from_supabase
+    ? `\n[Memory rehydrated from Supabase — lead has prior conversation history]`
+    : "";
+
+  const conversationStr = lastMessages.map(m =>
+    `${m.role === "user" ? "LEAD" : "BOT"}: ${m.content}`
+  ).join("\n");
+
+  return `CONVERSATION SUMMARY:
+${summaryStr}${ghlNote}${recoveredNote}
+
+KNOWN PROFILE FACTS:
+${profileFactsStr}
+
+RECENT CONVERSATION:
+${conversationStr}
+
+RESPOND WITH VALID JSON ONLY. No markdown. No explanation. Just the JSON object.
+
+Required fields:
+{
+  "reply": "single joined string of all messages",
+  "messages": ["message 1", "message 2"],
+  "conversation_stage": "one of: HOOK / ENTRY | GOAL | DIAGNOSTIC | INSIGHT | PRIORITY | DECISION | INVITE | SCHEDULE | BOOKED | FOLLOW-UP",
+  "lead_intent": "LOW | MEDIUM | HIGH",
+  "next_action": "AUTO_SEND | SEND_TO_INBOX_REVIEW | ESCALATE_TO_HUMAN",
+  "internal_notes": "your analysis of situation, what stage we are at, what the lead needs next — NO em dashes",
+  "escalation_reason": null,
+  "emotional_state": "NEUTRAL | INTERESTED | OBJECTING | EXCITED | COLD",
+  "situation_clarity": 0.0-1.0,
+  "response_quality": 0.0-1.0,
+  "confidence": 0.0-1.0,
+  "primary_goal": "what the lead wants to achieve",
+  "progression_goal": "what we want the lead to do next",
+  "tags": [],
+  "memory_update": {
+    "profile_facts": {},
+    "running_summary": "updated summary"
+  }
+}
+
+Rules:
+- Check setter corrections FIRST before responding
+- Move through stages based on what has been established, not linearly
+- NEVER mention pricing, program details, or provide coaching advice
+- NEVER give workouts or exercises in DMs
+- NEVER repeat anything already said earlier in this conversation
+- NO em dashes (— or –) anywhere in your response
+- The "reply" field must equal all messages joined with a space (for logging)
+
+Focus on: What do they want. What have they tried. Is it working. Is this a priority now.`;
+}
+__name(buildDeveloperPrompt, "buildDeveloperPrompt");
+
+async function callClaude(env, memory, learnings = [], documents = [], systemPrompt, model = 'claude-sonnet-4-6', intentDefs = {}, campaignConfig = {}) {
+  const lastMessages = (memory.messages || []).slice(-10);
+
+  const learningsSection = learnings && learnings.length > 0 ? `
+═══════════════════════════════════════
+🚨 SETTER CORRECTIONS - HIGHEST PRIORITY 🚨
+═══════════════════════════════════════
+
+CRITICAL: These are REAL corrections made by human setters who reviewed your previous responses.
+Before writing ANY reply, check if this situation matches ANY of these corrections.
+If it does, APPLY THE PATTERN the setter taught you.
+
+Setter corrections OVERRIDE all default behaviors below.
+
+${learnings.map((l, i) => `
+CORRECTION ${i + 1} | Stage: ${l.conversation_stage || "General"}
+Situation: ${l.situation_context || "General conversation"}
+❌ WRONG: "${l.original_reply}"
+✅ RIGHT: "${l.edited_reply}"
+🧠 WHY: ${l.reason}
+Tags: ${l.tags && l.tags.length > 0 ? l.tags.join(", ") : "None"}`).join("\n")}
+
+═══════════════════════════════════════
+END OF SETTER CORRECTIONS
+═══════════════════════════════════════
+` : "";
+
+  const documentSection = documents && documents.length > 0 ? `
+═══════════════════════════════════════
+📚 KNOWLEDGE BASE DOCUMENTS
+═══════════════════════════════════════
+${documents.map(d => `Document: ${d.name}\n${d.content}`).join("\n\n")}
+═══════════════════════════════════════
+END OF DOCUMENTS
+═══════════════════════════════════════
+` : "";
+
+  const ab = campaignConfig.aiBehavior || {};
+  const hasAvatar = campaignConfig.avatar && campaignConfig.avatar.trim().length > 0;
+  const campaignSection = (ab && Object.keys(ab).length > 0) ? `
+=== AI BEHAVIOR CONFIG ===
+` + (ab.aiRole ? 'AI Role: ' + ab.aiRole + '\n' : '')
+    + (ab.primaryObjective ? 'Primary Objective: ' + ab.primaryObjective + '\n' : '')
+    + (ab.offerName ? 'Offer Name: ' + ab.offerName + '\n' : '')
+    + (ab.offerSummary ? 'Offer Summary: ' + ab.offerSummary + '\n' : '')
+    + (hasAvatar ? 'Target Avatar: ' + campaignConfig.avatar + '\n' : '')
+    + (ab.topPainPoints ? 'Lead Pain Points: ' + ab.topPainPoints + '\n' : '')
+    + (ab.desiredOutcomes ? 'Lead Desired Outcomes: ' + ab.desiredOutcomes + '\n' : '')
+    + (ab.qualificationCriteria ? 'Strong Lead Criteria: ' + ab.qualificationCriteria + '\n' : '')
+    + (ab.disqualifiers ? 'Disqualifiers - do NOT push these leads forward: ' + ab.disqualifiers + '\n' : '')
+    + (ab.leadCommStyle ? 'Lead Communication Style: ' + ab.leadCommStyle + ' - automatically adapt your tone, pacing, and detail level to match.\n' : '')
+    + '=== END AI BEHAVIOR CONFIG ===\n\n'
+    : "";
+
+  const finalSystemPrompt = learningsSection + documentSection + campaignSection + systemPrompt;
+
+  const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: model,
+      max_tokens: 1024,
+      system: finalSystemPrompt,
+      messages: [{ role: "user", content: buildDeveloperPrompt(memory, lastMessages) }],
+      temperature: 0.7
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Claude API error: ${error}`);
+  }
+  const data = await response.json();
+  const rawContent = data.content[0].text;
+  const cleanContent = rawContent.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(cleanContent); }
+  catch (e) { throw new Error(`Failed to parse Claude response as JSON: ${rawContent}`); }
+
+  if (!parsed.messages && !parsed.reply) throw new Error("Claude response missing required fields");
+  if (!parsed.conversation_stage || !parsed.next_action) throw new Error("Claude response missing conversation_stage or next_action");
+
+  if (!parsed.messages) parsed.messages = [parsed.reply];
+  if (!parsed.reply) parsed.reply = parsed.messages.join(" ");
+
+  // Increment document usage_count (fire and forget)
+  if (documents.length > 0) {
+    for (const doc of documents) {
+      fetch(`${SUPABASE_URL}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&name=eq.${encodeURIComponent(doc.name)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          "apikey": env.SUPABASE_SERVICE_KEY,
+          "Prefer": "return=minimal"
+        },
+        body: JSON.stringify({ usage_count: (doc.usage_count || 0) + 1 })
+      }).catch(() => {});
+    }
+  }
+
+  return parsed;
+}
+__name(callClaude, "callClaude");
+
+async function sendToSlack(env, data) {
+  if (!env.SLACK_WEBHOOK_URL) return;
+  const actionEmoji = data.action === "ESCALATE_TO_HUMAN" ? "🚨" : "⚠️";
+  const message = {
+    text: `${actionEmoji} Review Needed - ${data.action}`,
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: `${actionEmoji} ${data.action}` } },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `*Customer:*\n${data.customer_id}` },
+          { type: "mrkdwn", text: `*Stage:*\n${data.conversation_stage}` },
+          { type: "mrkdwn", text: `*Confidence:*\n${((data.confidence || 0) * 100).toFixed(0)}%` },
+          { type: "mrkdwn", text: `*Review ID:*\n${data.review_id}` }
+        ]
+      },
+      { type: "section", text: { type: "mrkdwn", text: `*Recent Messages:*\n${(data.last_messages || []).map(m => `${m.role === "user" ? "👤" : "🤖"} ${m.content}`).join("\n")}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*Bot Reply Draft:*\n${data.bot_reply}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*Internal Notes:*\n${data.internal_notes || "None"}` } }
+    ]
+  };
+  await fetch(env.SLACK_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(message)
+  });
+}
+__name(sendToSlack, "sendToSlack");
+
+async function sendFeedbackToSlack(env, data) {
+  if (!env.SLACK_WEBHOOK_URL) return;
+  const message = {
+    text: "🧠 Bot Training - New Learning Captured",
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: "🧠 Bot Learned Something New!" } },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `*Learning ID:*\n${data.review_id}` },
+          { type: "mrkdwn", text: `*Customer:*\n${data.customer_id}` },
+          { type: "mrkdwn", text: `*Stage:*\n${data.conversation_stage}` }
+        ]
+      },
+      { type: "section", text: { type: "mrkdwn", text: `*Situation:*\n${data.situation_context || "General conversation"}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*❌ Original Reply:*\n${data.original_reply}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*✅ Corrected Reply:*\n${data.edited_reply}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*🧠 Why This Matters:*\n${data.reason}` } },
+      { type: "section", text: { type: "mrkdwn", text: `*Tags:*\n${data.tags && data.tags.length > 0 ? data.tags.join(", ") : "None"}` } }
+    ]
+  };
+  await fetch(env.SLACK_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(message)
+  });
+}
+__name(sendFeedbackToSlack, "sendFeedbackToSlack");
+
+// ─── Main Worker ──────────────────────────────────────────────────────────────
 var index_default = {
   async fetch(request, env, ctx) {
     const corsHeaders = {
@@ -423,31 +549,22 @@ var index_default = {
 
     const url = new URL(request.url);
 
-    // /webhook
+    // ── /webhook ──────────────────────────────────────────────────────────────
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const body = await request.json();
         let { customer_id, message, channel = "instagram", username = null, profile_name = null } = body;
 
-        // Row 27: Sanitize string fields. ManyChat sometimes sends an unresolved
-        // variable placeholder (e.g. "{{last_input_text}}") as plain text instead
-        // of the real value. Treat any such literal as missing rather than storing
-        // the broken string. Also trim and convert empty strings to null.
-        // Also strips known sentinel values like "null" / "undefined" / "false" that
-        // ManyChat occasionally substitutes when a variable is genuinely empty.
         const cleanField = (v) => {
           if (v === null || v === undefined) return null;
           const s = String(v).trim();
           if (!s) return null;
-          if (/^{{[^}]+}}$/.test(s)) return null;          // unresolved ManyChat placeholder
+          if (/^{{[^}]+}}$/.test(s)) return null;
           if (/^(null|undefined|false|none|n\/a)$/i.test(s)) return null;
           return s;
         };
         username = cleanField(username);
         profile_name = cleanField(profile_name);
-        // Note: we do NOT clean message here because the validation below requires
-        // a non-empty message and we'd rather return a proper 400 than silently
-        // proceed with no input to Claude.
 
         if (!customer_id || !message) {
           return new Response(JSON.stringify({ error: "Missing customer_id or message" }), {
@@ -455,13 +572,6 @@ var index_default = {
             headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
-
-        // Row 27: We deliberately do NOT write a "Instagram Lead" fallback into
-        // Supabase when both username and profile_name are missing. Instead we let
-        // the dashboard's getLeadName() helper derive the display label from the
-        // channel field on the fly. This keeps the database honest (NULL means
-        // "we genuinely don't know") and lets us change display rules without
-        // running SQL migrations.
 
         const [botSettings, memoryData] = await Promise.all([
           getBotSettings(env),
@@ -489,9 +599,6 @@ var index_default = {
         let memory = memoryData || { messages: [], running_summary: "", profile_facts: {} };
 
         // ── GHL History Merge ─────────────────────────────────────────────────
-        // If this is a new lead (no KV memory) and we have their username,
-        // check Supabase for GHL historical conversation data and seed memory with it.
-        // This gives the AI and setters full context on returning leads.
         if (!memoryData && username) {
           try {
             const ghlResp = await fetch(
@@ -502,7 +609,6 @@ var index_default = {
               const ghlData = await ghlResp.json();
               if (ghlData && ghlData.length > 0 && ghlData[0].messages && ghlData[0].messages.length > 0) {
                 const ghlRecord = ghlData[0];
-                // Seed memory with GHL history — keep last 30 messages as context
                 const historicalMsgs = (ghlRecord.messages || []).slice(-30);
                 memory.messages = historicalMsgs;
                 memory.running_summary = ghlRecord.running_summary || "";
@@ -514,17 +620,10 @@ var index_default = {
             }
           } catch (ghlErr) {
             console.error("GHL history lookup error:", ghlErr);
-            // Non-fatal — continue without history
           }
         }
 
-        // ── Bug 6: Supabase conversations fallback ────────────────────────────
-        // If KV memory is empty AND GHL didn't seed anything, look up the lead's
-        // own conversation row in Supabase and seed from there. This fixes the
-        // case where KV memory was lost (eviction, region inconsistency, manual
-        // delete) and the stage guardrail at line ~714 would otherwise downgrade
-        // a SCHEDULE-stage lead back to HOOK / ENTRY because it sees only 1 user
-        // message in memory. We are the source of truth, not the cache.
+        // ── Supabase conversations fallback (KV eviction recovery) ────────────
         if (!memoryData && memory.messages.length === 0 && customer_id) {
           try {
             const convResp = await fetch(
@@ -535,7 +634,6 @@ var index_default = {
               const convData = await convResp.json();
               if (convData && convData.length > 0 && Array.isArray(convData[0].messages) && convData[0].messages.length > 0) {
                 const record = convData[0];
-                // Same window the Worker normally keeps in memory (15 messages)
                 const recentMsgs = record.messages.slice(-15);
                 memory.messages = recentMsgs;
                 memory.running_summary = record.running_summary || "";
@@ -546,21 +644,16 @@ var index_default = {
             }
           } catch (rehydrateErr) {
             console.error("Supabase memory rehydrate error:", rehydrateErr);
-            // Non-fatal — continue without history
           }
         }
 
-        // Handle tester init — don't add the trigger to memory, just get opening message
         const isTesterInit = message === "__tester_init__";
         if (!isTesterInit) {
           memory.messages.push({ role: "user", content: message, timestamp: Date.now() });
           if (memory.messages.length > 15) memory.messages = memory.messages.slice(-15);
         }
 
-        // ── Message batching ─────────────────────────────────────────────────
-        // If a lead sends multiple messages within 60 seconds, batch them into
-        // one AI response instead of creating separate reviews for each.
-        // Check if there's a pending review created in the last 60 seconds.
+        // ── Message batching (60s window) ─────────────────────────────────────
         let batchReviewId = null;
         if (!isTesterInit) {
           try {
@@ -573,8 +666,7 @@ var index_default = {
               const batchData = await batchResp.json();
               if (batchData && batchData.length > 0) {
                 batchReviewId = batchData[0].id;
-                console.log(`Batching: found recent pending review ${batchReviewId} for ${customer_id}, will update instead of creating new`);
-                // Remove the previous assistant message from memory since we're regenerating
+                console.log(`Batching: found recent pending review ${batchReviewId} for ${customer_id}`);
                 const lastAssistantIdx = memory.messages.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i >= 0).pop();
                 if (lastAssistantIdx !== undefined && lastAssistantIdx >= 0) {
                   memory.messages.splice(lastAssistantIdx, 1);
@@ -585,11 +677,7 @@ var index_default = {
             console.error("Batch check error:", batchErr);
           }
 
-          // ── Auto-discard stale pending reviews ─────────────────────────────
-          // If this is NOT a batched message (no recent pending review found),
-          // discard ALL old pending reviews for this lead. They are outdated
-          // because the conversation has moved on or the lead was responded
-          // to outside the system.
+          // Auto-discard stale pending reviews
           if (!batchReviewId) {
             try {
               const discardResp = await fetch(
@@ -609,9 +697,7 @@ var index_default = {
                   })
                 }
               );
-              if (discardResp.ok) {
-                console.log(`Auto-discarded old pending reviews for ${customer_id}`);
-              }
+              if (discardResp.ok) console.log(`Auto-discarded old pending reviews for ${customer_id}`);
             } catch (discardErr) {
               console.error("Auto-discard error:", discardErr);
             }
@@ -623,42 +709,85 @@ var index_default = {
           fetchActiveDocuments(env)
         ]);
 
-        const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
-        if (!botResponse || (!botResponse.reply && !botResponse.messages)) throw new Error("Invalid bot response structure");
+        let botResponse;
+        try {
+          botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
+          if (!botResponse || (!botResponse.reply && !botResponse.messages)) throw new Error("Invalid bot response structure");
+        } catch (error) {
+          // Claude overload fallback — create placeholder review so lead isn't dropped
+          if (isClaudeOverloaded(error)) {
+            const customerId = customer_id;
+            const leadMsg = message;
+            const placeholderId = `review_${Date.now()}_overload`;
+            ctx.waitUntil(supabaseInsert(env, "reviews", {
+              id: placeholderId,
+              bot_id: BOT_ID,
+              customer_id: String(customerId),
+              action_type: "ESCALATE_TO_HUMAN",
+              status: "pending",
+              bot_reply: "[Claude API overloaded — please reply to this lead manually]",
+              bot_messages: ["[Claude API overloaded — please reply to this lead manually]"],
+              internal_notes: `[System: Claude API was overloaded after 4 retry attempts. Lead message: "${String(leadMsg).slice(0, 300)}". No AI reply generated. Please reply manually. Original error: ${String(error.message).slice(0, 300)}]`,
+              created_at: new Date().toISOString()
+            }));
+            ctx.waitUntil(supabaseUpsert(env, "conversations", {
+              bot_id: BOT_ID,
+              customer_id: customerId,
+              username: username || null,
+              profile_name: profile_name || null,
+              followed_up: false,
+              followup_count: 0,
+              updated_at: new Date().toISOString()
+            }, "bot_id,customer_id"));
+            if (env.SLACK_WEBHOOK_URL) {
+              ctx.waitUntil(fetch(env.SLACK_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  text: "⚠️ Claude API overloaded - lead routed to inbox for manual reply",
+                  blocks: [
+                    { type: "header", text: { type: "plain_text", text: "⚠️ Claude API Overloaded" } },
+                    { type: "section", fields: [
+                      { type: "mrkdwn", text: `*Customer:*\n${customerId || "unknown"}` },
+                      { type: "mrkdwn", text: `*Username:*\n${username || "unknown"}` }
+                    ]},
+                    { type: "section", text: { type: "mrkdwn", text: `*Lead message:*\n${(leadMsg || "(unknown)").slice(0, 400)}` } },
+                    { type: "section", text: { type: "mrkdwn", text: `*Error:*\n${String(error.message).slice(0, 300)}` } }
+                  ]
+                })
+              }).catch(() => {}));
+            }
+            return new Response(JSON.stringify({ status: "overload_fallback", message: "Claude API overloaded. Lead saved to inbox for manual reply." }), {
+              status: 200,
+              headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+          }
+          throw error;
+        }
 
-        // Bug 2: Sanitize internal_notes (the AI Insight panel text) using the same
-        // em-dash rules as bot messages. Previously the sanitiser only ran on the
-        // outgoing message text, so em-dashes leaked into the AI Insight display
-        // even though the public-facing reply was clean.
+        // Sanitize internal_notes (AI Insight panel)
         if (botResponse.internal_notes) {
           botResponse.internal_notes = sanitizeBotMessage(botResponse.internal_notes);
         }
 
-        // ── Multi-message normalisation ────────────────────────────────────
-        // Use messages array if provided, otherwise fall back to single reply
+        // Multi-message normalisation
         const rawMessages = Array.isArray(botResponse.messages) && botResponse.messages.length > 0
           ? botResponse.messages
           : [botResponse.reply];
 
-        // Deduplicate — safety net for the glitch where bot repeats itself
         const dedupedMessagesRaw = rawMessages.filter((msg, idx, arr) =>
           arr.findIndex(m => m.trim().toLowerCase() === msg.trim().toLowerCase()) === idx
         );
 
-        // Row 18: Sanitize every outgoing message to remove em-dashes before any storage or send
         const dedupedMessages = dedupedMessagesRaw
           .map(m => sanitizeBotMessage(m))
           .filter(m => m && m.length > 0);
 
-        // Calculate typing delay per message
         const typingDelays = dedupedMessages.map(msg => calcTypingDelay(msg));
         const totalDelay = typingDelays.reduce((a, b) => a + b, 0);
-
-        // Primary reply = all messages joined (for memory + logging)
         const joinedReply = dedupedMessages.join(" ");
 
-        // Row 30: If the proposed reply repeats a question the bot already asked,
-        // downgrade to review so a setter can rewrite it instead of auto-sending.
+        // Repeated-question guard
         const alreadyAsked = hasBotAlreadyAsked(joinedReply, memory);
         if (alreadyAsked) {
           botResponse.next_action = "SEND_TO_INBOX_REVIEW";
@@ -666,14 +795,11 @@ var index_default = {
             " [System: Repeated-question guard triggered - bot was about to ask something already asked in the last 10 turns]";
         }
 
-        // ── Intent classification from lead's last message ─────────────────
-        // Intent must reflect the LEAD's words, not the bot's response.
-        // We re-score here using the lead's actual last message as the source of truth.
+        // Intent classification from lead's actual message
         const lastUserMessage = (message || "").toLowerCase();
         const stage = (botResponse.conversation_stage || "").toUpperCase();
 
         function classifyIntentFromLeadMessage(msg, stage) {
-          // HIGH intent signals — lead's own words showing urgency or commitment
           const highSignals = [
             /bomber/i,
             /back pain|knee pain|hip pain|shoulder pain/i,
@@ -686,7 +812,6 @@ var index_default = {
             /restrict|can.t rotate|can.t swing/i,
             /high priority|urgent/i
           ];
-          // LOW intent signals — delay, vague, or avoidance language
           const lowSignals = [
             /just curious|just browsing|just looking/i,
             /maybe later|sometime this year|eventually/i,
@@ -695,7 +820,6 @@ var index_default = {
             /saw your post/i,
             /not sure yet|just exploring/i
           ];
-          // MEDIUM intent signals — interested but no urgency
           const mediumSignals = [
             /improve consistency|more distance|reduce pain|move better/i,
             /interested in your program|wanted more info|heard about/i,
@@ -703,20 +827,17 @@ var index_default = {
             /I.d like to|I would like to|I want to work on/i
           ];
 
-          const isHigh = highSignals.some(r => r.test(msg));
-          const isMedium = !isHigh && mediumSignals.some(r => r.test(msg));
-          const isLow = lowSignals.some(r => r.test(msg));
-
-          // Stage-based overrides for late stages
           if (["SCHEDULE", "BOOKED"].includes(stage)) return "HIGH";
           if (stage === "FOLLOW-UP") return "LOW";
           if (stage === "INVITE") return "MEDIUM";
 
+          const isHigh = highSignals.some(r => r.test(msg));
+          const isMedium = !isHigh && mediumSignals.some(r => r.test(msg));
+          const isLow = lowSignals.some(r => r.test(msg));
+
           if (isHigh) return "HIGH";
           if (isMedium) return "MEDIUM";
           if (isLow) return "LOW";
-
-          // Fall back to Claude's classification if no signals detected
           return null;
         }
 
@@ -729,16 +850,13 @@ var index_default = {
           }
         }
 
-        // Safety net: cannot be HIGH on first message unless bomber or strong pain signal
         const userMessageCount = memory.messages.filter(m => m.role === "user").length;
         if (userMessageCount <= 1 && botResponse.lead_intent === "HIGH" && detectedIntent !== "HIGH") {
           botResponse.lead_intent = "LOW";
           botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Intent reset to LOW - first message, no high-intent signals detected]";
         }
 
-        // ── Stage classification guardrail ────────────────────────────────
-        // Prevent AI from over-classifying stage on shallow conversations.
-        // Early stages only until enough conversation depth exists.
+        // Stage guardrail
         const EARLY_STAGES = ["HOOK / ENTRY", "GOAL", "DIAGNOSTIC"];
         const MID_STAGES = ["HOOK / ENTRY", "GOAL", "DIAGNOSTIC", "INSIGHT", "PRIORITY"];
         const currentStage = botResponse.conversation_stage || "";
@@ -757,7 +875,7 @@ var index_default = {
           botResponse.internal_notes = (botResponse.internal_notes || "") + ` [System: Stage capped from ${originalStage} to INSIGHT - only ${userMessageCount} user messages]`;
         }
 
-        // ── Memory update ──────────────────────────────────────────────────
+        // Memory update
         const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts, memory);
 
@@ -780,17 +898,16 @@ var index_default = {
           }
         }
 
-        // Track objection count for escalation trigger #4
         if (botResponse.emotional_state === "OBJECTING") {
           memory.objection_count = (memory.objection_count || 0) + 1;
         }
 
         await env.MEMORY_STORE.put(`memory:${customer_id}`, JSON.stringify(memory));
 
-        // Re-engaged check: if this lead was previously followed up (count >= 1)
-        // and they're now sending a message, mark them as re-engaged. We need the
-        // prior state because the upsert below resets followup_count to 0.
+        // ── FIX: Preserve followup_count — do NOT reset to 0 on every message ──
+        // Read the existing count first, then write it back unchanged.
         let wasFollowedUp = false;
+        let priorFollowupCount = 0;
         try {
           const priorResp = await fetch(
             `${SUPABASE_URL}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=followup_count,re_engaged&limit=1`,
@@ -799,23 +916,16 @@ var index_default = {
           if (priorResp.ok) {
             const priorData = await priorResp.json();
             if (priorData && priorData.length > 0) {
-              wasFollowedUp = (priorData[0].followup_count || 0) >= 1;
-              // Also preserve existing re_engaged=true so it persists across messages
-              // until the setter manually re-enters the follow-up cycle.
-              if (priorData[0].re_engaged === true) wasFollowedUp = true;
+              priorFollowupCount = priorData[0].followup_count || 0;
+              wasFollowedUp = priorFollowupCount >= 1 || priorData[0].re_engaged === true;
             }
           }
-        } catch (_) { /* non-fatal, default to false */ }
+        } catch (_) { /* non-fatal, default to 0 */ }
 
         ctx.waitUntil(supabaseUpsert(env, "conversations", {
           bot_id: BOT_ID,
           customer_id: String(customer_id),
           channel,
-          // Bug 1 fix: status='booked' should ONLY be set when stage is BOOKED.
-          // Previously this also fired on SCHEDULE which inflated the booked count
-          // and silently filtered leads out of Closest to Booking. Mark Booked is
-          // now exclusively a manual action (via the dashboard button) or set when
-          // the AI itself promotes the stage to BOOKED.
           status: botResponse.conversation_stage === "BOOKED" ? "booked" : "active",
           lead_intent: botResponse.lead_intent || "LOW",
           primary_goal: botResponse.primary_goal || null,
@@ -823,15 +933,14 @@ var index_default = {
           messages: memory.messages,
           profile_facts: memory.profile_facts,
           running_summary: memory.running_summary,
-          followed_up: false,
-          followup_count: 0,
+          followed_up: wasFollowedUp,
+          followup_count: priorFollowupCount,
           re_engaged: wasFollowedUp,
           updated_at: new Date().toISOString(),
           ...(username ? { username: String(username) } : {}),
           ...(profile_name ? { profile_name: String(profile_name) } : {})
         }, "bot_id,customer_id"));
 
-        // ── DEBUG: track review insert result ──────────────────────────────
         let reviewResult = { success: false, error: "no_review_path_hit" };
         let review_id_final = review_id;
 
@@ -849,7 +958,6 @@ var index_default = {
           });
 
           if (batchReviewId) {
-            // Batching: update existing pending review with regenerated AI response
             reviewResult = await supabaseUpdate(env, "reviews", batchReviewId, {
               action_type: finalAction,
               conversation_stage: botResponse.conversation_stage || null,
@@ -865,7 +973,6 @@ var index_default = {
               ...(username ? { username: String(username) } : {}),
               ...(profile_name ? { profile_name: String(profile_name) } : {})
             });
-            // Use the batch review ID for the response
             review_id_final = batchReviewId;
           } else {
             reviewResult = await supabaseInsert(env, "reviews", {
@@ -890,11 +997,9 @@ var index_default = {
           }
         }
 
-        // AUTO_SEND — send via Scenario 2 directly + write review record
         if (finalAction === "AUTO_SEND") {
           ctx.waitUntil(sendToMakeScenario2(String(customer_id), dedupedMessages, typingDelays));
           if (batchReviewId) {
-            // Batching: update existing review to auto_sent
             reviewResult = await supabaseUpdate(env, "reviews", batchReviewId, {
               action_type: "AUTO_SEND",
               conversation_stage: botResponse.conversation_stage || null,
@@ -937,17 +1042,11 @@ var index_default = {
           review_id: review_id_final,
           customer_id,
           user_message: message,
-
-          // Always empty — Worker never sends via Scenario 1
-          // AUTO_SEND goes via Scenario 2 directly. Manual approval goes via inbox -> Scenario 2
           messages: [],
           typing_delays_ms: [],
           total_delay_ms: 0,
           message_count: 0,
-
-          // Full response for Tester and integrations
           bot_reply: joinedReply,
-
           conversation_stage: botResponse.conversation_stage,
           decision_type: botResponse.decision_type || null,
           confidence: botResponse.confidence,
@@ -962,8 +1061,6 @@ var index_default = {
             timestamp: new Date(m.timestamp).toLocaleString()
           })),
           timestamp: new Date().toLocaleString(),
-
-          // ── DEBUG INFO (remove after fixing) ──────────────────────────────
           debug: {
             review_insert: reviewResult,
             final_action: finalAction,
@@ -981,247 +1078,93 @@ var index_default = {
 
       } catch (error) {
         console.error("Webhook error:", error);
-
-        // If Claude was overloaded (even after retries) or the network failed,
-        // don't drop the lead. Create a placeholder review row so the setter
-        // sees the inbound message in the inbox and can reply manually, and
-        // fire a Slack alert so Anthony/Nella know in real time.
-        if (isOverloadError(error?.message)) {
-          try {
-            const body = request._cachedBody || null;   // may not exist
-            // Reparse the original request body to grab customer_id + message
-            let customerId = null, username = null, profileName = null, leadMsg = null;
-            try {
-              const clone = await request.clone().json();
-              customerId = String(clone.customer_id || clone.user_id || "");
-              const rawUsername = clone.ig_username || clone.username || null;
-              const rawProfile = clone.profile_name || clone.name || null;
-              // Row 27: same sanitiser as the main path - reject literal {{...}} placeholders
-              const cleanFallback = (v) => {
-                if (v === null || v === undefined) return null;
-                const s = String(v).trim();
-                if (!s) return null;
-                if (/^{{[^}]+}}$/.test(s)) return null;
-                if (/^(null|undefined|false|none|n\/a)$/i.test(s)) return null;
-                return s;
-              };
-              username = cleanFallback(rawUsername);
-              profileName = cleanFallback(rawProfile);
-              leadMsg = clone.last_input_text || clone.message || clone.text || null;
-            } catch (_) { /* request already consumed, best-effort */ }
-
-            const BOT_ID = "00000000-0000-0000-0000-000000000002";
-            if (customerId) {
-              ctx.waitUntil(supabaseInsert(env, "reviews", {
-                bot_id: BOT_ID,
-                customer_id: customerId,
-                username: username || null,
-                profile_name: profileName || null,
-                status: "pending",
-                original_reply: "",
-                bot_messages: [],
-                typing_delays: [],
-                conversation_stage: "UNKNOWN",
-                confidence: 0,
-                lead_intent: "UNKNOWN",
-                internal_notes: `[System: Claude API overloaded after 4 attempts. No AI reply generated. Please reply manually. Original error: ${String(error.message).slice(0, 300)}]`,
-                created_at: new Date().toISOString()
-              }));
-
-              // Also bump conversations.updated_at so the lead surfaces in the inbox
-              ctx.waitUntil(supabaseUpsert(env, "conversations", {
-                bot_id: BOT_ID,
-                customer_id: customerId,
-                username: username || null,
-                profile_name: profileName || null,
-                followed_up: false,
-                followup_count: 0,
-                updated_at: new Date().toISOString()
-              }, "bot_id,customer_id"));
-            }
-
-            // Fire-and-forget Slack alert
-            if (env.SLACK_WEBHOOK_URL) {
-              ctx.waitUntil(fetch(env.SLACK_WEBHOOK_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  text: "⚠️ Claude API overloaded - lead routed to inbox for manual reply",
-                  blocks: [
-                    { type: "header", text: { type: "plain_text", text: "⚠️ Claude API Overloaded" } },
-                    { type: "section", fields: [
-                      { type: "mrkdwn", text: `*Customer:*\n${customerId || "unknown"}` },
-                      { type: "mrkdwn", text: `*Username:*\n${username || "unknown"}` }
-                    ]},
-                    { type: "section", text: { type: "mrkdwn", text: `*Lead message:*\n${(leadMsg || "(unknown)").slice(0, 400)}` } },
-                    { type: "section", text: { type: "mrkdwn", text: `*What happened:*\nClaude returned overload error after 4 retry attempts. A placeholder review has been created in the inbox. Please reply to this lead manually.` } },
-                    { type: "section", text: { type: "mrkdwn", text: `*Error:*\n${String(error.message).slice(0, 300)}` } }
-                  ]
-                })
-              }).catch(() => {}));
-            }
-
-            // Tell Make the request succeeded, so it doesn't retry and fire a duplicate placeholder
-            return new Response(JSON.stringify({
-              status: "overload_fallback",
-              message: "Claude API overloaded. Lead saved to inbox for manual reply."
-            }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-          } catch (fallbackErr) {
-            console.error("Overload fallback itself failed:", fallbackErr);
-            // fall through to the generic 500
-          }
-        }
-
-        return new Response(JSON.stringify({ error: error.message }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        return new Response(JSON.stringify({ error: "Internal server error", details: error.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
       }
     }
 
-    // /feedback
-    if (url.pathname === "/feedback" && request.method === "POST") {
+    // ── /train ────────────────────────────────────────────────────────────────
+    if (url.pathname === "/train" && request.method === "POST") {
       try {
         const body = await request.json();
-        const { review_id, customer_id, original_reply, edited_reply, reason, conversation_stage, situation_context, tags } = body;
-        if (!review_id || !customer_id || !edited_reply || !reason) {
-          return new Response(JSON.stringify({ error: "Missing required fields" }), {
+        const { customer_id, review_id, original_reply, corrected_reply, conversation_stage, situation_context, tags } = body;
+        if (!original_reply || !corrected_reply) {
+          return new Response(JSON.stringify({ error: "Missing original_reply or corrected_reply" }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
           });
         }
 
-        const feedbackKey = `feedback:${review_id}`;
-        const feedbackData = {
-          review_id, customer_id, original_reply, edited_reply, reason,
-          conversation_stage: conversation_stage || "UNKNOWN",
-          situation_context: situation_context || "",
-          tags: tags || [],
-          timestamp: Date.now(),
-          learning_extracted: true
-        };
-        await env.MEMORY_STORE.put(feedbackKey, JSON.stringify(feedbackData));
-        await env.MEMORY_STORE.put(`learning_index:${Date.now()}`, JSON.stringify({
-          feedback_key: feedbackKey, stage: conversation_stage, timestamp: Date.now()
-        }), { expirationTtl: 90 * 24 * 60 * 60 });
+        const explainResponse = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": env.ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01"
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 1024,
+            system: `You are an expert sales psychology coach specializing in NEPQ (Neuro-Emotional Persuasion Questioning). Explain the psychological reasoning behind the correction so the AI can learn the pattern. Your explanation should: identify the psychological mistake in the original, explain what the corrected version does better, state the pattern for future situations, be 2-4 sentences, focus on NEPQ principles. Return ONLY valid JSON: { "reason": "your explanation" }`,
+            messages: [
+              { role: "user", content: `Stage: ${conversation_stage || "Unknown"}\nContext:\n${situation_context || "Not provided"}\nOriginal: "${original_reply}"\nCorrected: "${corrected_reply}"` }
+            ],
+            temperature: 0.4
+          })
+        });
+        if (!explainResponse.ok) throw new Error(`Claude error: ${await explainResponse.text()}`);
+        const explainData = await explainResponse.json();
+        const rawText = explainData.content[0].text;
+        const cleanText = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+        const parsed = JSON.parse(cleanText);
 
-        await sendFeedbackToSlack(env, feedbackData);
-
-        ctx.waitUntil(supabaseInsert(env, "learnings", {
-          bot_id: BOT_ID, customer_id: String(customer_id), review_id,
-          conversation_stage: conversation_stage || "UNKNOWN",
-          situation_context: situation_context || "",
-          original_reply: original_reply || "",
-          corrected_reply: edited_reply, reason,
-          tags: tags || [], source: "inbox",
-          created_at: new Date().toISOString()
-        }));
-
-        ctx.waitUntil(fetch(`${SUPABASE_URL}/rest/v1/reviews?id=eq.${review_id}`, {
-          method: "PATCH",
+        const learningResp = await fetch(`${SUPABASE_URL}/rest/v1/learnings`, {
+          method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
             "apikey": env.SUPABASE_SERVICE_KEY,
             "Prefer": "return=minimal"
           },
-          body: JSON.stringify({ status: "edited", final_reply: edited_reply, resolved_at: new Date().toISOString() })
+          body: JSON.stringify({
+            bot_id: BOT_ID,
+            customer_id: customer_id || null,
+            review_id: review_id || null,
+            conversation_stage: conversation_stage || null,
+            situation_context: situation_context || null,
+            original_reply,
+            corrected_reply,
+            reason: parsed.reason,
+            tags: tags || [],
+            source: "inbox_edit",
+            created_at: new Date().toISOString()
+          })
+        });
+        if (!learningResp.ok) throw new Error(`Supabase error: ${await learningResp.text()}`);
+
+        ctx.waitUntil(sendFeedbackToSlack(env, {
+          review_id, customer_id, conversation_stage,
+          situation_context, original_reply, edited_reply: corrected_reply,
+          reason: parsed.reason, tags: tags || []
         }));
 
-        return new Response(JSON.stringify({ success: true, message: "Bot learned from your edit!", learning_id: review_id }), {
+        return new Response(JSON.stringify({ success: true, reason: parsed.reason }), {
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
-
       } catch (error) {
-        console.error("Feedback error:", error);
+        console.error("Train error:", error);
         return new Response(JSON.stringify({ error: error.message }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
       }
     }
 
-    // /train
-    if (url.pathname === "/train" && request.method === "POST") {
-      try {
-        const body = await request.json();
-        const { current_prompt, instruction } = body;
-        if (!instruction || !current_prompt) {
-          return new Response(JSON.stringify({ error: "Missing instruction or current_prompt" }), {
-            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
-          });
-        }
-
-        // Build the user message — keep prompt and instruction clearly separated
-        const userMessage = [
-          "CURRENT SYSTEM PROMPT (do not alter structure, only apply the instruction below):",
-          "---BEGIN PROMPT---",
-          current_prompt,
-          "---END PROMPT---",
-          "",
-          "INSTRUCTION: " + instruction,
-          "",
-          "Return ONLY a raw JSON object (no markdown fences, no explanation outside the JSON) with these exact keys:",
-          '{ "updated_prompt": "...", "explanation": "...", "changes": ["..."], "needs_clarification": false }'
-        ].join("\n");
-
-        const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": env.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01"
-          },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-6",
-            max_tokens: 8000,
-            system: "You are a prompt engineering assistant. You receive a system prompt and a plain-English instruction. Make ONLY the requested change. Preserve all formatting. Return a raw JSON object with keys: updated_prompt, explanation, changes (array), needs_clarification (bool). If clarification is needed set needs_clarification to true and add a question key. Output NOTHING except the JSON object — no markdown, no preamble.",
-            messages: [
-              { role: "user", content: userMessage }
-            ],
-            temperature: 0.2
-          })
-        });
-
-        if (!response.ok) throw new Error(`Claude error: ${await response.text()}`);
-        const data = await response.json();
-        const rawText = data.content[0].text.trim();
-
-        // Strip markdown fences if Claude added them
-        const cleanText = rawText
-          .replace(/^```json\s*/i, '')
-          .replace(/^```\s*/i, '')
-          .replace(/```\s*$/i, '')
-          .trim();
-
-        let parsed;
-        try {
-          parsed = JSON.parse(cleanText);
-        } catch (parseErr) {
-          // JSON.parse failed — likely special chars in updated_prompt
-          // Return the raw text so the dashboard can still show what changed
-          console.error("Train JSON parse error:", parseErr.message);
-          return new Response(JSON.stringify({
-            error: "parse_error",
-            raw_response: cleanText,
-            message: "Claude responded but the JSON could not be parsed. The prompt may contain special characters."
-          }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-        }
-
-        return new Response(JSON.stringify(parsed), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      } catch (error) {
-        console.error("Train error:", error);
-        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-    }
-
-    // /explain-learning
+    // ── /explain-learning ─────────────────────────────────────────────────────
     if (url.pathname === "/explain-learning" && request.method === "POST") {
       try {
         const body = await request.json();
         const { original_reply, corrected_reply, conversation_stage, recent_context } = body;
-        if (!original_reply || !corrected_reply) {
-          return new Response(JSON.stringify({ error: "Missing original_reply or corrected_reply" }), {
-            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
-          });
-        }
         const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -1231,8 +1174,8 @@ var index_default = {
           },
           body: JSON.stringify({
             model: "claude-sonnet-4-6",
-            max_tokens: 512,
-            system: `You are a sales psychology expert analysing corrections made to an AI appointment setter for a golf fitness coaching business. Explain the psychological reasoning behind the correction so the AI can learn the pattern. Your explanation should: identify the psychological mistake in the original, explain what the corrected version does better, state the pattern for future situations, be 2-4 sentences, focus on NEPQ principles. Return ONLY valid JSON: { "reason": "your explanation" }`,
+            max_tokens: 1024,
+            system: `You are an expert sales psychology coach specializing in NEPQ. Explain the psychological reasoning behind the correction so the AI can learn the pattern. Return ONLY valid JSON: { "reason": "your explanation" }`,
             messages: [
               { role: "user", content: `Stage: ${conversation_stage || "Unknown"}\nContext:\n${recent_context || "Not provided"}\nOriginal: "${original_reply}"\nCorrected: "${corrected_reply}"` }
             ],
@@ -1251,7 +1194,7 @@ var index_default = {
       }
     }
 
-    // /extract-document
+    // ── /extract-document ─────────────────────────────────────────────────────
     if (url.pathname === "/extract-document" && request.method === "POST") {
       try {
         const body = await request.json();
@@ -1312,14 +1255,13 @@ var index_default = {
         return new Response(JSON.stringify({ content, word_count: content.split(/\s+/).length }), {
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
-
       } catch (error) {
         console.error("Extract-document error:", error);
         return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }
 
-    // /learnings
+    // ── /learnings ────────────────────────────────────────────────────────────
     if (url.pathname === "/learnings" && request.method === "GET") {
       try {
         const allLearnings = await fetchRelevantLearnings(env, {}, 50);
@@ -1331,10 +1273,16 @@ var index_default = {
       }
     }
 
-
-    // /health
+    // ── /health ───────────────────────────────────────────────────────────────
     if (url.pathname === "/health") {
-      return new Response(JSON.stringify({ status: "ok", learning_enabled: true, supabase_connected: true, documents_enabled: true, multi_message: true }), {
+      return new Response(JSON.stringify({
+        status: "ok",
+        learning_enabled: true,
+        supabase_connected: true,
+        documents_enabled: true,
+        multi_message: true,
+        followup_count_fix: true
+      }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
@@ -1342,266 +1290,6 @@ var index_default = {
     return new Response("Not Found", { status: 404, headers: corsHeaders });
   }
 };
-
-// Helpers
-
-async function fetchRelevantLearnings(env, memory, limit = 30) {
-  try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/learnings?bot_id=eq.${BOT_ID}&order=created_at.desc&limit=${limit}`,
-      {
-        headers: {
-          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-          "apikey": env.SUPABASE_SERVICE_KEY
-        }
-      }
-    );
-    if (!response.ok) {
-      console.error("Error fetching learnings from Supabase:", await response.text());
-      return [];
-    }
-    const data = await response.json();
-    return data.map(l => ({
-      conversation_stage: l.conversation_stage,
-      situation_context: l.situation_context,
-      original_reply: l.original_reply,
-      edited_reply: l.corrected_reply,
-      reason: l.reason,
-      tags: l.tags || []
-    }));
-  } catch (error) {
-    console.error("Error fetching learnings:", error);
-    return [];
-  }
-}
-__name(fetchRelevantLearnings, "fetchRelevantLearnings");
-
-async function fetchActiveDocuments(env) {
-  try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&status=eq.active&select=name,content,usage_count`,
-      {
-        headers: {
-          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-          "apikey": env.SUPABASE_SERVICE_KEY
-        }
-      }
-    );
-    if (!response.ok) return [];
-    const data = await response.json();
-    return data || [];
-  } catch (error) {
-    console.error("Error fetching documents:", error);
-    return [];
-  }
-}
-__name(fetchActiveDocuments, "fetchActiveDocuments");
-
-async function callClaude(env, memory, learnings = [], documents = [], systemPrompt, model = 'claude-sonnet-4-6', intentDefs = {}, campaignConfig = {}) {
-  const lastMessages = (memory.messages || []).slice(-10);
-
-  const learningsSection = learnings && learnings.length > 0 ? `
-═══════════════════════════════════════
-🚨 SETTER CORRECTIONS - HIGHEST PRIORITY 🚨
-═══════════════════════════════════════
-
-CRITICAL: These are REAL corrections made by human setters who reviewed your previous responses.
-Before writing ANY reply, check if this situation matches ANY of these corrections.
-If it does, APPLY THE PATTERN the setter taught you.
-
-Setter corrections OVERRIDE all default behaviors below.
-
-${learnings.map((l, i) => `
-CORRECTION ${i + 1} | Stage: ${l.conversation_stage || "General"}
-Situation: ${l.situation_context || "General conversation"}
-❌ WRONG: "${l.original_reply}"
-✅ RIGHT: "${l.edited_reply}"
-🧠 WHY: ${l.reason}
-Tags: ${l.tags && l.tags.length > 0 ? l.tags.join(", ") : "None"}
----`).join("\n")}
-
-PATTERNS TO LOOK FOR:
-- If setter shortened reply → you were too long
-- If setter added empathy → you were too clinical
-- If setter removed question → you were moving too fast
-- If setter changed question style → yours was too robotic or salesy
-- If setter split into multiple messages → do the same in similar situations
-
-These corrections define what good looks like. They are LAW.
-═══════════════════════════════════════
-
-` : "";
-
-  const documentSection = documents.length > 0
-    ? `\n\n═══════════════════════════════════════
-KNOWLEDGE BASE DOCUMENTS - USE AS REFERENCE
-═══════════════════════════════════════
-
-The following documents contain information about the coaching program. Reference them when relevant.
-Do NOT quote verbatim. Use natural language.
-
-${documents.map((d, i) => `DOCUMENT ${i + 1}: ${d.name}\n${(d.content || "").slice(0, 2000)}${(d.content || "").length > 2000 ? "\n[...truncated]" : ""}`).join("\n\n---\n\n")}
-
-═══════════════════════════════════════\n\n`
-    : "";
-
-  // Campaign config injection
-  const buyerDesc = campaignConfig.buyerType === 'Emotional'
-    ? 'validate feelings first, then facts. Empathy drives action.'
-    : campaignConfig.buyerType === 'Logical'
-    ? 'lead with outcomes and structure. Skip emotional language.'
-    : 'keep it short and value-focused. Make the value obvious quickly.';
-
-  const styleDesc = campaignConfig.commStyle === 'Soft'
-    ? 'slow-build rapport. Be warm, patient, non-pushy.'
-    : campaignConfig.commStyle === 'Direct'
-    ? 'get to the point fast. Short messages. No fluff.'
-    : 'balance warmth with directness. Read the lead and adapt.';
-
-  const ab = campaignConfig.aiBehavior || {};
-  const hasAvatar = campaignConfig.avatar && campaignConfig.avatar.length > 5;
-  const hasAiBehavior = ab.offerName || ab.offerSummary || ab.qualificationCriteria || ab.topPainPoints || hasAvatar;
-
-  const campaignSection = hasAiBehavior
-    ? '\n=== AI BEHAVIOR CONFIGURATION ===\n'
-    + (ab.aiRole ? 'AI Role: ' + ab.aiRole + '\n' : '')
-    + (ab.primaryObjective ? 'Primary Objective: ' + ab.primaryObjective + '\n' : '')
-    + (ab.offerName ? 'Offer Name: ' + ab.offerName + '\n' : '')
-    + (ab.offerSummary ? 'Offer Summary: ' + ab.offerSummary + '\n' : '')
-    + (hasAvatar ? 'Target Avatar: ' + campaignConfig.avatar + '\n' : '')
-    + (ab.topPainPoints ? 'Lead Pain Points: ' + ab.topPainPoints + '\n' : '')
-    + (ab.desiredOutcomes ? 'Lead Desired Outcomes: ' + ab.desiredOutcomes + '\n' : '')
-    + (ab.qualificationCriteria ? 'Strong Lead Criteria: ' + ab.qualificationCriteria + '\n' : '')
-    + (ab.disqualifiers ? 'Disqualifiers - do NOT push these leads forward: ' + ab.disqualifiers + '\n' : '')
-    + (ab.leadCommStyle ? 'Lead Communication Style: ' + ab.leadCommStyle + ' - automatically adapt your tone, pacing, and detail level to match.\n' : '')
-    + '=== END AI BEHAVIOR CONFIG ===\n\n'
-    : '';
-
-  const finalSystemPrompt = learningsSection + documentSection + campaignSection + systemPrompt;
-
-  const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: model,
-      max_tokens: 1024,
-      system: finalSystemPrompt,
-      messages: [
-        { role: "user", content: buildDeveloperPrompt(memory, lastMessages) }
-      ],
-      temperature: 0.7
-    })
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Claude API error: ${error}`);
-  }
-  const data = await response.json();
-  const rawContent = data.content[0].text;
-  // Strip any markdown code fences Claude may add
-  const cleanContent = rawContent.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-  let parsed;
-  try { parsed = JSON.parse(cleanContent); }
-  catch (e) { throw new Error(`Failed to parse Claude response as JSON: ${rawContent}`); }
-
-  // Support both old (reply only) and new (messages array) response formats
-  if (!parsed.messages && !parsed.reply) {
-    throw new Error("Claude response missing required fields");
-  }
-  if (!parsed.conversation_stage || !parsed.next_action) {
-    throw new Error("Claude response missing conversation_stage or next_action");
-  }
-
-  // Normalise — ensure both fields always exist
-  if (!parsed.messages) parsed.messages = [parsed.reply];
-  if (!parsed.reply) parsed.reply = parsed.messages.join(" ");
-
-  // Increment usage_count (fire and forget)
-  if (documents.length > 0) {
-    for (const doc of documents) {
-      fetch(`${SUPABASE_URL}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&name=eq.${encodeURIComponent(doc.name)}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-          "apikey": env.SUPABASE_SERVICE_KEY,
-          "Prefer": "return=minimal"
-        },
-        body: JSON.stringify({ usage_count: (doc.usage_count || 0) + 1 })
-      }).catch(() => {});
-    }
-  }
-
-  return parsed;
-}
-__name(callClaude, "callClaude");
-
-async function sendToSlack(env, data) {
-  if (!env.SLACK_WEBHOOK_URL) return;
-  const actionEmoji = data.action === "ESCALATE_TO_HUMAN" ? "🚨" : "⚠️";
-  const autoLabel = data.auto_send_enabled
-    ? `Auto-send ON -- confidence ${(data.confidence * 100).toFixed(0)}% | intent ${data.lead_intent || 'unknown'}`
-    : `Auto-send OFF -- all messages routed to review`;
-
-  // Show each message separately in Slack with its delay
-  const messagesPreview = data.bot_messages && data.bot_messages.length > 1
-    ? data.bot_messages.map((msg, i) =>
-        `*Message ${i + 1}* _(send after ${(data.typing_delays[i] / 1000).toFixed(1)}s)_:\n${msg}`
-      ).join("\n\n")
-    : data.bot_reply;
-
-  await fetch(env.SLACK_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: `${actionEmoji} Review Needed - ${data.action}`,
-      blocks: [
-        { type: "header", text: { type: "plain_text", text: `${actionEmoji} ${data.action}` } },
-        { type: "section", fields: [
-          { type: "mrkdwn", text: `*Customer:*\n${data.customer_id}` },
-          { type: "mrkdwn", text: `*Stage:*\n${data.conversation_stage}` },
-          { type: "mrkdwn", text: `*Confidence:*\n${(data.confidence * 100).toFixed(0)}%` },
-          { type: "mrkdwn", text: `*Messages:*\n${data.bot_messages?.length || 1} message(s)` }
-        ]},
-        { type: "section", text: { type: "mrkdwn", text: `*Routing reason:*\n${autoLabel}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*Recent Messages:*\n${data.last_messages.map(m => `${m.role === "user" ? "👤" : "🤖"} ${m.content}`).join("\n")}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*Bot Reply Draft:*\n${messagesPreview}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*Internal Notes:*\n${data.internal_notes || "None"}` } }
-      ]
-    })
-  });
-}
-__name(sendToSlack, "sendToSlack");
-
-async function sendFeedbackToSlack(env, data) {
-  if (!env.SLACK_WEBHOOK_URL) return;
-  await fetch(env.SLACK_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: "🧠 Bot Training - New Learning Captured",
-      blocks: [
-        { type: "header", text: { type: "plain_text", text: "🧠 Bot Learned Something New!" } },
-        { type: "section", fields: [
-          { type: "mrkdwn", text: `*Learning ID:*\n${data.review_id}` },
-          { type: "mrkdwn", text: `*Customer:*\n${data.customer_id}` },
-          { type: "mrkdwn", text: `*Stage:*\n${data.conversation_stage}` }
-        ]},
-        { type: "section", text: { type: "mrkdwn", text: `*Situation:*\n${data.situation_context || "General conversation"}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*❌ Original Reply:*\n${data.original_reply}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*✅ Corrected Reply:*\n${data.edited_reply}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*🧠 Why This Matters:*\n${data.reason}` } },
-        { type: "section", text: { type: "mrkdwn", text: `*Tags:*\n${data.tags?.length > 0 ? data.tags.join(", ") : "None"}` } }
-      ]
-    })
-  });
-}
-__name(sendFeedbackToSlack, "sendFeedbackToSlack");
 
 export { index_default as default };
 //# sourceMappingURL=index.js.map
