@@ -574,14 +574,14 @@ export default function Inbox() {
   }
 
   function intentBadgeStyle(intent, stage) {
-    if (stage === 'BOOKED' || stage === 'SCHEDULE') return { color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0' }
+    if (stage === 'BOOKED') return { color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0' }
     if (intent === 'HIGH') return { color: '#e53e3e', background: '#fff5f5', border: '1px solid #fed7d7' }
     if (intent === 'MEDIUM') return { color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a' }
     return { color: '#6b7280', background: '#f9fafb', border: '1px solid #e5e7eb' }
   }
 
   function intentEmoji(intent, stage) {
-    if (stage === 'BOOKED' || stage === 'SCHEDULE') return '\u2705'
+    if (stage === 'BOOKED') return '\u2705'
     if (intent === 'HIGH') return '\uD83D\uDD34'
     if (intent === 'MEDIUM') return '\uD83D\uDFE1'
     return '\u26AA'
@@ -779,7 +779,7 @@ export default function Inbox() {
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
                 {selectedLead.lead_intent && (
                   <span style={{ fontSize: '.68rem', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', ...intentBadgeStyle(selectedLead.lead_intent, selectedLead.conversation_stage) }}>
-                    {intentEmoji(selectedLead.lead_intent, selectedLead.conversation_stage)} {(selectedLead.conversation_stage === 'BOOKED' || selectedLead.conversation_stage === 'SCHEDULE') ? 'Booked' : selectedLead.lead_intent}
+                    {intentEmoji(selectedLead.lead_intent, selectedLead.conversation_stage)} {selectedLead.conversation_stage === 'BOOKED' ? 'Booked' : selectedLead.lead_intent}
                   </span>
                 )}
                 {conversation?.status !== 'booked' ? (

@@ -135,7 +135,7 @@ export default function Dashboard() {
   }
 
   function intentInfo(intent, stage) {
-    if (stage === 'BOOKED' || stage === 'SCHEDULE') return { emoji: '✅', label: 'Booked', color: '#16a34a', bg: '#f0fdf4', border: '1px solid #bbf7d0' }
+    if (stage === 'BOOKED') return { emoji: '✅', label: 'Booked', color: '#16a34a', bg: '#f0fdf4', border: '1px solid #bbf7d0' }
     if (intent === 'HIGH') return { emoji: '🔴', label: 'HIGH', color: '#e53e3e', bg: '#fff5f5', border: '1px solid #fed7d7' }
     if (intent === 'MEDIUM') return { emoji: '🟡', label: 'MEDIUM', color: '#d97706', bg: '#fffbeb', border: '1px solid #fde68a' }
     return { emoji: '⚪', label: 'LOW', color: '#6b7280', bg: '#f9fafb', border: '1px solid #e5e7eb' }
