@@ -594,6 +594,14 @@ var index_default = {
         const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
         if (!botResponse || (!botResponse.reply && !botResponse.messages)) throw new Error("Invalid bot response structure");
 
+        // Bug 2: Sanitize internal_notes (the AI Insight panel text) using the same
+        // em-dash rules as bot messages. Previously the sanitiser only ran on the
+        // outgoing message text, so em-dashes leaked into the AI Insight display
+        // even though the public-facing reply was clean.
+        if (botResponse.internal_notes) {
+          botResponse.internal_notes = sanitizeBotMessage(botResponse.internal_notes);
+        }
+
         // ── Multi-message normalisation ────────────────────────────────────
         // Use messages array if provided, otherwise fall back to single reply
         const rawMessages = Array.isArray(botResponse.messages) && botResponse.messages.length > 0
@@ -751,7 +759,12 @@ var index_default = {
           bot_id: BOT_ID,
           customer_id: String(customer_id),
           channel,
-          status: (botResponse.conversation_stage === "BOOKED" || botResponse.conversation_stage === "SCHEDULE") ? "booked" : "active",
+          // Bug 1 fix: status='booked' should ONLY be set when stage is BOOKED.
+          // Previously this also fired on SCHEDULE which inflated the booked count
+          // and silently filtered leads out of Closest to Booking. Mark Booked is
+          // now exclusively a manual action (via the dashboard button) or set when
+          // the AI itself promotes the stage to BOOKED.
+          status: botResponse.conversation_stage === "BOOKED" ? "booked" : "active",
           lead_intent: botResponse.lead_intent || "LOW",
           primary_goal: botResponse.primary_goal || null,
           conversation_stage: botResponse.conversation_stage || null,
