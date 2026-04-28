@@ -88,7 +88,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }, { data: progressReviews }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged, pre_followup_stage').eq('bot_id', bot.id).neq('channel', 'tester').order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged, pre_followup_stage').eq('bot_id', bot.id).neq('channel', 'tester').is('deleted_at', null).order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
       supabase.from('reviews').select('id, status, confidence').eq('bot_id', bot.id).not('customer_id', 'ilike', 'tester_%')
     ])
