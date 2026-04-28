@@ -392,6 +392,15 @@ __name(resolveNextAction, "resolveNextAction");
 
 // Send messages directly to Make Scenario 2
 async function sendToMakeScenario2(customerId, messages, typingDelays) {
+  // Defense filter: block delivery to ghl_-prefixed customer_ids.
+  // These are GHL-imported leads whose customer_id is a GHL contact ID,
+  // not a valid ManyChat subscriber ID. ManyChat would reject them with
+  // a BundleValidationError. Reconciliation feature handles cleanup;
+  // this filter prevents new silent failures while leads await review.
+  if (typeof customerId === 'string' && customerId.startsWith('ghl_')) {
+    console.warn(`[Make filter] Blocked delivery to ghl_-prefixed customer_id: ${customerId}. Lead needs reconciliation.`);
+    return { blocked: true, reason: 'ghl_id_pending_reconciliation' };
+  }
   try {
     await fetch("https://hook.eu2.make.com/jknvsf64c05m0urc1f7qph523pi310st", {
       method: "POST",
