@@ -981,6 +981,10 @@ export default function Inbox() {
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
                           <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{item.timestamp ? fmtTime(new Date(item.timestamp)) : ''}</span>
+                          {!isLead && isManual && <span style={{ fontSize: '.65rem', color: '#1a3a8f', fontWeight: 600, background: '#e8f0fe', border: '1px solid #c7d7fc', padding: '1px 6px', borderRadius: '999px' }}>{'\u270F\uFE0F'} Manual</span>}
+                          {!isLead && !isManual && isSent && review?.status === 'auto_sent' && <span style={{ fontSize: '.65rem', color: '#5b21b6', fontWeight: 600, background: '#ede9fe', border: '1px solid #ddd6fe', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Auto-sent</span>}
+                          {!isLead && !isManual && isSent && review?.status === 'edited' && <span style={{ fontSize: '.65rem', color: '#9a3412', fontWeight: 600, background: '#ffedd5', border: '1px solid #fed7aa', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Edited</span>}
+                          {!isLead && !isManual && isSent && review?.status === 'approved' && <span style={{ fontSize: '.65rem', color: '#15803d', fontWeight: 600, background: '#dcfce7', border: '1px solid #bbf7d0', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Approved</span>}
                           {!isLead && isManual && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'} Sent</span>}
                           {!isLead && !isManual && botMessages && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
                           {!isLead && !isManual && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'} Sent</span>}
