@@ -217,7 +217,7 @@ export default function Dashboard() {
             tooltip="AI replies that were approved without editing, or auto-sent by the system. Edited replies are not counted here." />
           <StatCard value={stats.booked} label="Calls Booked" sub={timeRange}
             color="#16a34a" border="#16a34a"
-            tooltip="Leads who reached the CALL BOOKING stage in the conversation." />
+            tooltip="Leads marked as Booked. A lead becomes Booked automatically when the booking form link is sent in a reply, or manually via the Mark Booked button in the Inbox." />
           <StatCard value={`${stats.conversionRate}%`} label="Conversion Rate" sub="Booked / Total Conversations"
             color="var(--acc)" border="var(--acc)"
             tooltip="Calls Booked divided by total conversations started in this period." />
