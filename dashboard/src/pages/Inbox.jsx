@@ -292,11 +292,19 @@ export default function Inbox() {
     setSending(true)
     const validMessages = replyMessages.filter(m => m.trim())
     const joinedReply = validMessages.join(' ')
+
+    // BOOKED auto-promotion: if the outgoing message contains the booking
+    // form link, override stage/intent regardless of what setter set.
+    const BOOKING_URL_PATTERN = /form\.jotform\.com/i
+    const containsBookingLink = BOOKING_URL_PATTERN.test(joinedReply)
+    const finalStage = containsBookingLink ? 'BOOKED' : correctedStage
+    const finalIntent = containsBookingLink ? 'HIGH' : correctedIntent
+
     await supabase.from('reviews').update({
       status: 'approved', final_reply: joinedReply, final_messages: validMessages,
       resolved_at: new Date().toISOString(),
-      ...(correctedStage ? { conversation_stage: correctedStage } : {}),
-      ...(correctedIntent ? { lead_intent: correctedIntent } : {})
+      ...(finalStage ? { conversation_stage: finalStage } : {}),
+      ...(finalIntent ? { lead_intent: finalIntent } : {})
     }).eq('id', activeReview.id)
 
     // Update the matching message in conversations so the thread shows
@@ -327,15 +335,17 @@ export default function Inbox() {
       await supabase.from('conversations').update({
         messages: updatedMessages,
         updated_at: new Date().toISOString(),
-        ...(correctedStage ? { conversation_stage: correctedStage } : {}),
-        ...(correctedIntent ? { lead_intent: correctedIntent } : {})
+        ...(finalStage ? { conversation_stage: finalStage } : {}),
+        ...(finalIntent ? { lead_intent: finalIntent } : {}),
+        ...(containsBookingLink ? { status: 'booked' } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     } else {
       // Row 25: still bump updated_at on approve even when there's no conversation record or stage correction
       await supabase.from('conversations').update({
         updated_at: new Date().toISOString(),
-        ...(correctedStage ? { conversation_stage: correctedStage } : {}),
-        ...(correctedIntent ? { lead_intent: correctedIntent } : {})
+        ...(finalStage ? { conversation_stage: finalStage } : {}),
+        ...(finalIntent ? { lead_intent: finalIntent } : {}),
+        ...(containsBookingLink ? { status: 'booked' } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
 
@@ -435,6 +445,11 @@ export default function Inbox() {
     const text = manualReply.trim()
     setManualReply('')
 
+    // BOOKED auto-promotion: if manual reply contains the booking form link,
+    // mark the lead as booked. Same rule as approve() and the Worker.
+    const BOOKING_URL_PATTERN = /form\.jotform\.com/i
+    const containsBookingLink = BOOKING_URL_PATTERN.test(text)
+
     // 1. Save to conversations table — append to messages array
     const currentMessages = conversation?.messages || []
     const newMessage = {
@@ -447,14 +462,22 @@ export default function Inbox() {
     const updatedMessages = [...currentMessages, newMessage]
 
     await supabase.from('conversations')
-      .update({ messages: updatedMessages, updated_at: new Date().toISOString() })
+      .update({
+        messages: updatedMessages,
+        updated_at: new Date().toISOString(),
+        ...(containsBookingLink ? {
+          conversation_stage: 'BOOKED',
+          lead_intent: 'HIGH',
+          status: 'booked'
+        } : {})
+      })
       .eq('bot_id', botId)
       .eq('customer_id', selectedLead.customer_id)
 
     // 2. Deliver to Instagram via Make
     try {
       await sendToMake(selectedLead.customer_id, [text], [1500])
-      showToast('Manual reply sent', 'success')
+      showToast(containsBookingLink ? 'Manual reply sent - lead marked as Booked' : 'Manual reply sent', 'success')
     } catch (e) {
       showToast('Saved but failed to deliver to Instagram', 'error')
     }

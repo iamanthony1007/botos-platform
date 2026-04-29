@@ -843,6 +843,28 @@ var index_default = {
           }
         }
 
+        // BOOKED auto-promotion on booking link send.
+        // Per product decision: a lead is only considered BOOKED when the actual
+        // booking form URL has been delivered. We detect this by scanning the
+        // outgoing bot messages for the canonical Jotform domain. If found,
+        // force the stage to BOOKED regardless of what Claude classified.
+        // Domain match (not exact URL) so future form ID changes still work.
+        const BOOKING_URL_PATTERN = /form\.jotform\.com/i;
+        const outgoingText = (Array.isArray(botResponse.messages) && botResponse.messages.length > 0
+          ? botResponse.messages.join(' ')
+          : (botResponse.reply || '')) + ' ' + (botResponse.internal_notes || '');
+        if (BOOKING_URL_PATTERN.test(outgoingText)) {
+          if (botResponse.conversation_stage !== 'BOOKED') {
+            botResponse.internal_notes = (botResponse.internal_notes || "") +
+              ` [System: Stage promoted to BOOKED - booking form link detected in outgoing message]`;
+            botResponse.conversation_stage = 'BOOKED';
+          }
+          // Also ensure intent reflects the booking moment
+          if (botResponse.lead_intent !== 'HIGH') {
+            botResponse.lead_intent = 'HIGH';
+          }
+        }
+
         // Bug 7: Determine the pre_followup_stage value to write.
         // Priority order:
         //   1. Keep existing value if already set (don't overwrite mid-cycle)
