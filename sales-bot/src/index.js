@@ -299,7 +299,7 @@ __name(supabaseUpsert, "supabaseUpsert");
 async function getBotSettings(env) {
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings`,
+      `${SUPABASE_URL}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings,welcome_context`,
       {
         headers: {
           "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
@@ -661,6 +661,19 @@ var index_default = {
             previous_stage: priorPreFollowupStage,
             current_stored_stage: priorStage
           };
+        }
+
+        // Welcome context injection: when this is a fresh conversation
+        // (lead just started replying), inject the bot's welcome_context so
+        // Claude knows what flow / questions the lead is responding to.
+        // We define "fresh" as 3 or fewer total messages, meaning we're
+        // still in the first one or two AI exchanges with this lead.
+        // No injection for re-engaged leads (they have their own context),
+        // no injection once the conversation has progressed past the welcome.
+        const totalMsgs = Array.isArray(memory.messages) ? memory.messages.length : 0;
+        const isFreshConversation = totalMsgs <= 3 && !wasFollowedUp;
+        if (isFreshConversation && botSettings.welcome_context && botSettings.welcome_context.trim().length > 0) {
+          memory.welcome_context = botSettings.welcome_context.trim();
         }
 
         const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
@@ -1578,7 +1591,18 @@ How to handle this:
 
 ` : "";
 
-  const finalSystemPrompt = reEngagementSection + learningsSection + documentSection + campaignSection + systemPrompt;
+  const welcomeSection = memory.welcome_context ? `
+═══════════════════════════════════════
+🎯 WELCOME FLOW CONTEXT - READ FIRST
+═══════════════════════════════════════
+
+${memory.welcome_context}
+
+═══════════════════════════════════════
+
+` : "";
+
+  const finalSystemPrompt = welcomeSection + reEngagementSection + learningsSection + documentSection + campaignSection + systemPrompt;
 
   const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",
