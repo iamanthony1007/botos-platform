@@ -160,6 +160,7 @@ export default function Inbox() {
       }
       leadsMap[r.customer_id].all_reviews.push(r)
       if (r.status === 'pending') leadsMap[r.customer_id].pending_count = 1
+      if (r.status === 'delivery_failed') leadsMap[r.customer_id].delivery_failed_count = (leadsMap[r.customer_id].delivery_failed_count || 0) + 1
       if ((r.action_type === 'ESCALATE_TO_HUMAN' || r.action_type === 'HANDOFF_TO_SETTER') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
       // Track when the bot last sent a message (approved, edited, auto_sent)
       const isSentByBot = r.status === 'approved' || r.status === 'edited' || r.status === 'auto_sent'
@@ -775,6 +776,7 @@ export default function Inbox() {
                       {lead.lead_intent === 'MEDIUM' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\uD83D\uDFE1'}</span>}
                       {lead.lead_intent === 'LOW' && <span style={{ fontSize: '.75rem', flexShrink: 0 }}>{'\u26AA'}</span>}
                       {lead.handoff_count > 0 && <span style={{ fontSize: '.68rem', background: '#e53e3e', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\uD83D\uDEA8'}</span>}
+                      {lead.delivery_failed_count > 0 && <span title="One or more AI replies failed to send. Developer has been notified." style={{ fontSize: '.68rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '999px', flexShrink: 0, fontWeight: 700 }}>{'\u26A0'} Not sent</span>}
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                       {isFollowUpLead && <span style={{ fontSize: '.68rem', background: '#fff7ed', color: '#d97706', border: '1px solid #fed7aa', padding: '1px 5px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F0'} Follow up</span>}
                       {lead.re_engaged && <span style={{ fontSize: '.68rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '999px', flexShrink: 0, fontWeight: 600 }}>{'\u21BB'} Re-engaged</span>}
@@ -979,7 +981,19 @@ export default function Inbox() {
                             )
                           })()}
                           {/* Pending bot bubble — hidden from thread (shown only in sidebar via the button above) */}
-                          {!isLead && !isPending && botMessages.map((bubble, bi) => (
+                          {/* Step 2 (2026-04-30): if delivery failed, render a red "AI reply was not sent" banner instead of the bubble */}
+                          {!isLead && !isPending && item.delivery_status === 'failed' && (
+                            <div style={{ background: '#fef2f2', border: '1px dashed #fca5a5', borderRadius: '10px', padding: '10px 14px', maxWidth: 'min(80%, 560px)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '.78rem' }}>{'\u26A0\uFE0F'}</span>
+                                <span style={{ fontSize: '.78rem', fontWeight: 700, color: '#b91c1c' }}>AI reply was not sent</span>
+                              </div>
+                              <div style={{ fontSize: '.74rem', color: '#7f1d1d', lineHeight: 1.5 }}>
+                                {item.delivery_failed_reason || 'Delivery failed. Developer has been notified.'}
+                              </div>
+                            </div>
+                          )}
+                          {!isLead && !isPending && item.delivery_status !== 'failed' && botMessages.map((bubble, bi) => (
                             <div key={bi} onClick={() => null}
                               style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isDiscarded ? 'var(--surf2)' : isManual ? '#e8f0fe' : 'var(--acc)', color: isDiscarded ? 'var(--tx3)' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isDiscarded ? '1px dashed var(--bdr)' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: 'default', transition: 'all .15s', opacity: isDiscarded ? 0.5 : 1, textDecoration: isDiscarded ? 'line-through' : 'none' }}>
                               {bubble}

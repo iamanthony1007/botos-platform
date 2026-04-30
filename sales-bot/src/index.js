@@ -404,29 +404,106 @@ function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}, memo
 __name(resolveNextAction, "resolveNextAction");
 
 
-// Send messages directly to Make Scenario 2
+// Send messages directly to Make Scenario 2.
+// Returns { ok: true } on success, or { ok: false, code, plain, technical } on validation failure.
+// "ok: false" means we did NOT call Make (pre-flight blocked) and the caller must surface the failure.
 async function sendToMakeScenario2(customerId, messages, typingDelays) {
-  // Defense filter: block delivery to ghl_-prefixed customer_ids.
-  // These are GHL-imported leads whose customer_id is a GHL contact ID,
-  // not a valid ManyChat subscriber ID. ManyChat would reject them with
-  // a BundleValidationError. Reconciliation feature handles cleanup;
-  // this filter prevents new silent failures while leads await review.
-  if (typeof customerId === 'string' && customerId.startsWith('ghl_')) {
-    console.warn(`[Make filter] Blocked delivery to ghl_-prefixed customer_id: ${customerId}. Lead needs reconciliation.`);
-    return { blocked: true, reason: 'ghl_id_pending_reconciliation' };
+  const id = (customerId === undefined || customerId === null) ? "" : String(customerId).trim();
+
+  // ── Pre-flight validation (Step 2, 2026-04-30) ────────────────────────────
+  // Catch invalid customer_ids BEFORE firing the webhook. ManyChat's Instagram
+  // subscriber IDs are always all-digit numeric strings of substantial length.
+  // Anything else will produce a BundleValidationError downstream.
+  if (id.length === 0) {
+    console.warn("[Make filter] empty customer_id");
+    return { ok: false, code: "empty_customer_id", plain: "Lead ID is missing. Developer contacted.", technical: "customer_id was empty or null" };
   }
+  if (/^{{[^}]+}}$/.test(id) || id.includes("{{")) {
+    console.warn(`[Make filter] placeholder customer_id: ${id}`);
+    return { ok: false, code: "id_contains_placeholder", plain: "ManyChat did not substitute the lead's ID correctly. Developer contacted.", technical: `customer_id contained ManyChat placeholder: ${id}` };
+  }
+  if (id.startsWith("ghl_")) {
+    console.warn(`[Make filter] ghl_-prefixed customer_id: ${id}`);
+    return { ok: false, code: "ghl_id_pending_reconciliation", plain: "This lead's ID is not a valid Instagram ID. Developer contacted.", technical: `customer_id "${id}" is a GHL contact ID, not a ManyChat subscriber ID` };
+  }
+  if (!/^[0-9]+$/.test(id)) {
+    console.warn(`[Make filter] non-numeric customer_id: ${id}`);
+    return { ok: false, code: "non_numeric_customer_id", plain: "Lead ID format is invalid. Developer contacted.", technical: `customer_id "${id}" contains non-digit characters; ManyChat IG IDs must be numeric` };
+  }
+  // ManyChat IG subscriber IDs are typically 10-20 digits. We accept 8-22 to be permissive.
+  if (id.length < 8) {
+    console.warn(`[Make filter] customer_id too short: ${id}`);
+    return { ok: false, code: "id_too_short", plain: "Lead ID looks incomplete. Developer contacted.", technical: `customer_id "${id}" is only ${id.length} digits; expected at least 8` };
+  }
+  if (id.length > 22) {
+    console.warn(`[Make filter] customer_id too long: ${id}`);
+    return { ok: false, code: "id_too_long", plain: "Lead ID format is invalid. Developer contacted.", technical: `customer_id "${id}" is ${id.length} digits; expected at most 22` };
+  }
+
+  // Validation passed - fire the webhook (fire-and-forget, do NOT await ManyChat's downstream call).
   try {
     await fetch("https://hook.eu2.make.com/jknvsf64c05m0urc1f7qph523pi310st", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        customer_id: customerId,
+        customer_id: id,
         messages: messages,
         typing_delays_ms: typingDelays && typingDelays.length > 0 ? typingDelays : messages.map(() => 1500)
       })
     });
+    return { ok: true };
   } catch (e) {
     console.error("Make Scenario 2 error:", e);
+    return { ok: false, code: "make_webhook_unreachable", plain: "Could not reach the messaging service. Developer contacted.", technical: `fetch to Make webhook threw: ${e.message}` };
+  }
+}
+
+// Send a delivery-failure notification email via Resend.
+// Fire-and-forget; failure to send the email must never block the Worker response.
+async function sendDeliveryFailureEmail(env, payload) {
+  if (!env.RESEND_API_KEY) {
+    console.warn("RESEND_API_KEY not set; skipping delivery-failure email");
+    return;
+  }
+  const to = env.NOTIFY_EMAIL || "iamanthony1007@gmail.com";
+  const subject = `[Mu AI] Auto-send failed — customer ${payload.customer_id || "unknown"}`;
+  const lines = [
+    `Lead: ${payload.profile_name || payload.username || "(no name)"}${payload.username ? " (@" + payload.username + ")" : ""}`,
+    `Customer ID: ${payload.customer_id || "(empty)"}`,
+    `Bot ID: ${payload.bot_id}`,
+    `Time: ${new Date().toISOString()}`,
+    "",
+    `Reply that did not send:`,
+    `"${(payload.bot_reply || "").slice(0, 1000)}"`,
+    "",
+    `Plain reason: ${payload.plain_reason}`,
+    `Failure code: ${payload.code}`,
+    `Technical detail: ${payload.technical_reason}`,
+    "",
+    `Make Scenario 2 was NOT called (blocked at pre-flight validation).`,
+    `Setter sees: red 'AI reply was not sent' banner in the Inbox thread.`,
+  ];
+  const body = lines.join("\n");
+  try {
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: "Mu AI Alerts <onboarding@resend.dev>",
+        to: [to],
+        subject,
+        text: body
+      })
+    });
+    if (!resp.ok) {
+      const errTxt = await resp.text();
+      console.error(`Resend email failed (${resp.status}):`, errTxt);
+    }
+  } catch (e) {
+    console.error("Resend email exception:", e);
   }
 }
 
@@ -1007,9 +1084,67 @@ var index_default = {
 
         // AUTO_SEND — send via Scenario 2 directly + write review record
         if (finalAction === "AUTO_SEND") {
-          ctx.waitUntil(sendToMakeScenario2(String(customer_id), dedupedMessages, typingDelays));
+          // Step 2 (2026-04-30): await the validation step so we can detect pre-flight failures.
+          // sendToMakeScenario2 returns quickly when validation fails (no network call) and
+          // returns after firing the webhook on success. ManyChat's downstream errors are
+          // NOT detectable here - those would need a Make error-callback (Step 2.5).
+          const sendResult = await sendToMakeScenario2(String(customer_id), dedupedMessages, typingDelays);
+          const deliveryFailed = !sendResult.ok;
+
+          // If pre-flight validation failed, mark the assistant message in memory.messages
+          // with a delivery_status field so the Inbox can render the "AI reply was not sent" banner.
+          if (deliveryFailed) {
+            const lastAssistantIdx = memory.messages.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i >= 0).pop();
+            if (lastAssistantIdx !== undefined && lastAssistantIdx >= 0) {
+              memory.messages[lastAssistantIdx].delivery_status = "failed";
+              memory.messages[lastAssistantIdx].delivery_failed_reason = sendResult.plain;
+              memory.messages[lastAssistantIdx].delivery_failed_code = sendResult.code;
+            }
+            // Re-write the conversations row with the updated messages array so the failed
+            // message becomes visible in the thread (Step 1 filter would otherwise hide it
+            // because finalAction is still AUTO_SEND - we want it shown WITH the banner).
+            ctx.waitUntil(supabaseUpsert(env, "conversations", {
+              bot_id: BOT_ID,
+              customer_id: String(customer_id),
+              messages: memory.messages,
+              updated_at: new Date().toISOString()
+            }, "bot_id,customer_id"));
+
+            // Fire alerts (fire-and-forget - never block the response)
+            ctx.waitUntil(sendDeliveryFailureEmail(env, {
+              customer_id, bot_id: BOT_ID, username, profile_name,
+              bot_reply: joinedReply,
+              plain_reason: sendResult.plain,
+              technical_reason: sendResult.technical,
+              code: sendResult.code
+            }));
+            if (env.SLACK_WEBHOOK_URL) {
+              ctx.waitUntil(fetch(env.SLACK_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  text: `🚫 Auto-send delivery failed`,
+                  blocks: [
+                    { type: "header", text: { type: "plain_text", text: "🚫 Auto-send Delivery Failed" } },
+                    { type: "section", fields: [
+                      { type: "mrkdwn", text: `*Customer:*\n${customer_id || "(empty)"}` },
+                      { type: "mrkdwn", text: `*Username:*\n${username || "(none)"}` },
+                      { type: "mrkdwn", text: `*Code:*\n${sendResult.code}` },
+                      { type: "mrkdwn", text: `*Bot ID:*\n${BOT_ID}` }
+                    ]},
+                    { type: "section", text: { type: "mrkdwn", text: `*Plain reason:*\n${sendResult.plain}` } },
+                    { type: "section", text: { type: "mrkdwn", text: `*Technical:*\n${sendResult.technical}` } },
+                    { type: "section", text: { type: "mrkdwn", text: `*Reply that did not send:*\n${(joinedReply || "").slice(0, 500)}` } }
+                  ]
+                })
+              }).catch(() => {}));
+            }
+          }
+
+          // Write the review record. Status reflects whether delivery actually went out.
+          const reviewStatus = deliveryFailed ? "delivery_failed" : "auto_sent";
           if (batchReviewId) {
-            // Batching: update existing review to auto_sent
+            // Batching: update existing review to auto_sent (or delivery_failed)
             reviewResult = await supabaseUpdate(env, "reviews", batchReviewId, {
               action_type: "AUTO_SEND",
               conversation_stage: botResponse.conversation_stage || null,
@@ -1017,9 +1152,9 @@ var index_default = {
               bot_reply: joinedReply,
               bot_messages: dedupedMessages,
               typing_delays: typingDelays,
-              internal_notes: (botResponse.internal_notes || "") + " [Batched: multiple lead messages combined]",
+              internal_notes: (botResponse.internal_notes || "") + " [Batched: multiple lead messages combined]" + (deliveryFailed ? ` [Delivery failed: ${sendResult.code}]` : ""),
               last_messages: memory.messages.slice(-5),
-              status: "auto_sent",
+              status: reviewStatus,
               resolved_at: new Date().toISOString(),
               lead_intent: botResponse.lead_intent || "LOW",
               ...(username ? { username: String(username) } : {}),
@@ -1036,9 +1171,9 @@ var index_default = {
               bot_reply: joinedReply,
               bot_messages: dedupedMessages,
               typing_delays: typingDelays,
-              internal_notes: botResponse.internal_notes || null,
+              internal_notes: (botResponse.internal_notes || "") + (deliveryFailed ? ` [Delivery failed: ${sendResult.code}]` : ""),
               last_messages: memory.messages.slice(-5),
-              status: "auto_sent",
+              status: reviewStatus,
               resolved_at: new Date().toISOString(),
               created_at: new Date().toISOString(),
               ...(username ? { username: String(username) } : {}),
