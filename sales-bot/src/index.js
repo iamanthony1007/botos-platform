@@ -263,6 +263,33 @@ async function supabaseInsert(env, table, data) {
 }
 __name(supabaseInsert, "supabaseInsert");
 
+// Step 3 (2026-04-30): retry wrapper for review/learning inserts.
+// Most failures are transient (network blip, brief Supabase hiccup, rate burst).
+// Retries: 3 total attempts. Backoff: 200ms, 500ms. Max delay budget ~700ms.
+// Returns { success: true } on any successful attempt, or
+// { success: false, error, attempts } if all attempts fail.
+// Caller is responsible for handling the failure case (alert + KV stash for recovery).
+async function supabaseInsertWithRetry(env, table, data, maxAttempts = 3) {
+  const delays = [200, 500];   // ms before retry attempt 2 and 3
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await supabaseInsert(env, table, data);
+    if (result.success) {
+      if (attempt > 1) console.log(`[insert retry] ${table} succeeded on attempt ${attempt}`);
+      return { success: true, attempts: attempt };
+    }
+    lastError = result.error;
+    if (attempt < maxAttempts) {
+      const delay = delays[attempt - 1] || 500;
+      console.warn(`[insert retry] ${table} attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${String(lastError).slice(0, 200)}`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  console.error(`[insert retry] ${table} failed after ${maxAttempts} attempts. Last error: ${String(lastError).slice(0, 300)}`);
+  return { success: false, error: lastError, attempts: maxAttempts };
+}
+__name(supabaseInsertWithRetry, "supabaseInsertWithRetry");
+
 async function supabaseUpdate(env, table, id, data) {
   try {
     const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
@@ -1060,7 +1087,10 @@ var index_default = {
             // Use the batch review ID for the response
             review_id_final = batchReviewId;
           } else {
-            reviewResult = await supabaseInsert(env, "reviews", {
+            // Step 3 (2026-04-30): use retry wrapper instead of single-attempt insert.
+            // If all retries fail, the review is lost from the DB but we still need
+            // to make the situation visible to setters and alert the developer.
+            reviewResult = await supabaseInsertWithRetry(env, "reviews", {
               id: review_id, bot_id: BOT_ID,
               customer_id: String(customer_id),
               action_type: finalAction,
@@ -1079,6 +1109,79 @@ var index_default = {
               ...(profile_name ? { profile_name: String(profile_name) } : {})
             });
             review_id_final = review_id;
+
+            // Step 3: handle persistent insert failure.
+            // 1. Stash full payload in KV so we can recover later.
+            // 2. Mark the assistant message in memory.messages with delivery_status="uncertain"
+            //    so the Inbox renders the yellow "tracking uncertain" banner.
+            // 3. Re-write conversations.messages to override Step 1's filter (which would
+            //    otherwise hide the orphan because there is no matching review row).
+            // 4. Alert via Slack + email.
+            if (!reviewResult.success) {
+              const failedPayload = {
+                review_id, bot_id: BOT_ID, customer_id: String(customer_id),
+                action_type: finalAction,
+                bot_reply: joinedReply,
+                bot_messages: dedupedMessages,
+                typing_delays: typingDelays,
+                conversation_stage: botResponse.conversation_stage || null,
+                lead_intent: botResponse.lead_intent || "LOW",
+                stashed_at: new Date().toISOString(),
+                error: String(reviewResult.error).slice(0, 1000)
+              };
+              try {
+                await env.MEMORY_STORE.put(`failed_review:${review_id}`, JSON.stringify(failedPayload), { expirationTtl: 7 * 24 * 60 * 60 });
+              } catch (kvErr) {
+                console.error(`[Step 3] Failed to stash review ${review_id} in KV:`, kvErr);
+              }
+
+              // Mark the assistant message as tracking-uncertain
+              const lastAssistantIdx = memory.messages.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i >= 0).pop();
+              if (lastAssistantIdx !== undefined && lastAssistantIdx >= 0) {
+                memory.messages[lastAssistantIdx].delivery_status = "uncertain";
+                memory.messages[lastAssistantIdx].delivery_failed_reason = "Couldn't track this reply. Developer notified.";
+                memory.messages[lastAssistantIdx].delivery_failed_code = "review_insert_failed";
+              }
+
+              // Re-write conversations.messages so the orphan is visible WITH the banner.
+              // Step 1 filtered it out for SEND_TO_INBOX_REVIEW; we want it back in for this case.
+              ctx.waitUntil(supabaseUpsert(env, "conversations", {
+                bot_id: BOT_ID,
+                customer_id: String(customer_id),
+                messages: memory.messages,
+                updated_at: new Date().toISOString()
+              }, "bot_id,customer_id"));
+
+              // Fire alerts (fire-and-forget)
+              ctx.waitUntil(sendDeliveryFailureEmail(env, {
+                customer_id, bot_id: BOT_ID, username, profile_name,
+                bot_reply: joinedReply,
+                plain_reason: "Review record couldn't be saved. Developer notified.",
+                technical_reason: `Review insert failed after ${reviewResult.attempts} attempts. Stashed in KV at failed_review:${review_id}. Last error: ${String(reviewResult.error).slice(0, 500)}`,
+                code: "review_insert_failed"
+              }));
+              if (env.SLACK_WEBHOOK_URL) {
+                ctx.waitUntil(fetch(env.SLACK_WEBHOOK_URL, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    text: `⚠️ Review insert failed after retries`,
+                    blocks: [
+                      { type: "header", text: { type: "plain_text", text: "⚠️ Review Insert Failed" } },
+                      { type: "section", fields: [
+                        { type: "mrkdwn", text: `*Customer:*\n${customer_id || "(empty)"}` },
+                        { type: "mrkdwn", text: `*Username:*\n${username || "(none)"}` },
+                        { type: "mrkdwn", text: `*Review ID:*\n${review_id}` },
+                        { type: "mrkdwn", text: `*Attempts:*\n${reviewResult.attempts}` }
+                      ]},
+                      { type: "section", text: { type: "mrkdwn", text: `*Stashed in KV:*\nfailed_review:${review_id} (7-day TTL)` } },
+                      { type: "section", text: { type: "mrkdwn", text: `*Error:*\n${String(reviewResult.error).slice(0, 500)}` } },
+                      { type: "section", text: { type: "mrkdwn", text: `*Reply that wasn't tracked:*\n${(joinedReply || "").slice(0, 400)}` } }
+                    ]
+                  })
+                }).catch(() => {}));
+              }
+            }
           }
         }
 
@@ -1162,7 +1265,10 @@ var index_default = {
             });
             review_id_final = batchReviewId;
           } else {
-            reviewResult = await supabaseInsert(env, "reviews", {
+            // Step 3 (2026-04-30): retry wrapper for AUTO_SEND review insert too.
+            // The message has already gone out (or been blocked at validation in Step 2),
+            // but we still want the review record to be reliably tracked.
+            reviewResult = await supabaseInsertWithRetry(env, "reviews", {
               id: review_id, bot_id: BOT_ID,
               customer_id: String(customer_id),
               action_type: "AUTO_SEND",

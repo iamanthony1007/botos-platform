@@ -993,7 +993,19 @@ export default function Inbox() {
                               </div>
                             </div>
                           )}
-                          {!isLead && !isPending && item.delivery_status !== 'failed' && botMessages.map((bubble, bi) => (
+                          {/* Step 3 (2026-04-30): if review tracking failed (DB insert exhausted retries), show yellow "uncertain" banner */}
+                          {!isLead && !isPending && item.delivery_status === 'uncertain' && (
+                            <div style={{ background: '#fffbeb', border: '1px dashed #fcd34d', borderRadius: '10px', padding: '10px 14px', maxWidth: 'min(80%, 560px)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '.78rem' }}>{'\u26A0\uFE0F'}</span>
+                                <span style={{ fontSize: '.78rem', fontWeight: 700, color: '#92400e' }}>AI reply tracking uncertain</span>
+                              </div>
+                              <div style={{ fontSize: '.74rem', color: '#78350f', lineHeight: 1.5 }}>
+                                {item.delivery_failed_reason || "Couldn't track this reply. Developer has been notified."}
+                              </div>
+                            </div>
+                          )}
+                          {!isLead && !isPending && item.delivery_status !== 'failed' && item.delivery_status !== 'uncertain' && botMessages.map((bubble, bi) => (
                             <div key={bi} onClick={() => null}
                               style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isDiscarded ? 'var(--surf2)' : isManual ? '#e8f0fe' : 'var(--acc)', color: isDiscarded ? 'var(--tx3)' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isDiscarded ? '1px dashed var(--bdr)' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: 'default', transition: 'all .15s', opacity: isDiscarded ? 0.5 : 1, textDecoration: isDiscarded ? 'line-through' : 'none' }}>
                               {bubble}
