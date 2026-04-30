@@ -169,6 +169,7 @@ You MUST respond with ONLY a valid JSON object (no markdown, no explanation) wit
   "messages": ["first message", "second message (optional)", "third message with question (optional)"],
   "reply": "all messages joined into one string — for logging only",
   "lead_intent": "LOW|MEDIUM|HIGH",
+  "contact_type": "prospect|non_prospect",
   "primary_goal": "Distance|Pain/Injuries|Consistency|Unknown",
   "next_action": "AUTO_SEND|SEND_TO_INBOX_REVIEW|ESCALATE_TO_HUMAN",
   "escalation_reason": "only fill if ESCALATE_TO_HUMAN — one sentence why (e.g. lead asked for human, angry, second objection)",
@@ -194,6 +195,19 @@ LEAD INTENT CLASSIFICATION (you MUST output one of these per response):
 - LOW: Vague, just browsing, avoids answering questions, says maybe later, no pain expressed
 - MEDIUM: Has a goal, some engagement, mild frustration but no urgency, still exploring  
 - HIGH: Clear pain point, time pressure, frustration, uses buyer language, ready to act now
+
+CONTACT TYPE CLASSIFICATION (you MUST output one of these per response):
+- prospect: Default. A potential customer/buyer who could become a coaching client. Has golf-related pain points, goals, or interest in the program. ALL standard sales conversations are prospects.
+- non_prospect: Someone reaching out for a non-sales reason. Examples:
+  • Podcast hosts inviting you as a guest
+  • Fellow coaches reaching out as peers
+  • Industry professionals (PTs, trainers, TPI coaches) wanting to connect/collaborate
+  • Service vendors pitching their services to you
+  • Parents/relatives explaining account access
+  • Followers expressing only general appreciation with no goal/pain
+  • Anyone where the conversation is NOT about them potentially becoming a coaching client
+  
+DEFAULT to "prospect" unless there is clear evidence the conversation is non-sales. Once classified as non_prospect, keep it non_prospect for the rest of that conversation. Brand new conversations with too little info should default to prospect.
 
 CRITICAL RULES:
 - Reply must sound like Australian coach -- short, natural, no corporate language
@@ -908,6 +922,7 @@ var index_default = {
           // the AI itself promotes the stage to BOOKED.
           status: botResponse.conversation_stage === "BOOKED" ? "booked" : "active",
           lead_intent: botResponse.lead_intent || "LOW",
+          contact_type: botResponse.contact_type === 'non_prospect' ? 'non_prospect' : 'prospect',
           primary_goal: botResponse.primary_goal || null,
           conversation_stage: botResponse.conversation_stage || null,
           messages: memory.messages,
