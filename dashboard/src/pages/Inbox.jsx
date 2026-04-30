@@ -52,10 +52,15 @@ export default function Inbox() {
   const searchRef = useRef(null)
   const manualInputRef = useRef(null)
   const activeReviewRef = useRef(null)
+  // Step 4 (2026-04-30): track interaction state so realtime callbacks
+  // never reload the open thread mid-typing or mid-action.
+  const manualReplyRef = useRef('')
+  const sendingRef = useRef(false)
+  const loadDataDebounceRef = useRef(null)
 
   useEffect(() => {
     if (!profile) return
-    loadData()
+    loadData(true)
     return () => { if (channelRef.current) supabase.removeChannel(channelRef.current) }
   }, [profile])
 
@@ -79,9 +84,18 @@ export default function Inbox() {
     if (target) selectLead(target)
   }, [location.state?.openLead, leads.length, botId])
 
-  async function loadData() {
+  // Step 4 (2026-04-30): keep refs in sync with their state counterparts
+  // so the realtime callbacks can read the freshest interaction state without re-subscribing.
+  useEffect(() => { manualReplyRef.current = manualReply }, [manualReply])
+  useEffect(() => { sendingRef.current = sending || manualSending }, [sending, manualSending])
+
+  // Step 4 (2026-04-30): only show full-page spinner on the initial mount when there is no cached data.
+  // Realtime callbacks, post-action refreshes, and bot-switch refreshes pass showLoading=false (the default)
+  // so the page never whitewashes mid-session. This eliminates the "sudden whiteout with rolling circle"
+  // that interrupted setters when reviews/conversations updated in the background.
+  async function loadData(showLoading = false) {
     const hasCached = leads.length > 0
-    if (!hasCached) setLoading(true)
+    if (showLoading && !hasCached) setLoading(true)
     const bot = await getAssignedBot(profile, 'id')
     if (!bot) { setLoading(false); return }
     setBotId(bot.id)
@@ -185,22 +199,57 @@ export default function Inbox() {
     setLoading(false)
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
+
+    // Step 4 (2026-04-30): smarter realtime handling.
+    //
+    // The legacy code called loadData() on every realtime event AND scheduled
+    // a loadThread() reload regardless of whether the event was for the
+    // currently-open lead. With multiple leads active that produced 5-15
+    // re-renders per minute, plus mid-typing thread reloads.
+    //
+    // Now:
+    //   - loadData() is debounced 600ms so a burst of events triggers ONE refresh.
+    //   - loadThread() runs only if the realtime event is for the open lead AND
+    //     the user is not currently typing or sending.
+    //   - All paths use loadData() (no spinner) - the page-level whiteout only
+    //     ever fires on the initial mount via loadData(true) above.
+
+    const debouncedLoadData = () => {
+      if (loadDataDebounceRef.current) clearTimeout(loadDataDebounceRef.current)
+      loadDataDebounceRef.current = setTimeout(() => { loadData(false) }, 600)
+    }
+
+    const maybeReloadThread = (payload, delayMs) => {
+      // Bail if no lead is open, or there's an active review the user might be working on,
+      // or the user is mid-send/approve/edit, or the user is typing a manual reply.
+      if (!selectedLeadRef.current) return
+      if (activeReviewRef.current) return
+      if (sendingRef.current) return
+      if (manualReplyRef.current && manualReplyRef.current.trim().length > 0) return
+
+      // Skip cross-lead events: only reload when the change is for the lead we're viewing.
+      const eventCustomerId = payload?.new?.customer_id || payload?.old?.customer_id || null
+      const openCustomerId = selectedLeadRef.current.customer_id
+      if (eventCustomerId && String(eventCustomerId) !== String(openCustomerId)) return
+
+      setTimeout(() => {
+        // Re-check at firing time in case state changed during the delay
+        if (!selectedLeadRef.current) return
+        if (activeReviewRef.current) return
+        if (sendingRef.current) return
+        if (manualReplyRef.current && manualReplyRef.current.trim().length > 0) return
+        loadThread(selectedLeadRef.current.customer_id, bot.id)
+      }, delayMs)
+    }
+
     const ch = supabase.channel(`inbox-${bot.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, () => {
-        loadData()
-        setTimeout(() => {
-          if (selectedLeadRef.current && !activeReviewRef.current) {
-            loadThread(selectedLeadRef.current.customer_id, bot.id)
-          }
-        }, 1000)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, (payload) => {
+        debouncedLoadData()
+        maybeReloadThread(payload, 1000)
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `bot_id=eq.${bot.id}` }, () => {
-        loadData()
-        setTimeout(() => {
-          if (selectedLeadRef.current && !activeReviewRef.current) {
-            loadThread(selectedLeadRef.current.customer_id, bot.id)
-          }
-        }, 2000)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `bot_id=eq.${bot.id}` }, (payload) => {
+        debouncedLoadData()
+        maybeReloadThread(payload, 2000)
       })
       .subscribe()
     channelRef.current = ch
@@ -648,7 +697,37 @@ export default function Inbox() {
       const dateLabel = ts ? fmtDate(ts) : null
       if (dateLabel && dateLabel !== lastDate) { items.push({ type: 'separator', label: dateLabel, key: `sep-${i}` }); lastDate = dateLabel }
       const botMessages = m.bot_messages || (m.content ? [m.content] : [])
-      items.push({ type: 'message', ...m, botMessages, _index: i, _review: m.review_id ? reviewMap[m.review_id] : null, key: `msg-${i}` })
+      const matchedReview = m.review_id ? reviewMap[m.review_id] : null
+
+      // Step 4 (2026-04-30): orphan detection.
+      // An assistant message with a review_id but no matching review row is an orphan -
+      // typically from before Step 1 shipped, or from a Step-3 retry exhaustion where
+      // the review insert failed and was stashed in KV but never re-played.
+      // We tag it with delivery_status="uncertain" at render time so the existing yellow
+      // banner renders instead of a fake-sent green bubble. This does not touch the DB;
+      // the underlying conversations.messages JSON is unchanged.
+      const isAssistant = m.role === 'assistant' || m.role === 'Bot'
+      const isOrphan = isAssistant
+        && m.review_id
+        && !matchedReview
+        && !m.final_sent
+        && !m.manual
+        && !m.delivery_status
+
+      const renderDeliveryStatus = isOrphan ? 'uncertain' : m.delivery_status
+      const renderDeliveryReason = isOrphan
+        ? "Couldn't track this older reply. Status unknown."
+        : m.delivery_failed_reason
+
+      items.push({
+        type: 'message', ...m,
+        botMessages,
+        _index: i,
+        _review: matchedReview,
+        delivery_status: renderDeliveryStatus,
+        delivery_failed_reason: renderDeliveryReason,
+        key: `msg-${i}`
+      })
     })
     return items
   }
