@@ -911,6 +911,15 @@ var index_default = {
           if (currentIdx > savedIdx && currentIdx >= 0) preFollowupStageToWrite = null;
         }
 
+        // ── Bug fix 2026-04-30: do not write pending assistant drafts to conversations.messages ──
+        // Inbox-review and escalated replies must NOT appear in the rendered thread
+        // until the setter approves/edits, OR until AUTO_SEND delivery succeeds.
+        // KV memory keeps the assistant reply for Claude's context. The DB thread
+        // only gets the assistant turn when it has actually been sent or auto-sent.
+        const messagesForDb = (finalAction === "AUTO_SEND")
+          ? memory.messages
+          : memory.messages.filter(m => !(m.role === "assistant" && m.review_id === review_id));
+
         ctx.waitUntil(supabaseUpsert(env, "conversations", {
           bot_id: BOT_ID,
           customer_id: String(customer_id),
@@ -925,7 +934,7 @@ var index_default = {
           contact_type: botResponse.contact_type === 'non_prospect' ? 'non_prospect' : 'prospect',
           primary_goal: botResponse.primary_goal || null,
           conversation_stage: botResponse.conversation_stage || null,
-          messages: memory.messages,
+          messages: messagesForDb,
           profile_facts: memory.profile_facts,
           running_summary: memory.running_summary,
           followed_up: false,
