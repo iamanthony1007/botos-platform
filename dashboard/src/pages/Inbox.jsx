@@ -778,14 +778,18 @@ export default function Inbox() {
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                       {isFollowUpLead && <span style={{ fontSize: '.68rem', background: '#fff7ed', color: '#d97706', border: '1px solid #fed7aa', padding: '1px 5px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F0'} Follow up</span>}
                       {lead.re_engaged && <span style={{ fontSize: '.68rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '999px', flexShrink: 0, fontWeight: 600 }}>{'\u21BB'} Re-engaged</span>}
-                      {/* 24-hour IG window timer */}
-                      {lead.user_sent_last && !lead.followed_up && lead.last_user_message_at && (() => {
+                      {/* 24-hour IG window timer.
+                          Shows on any lead where the lead's last message is the most recent
+                          (user_sent_last) AND at least 21 hours have passed since they sent it.
+                          Stays hidden under 21h to avoid noise on fresh conversations. */}
+                      {lead.user_sent_last && lead.last_user_message_at && (() => {
+                        const hrsSinceLeadMsg = (Date.now() - new Date(lead.last_user_message_at).getTime()) / 3600000
+                        if (hrsSinceLeadMsg < FOLLOW_UP_HOURS) return null
                         const msLeft = (new Date(lead.last_user_message_at).getTime() + IG_WINDOW_HOURS * 3600000) - Date.now()
                         if (msLeft <= 0) return <span style={{ fontSize: '.65rem', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\u26A0'} Window expired</span>
                         const hrsLeft = Math.floor(msLeft / 3600000)
                         const minsLeft = Math.floor((msLeft % 3600000) / 60000)
-                        const isUrgent = hrsLeft < 4
-                        return <span style={{ fontSize: '.65rem', background: isUrgent ? '#fef2f2' : '#f0fdf4', color: isUrgent ? '#dc2626' : '#16a34a', border: `1px solid ${isUrgent ? '#fecaca' : '#bbf7d0'}`, padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F1'} {hrsLeft}h {minsLeft}m left</span>
+                        return <span style={{ fontSize: '.65rem', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F1'} {hrsLeft}h {minsLeft}m left</span>
                       })()}
                     </div>
                     {/* Row 2: Conversation stage */}
@@ -873,14 +877,17 @@ export default function Inbox() {
                   return <button onClick={unmarkFollowedUp} title="Lead is now off the Closest to Booking list until they reply. Click to reset count."
                     style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#92400e', fontWeight: 600 }}>{'\u2709'} Follow-Up ({count}/2) {'\u2022'} Off Priority</button>
                 })()}
-                {/* 24-hour window timer in header */}
-                {selectedLead.user_sent_last && selectedLead.last_user_message_at && !selectedLead.followed_up && (() => {
+                {/* 24-hour window timer in header.
+                    Same logic as lead list badge: shows when lead's last message
+                    is most recent AND at least 21 hours have passed. */}
+                {selectedLead.user_sent_last && selectedLead.last_user_message_at && (() => {
+                  const hrsSinceLeadMsg = (Date.now() - new Date(selectedLead.last_user_message_at).getTime()) / 3600000
+                  if (hrsSinceLeadMsg < FOLLOW_UP_HOURS) return null
                   const msLeft = (new Date(selectedLead.last_user_message_at).getTime() + IG_WINDOW_HOURS * 3600000) - Date.now()
                   if (msLeft <= 0) return <span style={{ fontSize: '.68rem', fontWeight: 600, padding: '3px 8px', borderRadius: '999px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}>{'\u26A0'} IG window expired - use Business Suite</span>
                   const hrsLeft = Math.floor(msLeft / 3600000)
                   const minsLeft = Math.floor((msLeft % 3600000) / 60000)
-                  const isUrgent = hrsLeft < 4
-                  return <span style={{ fontSize: '.68rem', fontWeight: 600, padding: '3px 8px', borderRadius: '999px', background: isUrgent ? '#fef2f2' : '#f0fdf4', color: isUrgent ? '#dc2626' : '#16a34a', border: `1px solid ${isUrgent ? '#fecaca' : '#bbf7d0'}` }}>{'\u23F1'} {hrsLeft}h {minsLeft}m left to respond</span>
+                  return <span style={{ fontSize: '.68rem', fontWeight: 600, padding: '3px 8px', borderRadius: '999px', background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}>{'\u23F1'} {hrsLeft}h {minsLeft}m left to respond</span>
                 })()}
                 <button onClick={() => setShowProfile(p => !p)} style={{ background: showProfile ? 'var(--accl)' : 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.75rem', color: showProfile ? 'var(--acc)' : 'var(--tx2)', fontWeight: showProfile ? 600 : 400 }}>Profile</button>
               </div>
@@ -996,35 +1003,41 @@ export default function Inbox() {
                   <div ref={msgEndRef} />
                 </div>
 
-                {/* Manual Reply Input */}
-                <div style={{ padding: '10px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf)', display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0 }}>
-                  <textarea
-                    ref={manualInputRef}
-                    value={manualReply}
-                    onChange={e => {
-                      setManualReply(e.target.value)
-                      const el = e.target
-                      el.style.height = 'auto'
-                      el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        sendManualReply()
-                        if (manualInputRef.current) manualInputRef.current.style.height = 'auto'
-                      }
-                    }}
-                    placeholder="Type a manual reply..."
-                    disabled={manualSending}
-                    rows={1}
-                    style={{ flex: 1, padding: '10px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '12px', fontSize: '.84rem', color: 'var(--tx)', outline: 'none', fontFamily: 'var(--fn)', boxSizing: 'border-box', opacity: manualSending ? .6 : 1, resize: 'none', lineHeight: 1.5, maxHeight: '120px', overflowY: 'auto' }}
-                  />
-                  <button
-                    onClick={() => { sendManualReply(); if (manualInputRef.current) manualInputRef.current.style.height = 'auto' }}
-                    disabled={!manualReply.trim() || manualSending}
-                    style={{ padding: '10px 18px', background: manualReply.trim() && !manualSending ? 'var(--acc)' : 'var(--surf2)', border: 'none', borderRadius: '12px', cursor: manualReply.trim() && !manualSending ? 'pointer' : 'default', fontSize: '.84rem', color: manualReply.trim() && !manualSending ? '#fff' : 'var(--tx3)', fontWeight: 600, transition: 'all .15s', flexShrink: 0 }}
-                  >{manualSending ? 'Sending...' : 'Send'}</button>
-                </div>
+                {/* Manual Reply Input - only visible for follow-up leads.
+                    For active prospects, setters should use the AI approve path
+                    so the learning system captures their corrections. Manual
+                    replies bypass that, which is appropriate for follow-up
+                    chasing where the AI may not generate the right tone. */}
+                {(selectedLead?.followed_up || (conversation?.conversation_stage === 'FOLLOW-UP') || (selectedLead?.conversation_stage === 'FOLLOW-UP')) && (
+                  <div style={{ padding: '10px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf)', display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0 }}>
+                    <textarea
+                      ref={manualInputRef}
+                      value={manualReply}
+                      onChange={e => {
+                        setManualReply(e.target.value)
+                        const el = e.target
+                        el.style.height = 'auto'
+                        el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          sendManualReply()
+                          if (manualInputRef.current) manualInputRef.current.style.height = 'auto'
+                        }
+                      }}
+                      placeholder="Type a manual reply..."
+                      disabled={manualSending}
+                      rows={1}
+                      style={{ flex: 1, padding: '10px 14px', background: 'var(--surf2)', border: '1px solid var(--bdr)', borderRadius: '12px', fontSize: '.84rem', color: 'var(--tx)', outline: 'none', fontFamily: 'var(--fn)', boxSizing: 'border-box', opacity: manualSending ? .6 : 1, resize: 'none', lineHeight: 1.5, maxHeight: '120px', overflowY: 'auto' }}
+                    />
+                    <button
+                      onClick={() => { sendManualReply(); if (manualInputRef.current) manualInputRef.current.style.height = 'auto' }}
+                      disabled={!manualReply.trim() || manualSending}
+                      style={{ padding: '10px 18px', background: manualReply.trim() && !manualSending ? 'var(--acc)' : 'var(--surf2)', border: 'none', borderRadius: '12px', cursor: manualReply.trim() && !manualSending ? 'pointer' : 'default', fontSize: '.84rem', color: manualReply.trim() && !manualSending ? '#fff' : 'var(--tx3)', fontWeight: 600, transition: 'all .15s', flexShrink: 0 }}
+                    >{manualSending ? 'Sending...' : 'Send'}</button>
+                  </div>
+                )}
               </div>
 
               {/* RIGHT: AI Assistant Panel (only when pending review exists) */}
