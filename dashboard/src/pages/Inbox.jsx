@@ -1003,12 +1003,12 @@ export default function Inbox() {
                   <div ref={msgEndRef} />
                 </div>
 
-                {/* Manual Reply Input - only visible for follow-up leads.
+                {/* Manual Reply Input - only visible when the user is on the Follow Ups tab.
                     For active prospects, setters should use the AI approve path
                     so the learning system captures their corrections. Manual
                     replies bypass that, which is appropriate for follow-up
                     chasing where the AI may not generate the right tone. */}
-                {(selectedLead?.followed_up || (conversation?.conversation_stage === 'FOLLOW-UP') || (selectedLead?.conversation_stage === 'FOLLOW-UP')) && (
+                {filter === 'Follow Ups' && (
                   <div style={{ padding: '10px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf)', display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0 }}>
                     <textarea
                       ref={manualInputRef}
