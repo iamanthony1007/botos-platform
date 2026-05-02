@@ -675,6 +675,28 @@ export default function Inbox() {
 
   function fmtTime(ts) { if (!ts) return ''; return timeAgo(ts) }
 
+  // Step 5 (2026-05-01): precise per-message time stamp.
+  // Used in the thread under every lead and bot message so setters can audit
+  // exact send times - critical for diagnosing 24-hour window expiry, late
+  // deliveries, and gaps that explain ManyChat 400 validation errors.
+  function fmtMessageTime(ts) {
+    if (!ts) return ''
+    const d = new Date(ts)
+    if (isNaN(d.getTime())) return ''
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    const dayDiff = Math.round((today - msgDay) / 86400000)
+    const timePart = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    if (dayDiff === 0) return timePart
+    if (dayDiff === 1) return `Yesterday ${timePart}`
+    const sameYear = d.getFullYear() === now.getFullYear()
+    const datePart = sameYear
+      ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+      : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+    return `${datePart}, ${timePart}`
+  }
+
   function fmtDate(ts) {
     if (!ts) return ''
     const d = new Date(ts), now = new Date()
@@ -1011,6 +1033,12 @@ export default function Inbox() {
                           {isLead && (
                             <div style={{ padding: '9px 13px', borderRadius: '2px 16px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#fff', color: 'var(--tx)', border: '1px solid rgba(0,0,0,.06)', boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>{item.content}</div>
                           )}
+                          {/* Step 5 (2026-05-01): precise timestamp under lead messages so setters can audit exact times. */}
+                          {isLead && item.timestamp && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
+                              <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }} title={new Date(item.timestamp).toLocaleString()}>{fmtMessageTime(item.timestamp)}</span>
+                            </div>
+                          )}
                           {/* AI suggested — small button below lead's last message, opens review panel on click */}
                           {isLead && (() => {
                             // Find the next assistant message after this lead message
@@ -1092,7 +1120,7 @@ export default function Inbox() {
                           ))}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
-                          <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{item.timestamp ? fmtTime(new Date(item.timestamp)) : ''}</span>
+                          <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }} title={item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}>{item.timestamp ? fmtMessageTime(item.timestamp) : ''}</span>
                           {!isLead && isManual && <span style={{ fontSize: '.65rem', color: '#1a3a8f', fontWeight: 600, background: '#e8f0fe', border: '1px solid #c7d7fc', padding: '1px 6px', borderRadius: '999px' }}>{'\u270F\uFE0F'} Manual</span>}
                           {!isLead && !isManual && isSent && review?.status === 'auto_sent' && <span style={{ fontSize: '.65rem', color: '#5b21b6', fontWeight: 600, background: '#ede9fe', border: '1px solid #ddd6fe', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Auto-sent</span>}
                           {!isLead && !isManual && isSent && review?.status === 'edited' && <span style={{ fontSize: '.65rem', color: '#9a3412', fontWeight: 600, background: '#ffedd5', border: '1px solid #fed7aa', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Edited</span>}
