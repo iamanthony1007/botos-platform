@@ -366,7 +366,12 @@ export default function Inbox() {
       if (hasMatch) {
         updatedMessages = currentMessages.map(m => {
           if (m.review_id === activeReview.id) {
-            return { ...m, content: joinedReply, bot_messages: validMessages, final_sent: true }
+            // Step 6 (2026-05-02): refresh timestamp to send-time, not draft-time.
+            // Prior to this fix the message kept the timestamp the Worker stamped
+            // when the bot first generated the draft - so the thread showed
+            // misleading times like "Bot replied 12:57" when really the setter
+            // approved and sent at 1:03. Reflect actual send time instead.
+            return { ...m, content: joinedReply, bot_messages: validMessages, final_sent: true, timestamp: Date.now() }
           }
           return m
         })
@@ -433,7 +438,9 @@ export default function Inbox() {
       if (hasMatch) {
         updatedMessages = currentMessages.map(m => {
           if (m.review_id === activeReview.id) {
-            return { ...m, content: joinedReply, bot_messages: validMessages, final_sent: true }
+            // Step 6 (2026-05-02): refresh timestamp to send-time, not draft-time.
+            // See approveReview for the same fix; same reasoning applies here.
+            return { ...m, content: joinedReply, bot_messages: validMessages, final_sent: true, timestamp: Date.now() }
           }
           return m
         })
