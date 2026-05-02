@@ -1033,12 +1033,6 @@ export default function Inbox() {
                           {isLead && (
                             <div style={{ padding: '9px 13px', borderRadius: '2px 16px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#fff', color: 'var(--tx)', border: '1px solid rgba(0,0,0,.06)', boxShadow: '0 1px 2px rgba(0,0,0,.08)' }}>{item.content}</div>
                           )}
-                          {/* Step 5 (2026-05-01): precise timestamp under lead messages so setters can audit exact times. */}
-                          {isLead && item.timestamp && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
-                              <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }} title={new Date(item.timestamp).toLocaleString()}>{fmtMessageTime(item.timestamp)}</span>
-                            </div>
-                          )}
                           {/* AI suggested — small button below lead's last message, opens review panel on click */}
                           {isLead && (() => {
                             // Find the next assistant message after this lead message
