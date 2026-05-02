@@ -1,0 +1,28 @@
+﻿# Backup files from deploy scripts
+*.bak.*
+
+# Build outputs
+dashboard/dist/
+dashboard/.vite/
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Local dev
+.env
+.env.local
+.env.*.local
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Wrangler / Cloudflare local state
+.wrangler/
+**/.wrangler/
+
+# Archive/zip artifacts
+*.zip
