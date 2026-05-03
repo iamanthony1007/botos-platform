@@ -554,7 +554,15 @@ var index_default = {
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const body = await request.json();
-        let { customer_id, message, channel = "instagram", username = null, profile_name = null } = body;
+        // Step 7 (2026-05-03): also accept lead_source and last_input_text from
+        // ManyChat keyword/comment automations. lead_source identifies the entry
+        // (e.g. "fit", "bomber", "hipflow"). last_input_text is ManyChat's
+        // {{last_input_text}} variable which may be the same as message OR may be
+        // the lead's actual prior DM text when a keyword fired. We use the duplicate
+        // detection logic below to decide whether to treat this as a fresh user message
+        // or as a keyword-only event echoing the prior DM.
+        let { customer_id, message, channel = "instagram", username = null, profile_name = null,
+              lead_source = null, last_input_text = null } = body;
 
         // Row 27: Sanitize string fields. ManyChat sometimes sends an unresolved
         // variable placeholder (e.g. "{{last_input_text}}") as plain text instead
@@ -572,6 +580,9 @@ var index_default = {
         };
         username = cleanField(username);
         profile_name = cleanField(profile_name);
+        // Step 7: same sanitization for lead_source and last_input_text - reject placeholders.
+        lead_source = cleanField(lead_source);
+        last_input_text = cleanField(last_input_text);
         // Note: we do NOT clean message here because the validation below requires
         // a non-empty message and we'd rather return a proper 400 than silently
         // proceed with no input to Claude.
@@ -679,8 +690,57 @@ var index_default = {
 
         // Handle tester init — don't add the trigger to memory, just get opening message
         const isTesterInit = message === "__tester_init__";
+
+        // ── Step 7 (2026-05-03): lead_source event detection ───────────────
+        // When ManyChat fires a keyword/comment automation (FIT, BOMBER, etc.),
+        // it sends lead_source. Two patterns to handle:
+        //
+        //   A) Lead is brand new OR genuinely typed the keyword: treat normally.
+        //      Push user message, generate reply, store lead_source on conversation.
+        //
+        //   B) Lead has prior history AND the message we received matches the
+        //      latest stored user message (case-insensitive trim). This means
+        //      ManyChat fired the keyword automation but {{last_input_text}}
+        //      resolved to the lead's PREVIOUS DM (already replied to). We do
+        //      NOT want to re-process that old DM. We DO want to acknowledge
+        //      the new keyword event.
+        //
+        // Either way we record the keyword event in memory (and conversations.messages)
+        // as a `lead_source_event` entry so the dashboard renders it as a banner
+        // and the bot sees it as context.
+        const isLeadSourceEvent = !!lead_source && !isTesterInit;
+        let isDuplicateOfLastMessage = false;
+        if (isLeadSourceEvent && Array.isArray(memory.messages) && memory.messages.length > 0) {
+          // Walk backward to find the most recent lead message
+          const lastUserMsg = [...memory.messages].reverse().find(m =>
+            m && (m.role === 'user' || m.role === 'Lead')
+          );
+          if (lastUserMsg && lastUserMsg.content) {
+            const norm = (s) => String(s || '').trim().toLowerCase();
+            if (norm(message) === norm(lastUserMsg.content)) {
+              isDuplicateOfLastMessage = true;
+              console.log(`[Step 7] lead_source="${lead_source}" event for ${customer_id}: detected duplicate of last user message - will not re-process old DM`);
+            }
+          }
+        }
+
         if (!isTesterInit) {
-          memory.messages.push({ role: "user", content: message, timestamp: Date.now() });
+          // Insert the lead_source_event marker BEFORE the user message so the
+          // banner renders at the correct position in the thread timeline.
+          if (isLeadSourceEvent) {
+            memory.messages.push({
+              role: 'lead_source_event',
+              lead_source: lead_source,
+              display_text: `Engaged via "${lead_source}"`,
+              timestamp: Date.now()
+            });
+          }
+
+          // Only push the actual user message if it is NOT a duplicate of the prior one.
+          // For duplicate keyword events, the conversation already has that message.
+          if (!isDuplicateOfLastMessage) {
+            memory.messages.push({ role: "user", content: message, timestamp: Date.now() });
+          }
           if (memory.messages.length > 15) memory.messages = memory.messages.slice(-15);
         }
 
@@ -792,6 +852,19 @@ var index_default = {
         const isFreshConversation = totalMsgs <= 3 && !wasFollowedUp;
         if (isFreshConversation && botSettings.welcome_context && botSettings.welcome_context.trim().length > 0) {
           memory.welcome_context = botSettings.welcome_context.trim();
+        }
+
+        // Step 7 (2026-05-03): lead_source context injection.
+        // If a keyword event fired, tell Claude explicitly so the reply is
+        // appropriate. The system prompt section is built in callClaude() from
+        // memory.lead_source_context. Different framing for fresh leads vs
+        // existing leads vs duplicate-DM events.
+        if (isLeadSourceEvent) {
+          memory.lead_source_context = {
+            source: lead_source,
+            is_duplicate: isDuplicateOfLastMessage,
+            is_fresh_lead: totalMsgs <= 2  // they only have the lead_source_event entry and maybe one earlier message
+          };
         }
 
         const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
@@ -1046,6 +1119,10 @@ var index_default = {
           re_engaged: wasFollowedUp,
           pre_followup_stage: preFollowupStageToWrite,
           updated_at: new Date().toISOString(),
+          // Step 7 (2026-05-03): persist lead_source on every keyword event.
+          // Spread is conditional so non-keyword webhooks don't overwrite an
+          // existing lead_source value with null.
+          ...(isLeadSourceEvent ? { lead_source: lead_source, lead_source_updated_at: new Date().toISOString() } : {}),
           ...(username ? { username: String(username) } : {}),
           ...(profile_name ? { profile_name: String(profile_name) } : {})
         }, "bot_id,customer_id"));
@@ -1867,7 +1944,30 @@ ${memory.welcome_context}
 
 ` : "";
 
-  const finalSystemPrompt = welcomeSection + reEngagementSection + learningsSection + documentSection + campaignSection + systemPrompt;
+  // Step 7 (2026-05-03): lead_source event context.
+  // Built from memory.lead_source_context which the webhook handler sets when
+  // a ManyChat keyword/comment automation fires. Three modes:
+  //  - Fresh lead: treat the keyword as the entry point (use the keyword opening lines)
+  //  - Existing lead, normal: lead said something new that also triggered a keyword - acknowledge briefly
+  //  - Existing lead, duplicate: keyword event fired but the lead's last DM was already responded to.
+  //                             Acknowledge the new comment/keyword without re-processing the old DM.
+  const leadSourceSection = memory.lead_source_context ? `
+═══════════════════════════════════════
+🪝 LEAD SOURCE EVENT - READ FIRST
+═══════════════════════════════════════
+
+The lead just engaged via the keyword/comment "${memory.lead_source_context.source}".
+${memory.lead_source_context.is_fresh_lead
+    ? `This is a FRESH lead with no prior conversation. Treat the keyword as their entry point. Use the entry opening defined in your system prompt for "${memory.lead_source_context.source}" (BOMBER, FIT, POWER, HIP FLOW, TPI, etc.).`
+    : memory.lead_source_context.is_duplicate
+    ? `This is an EXISTING lead whose previous DM was already responded to in this conversation thread. The keyword event fired because they commented or used the keyword again, NOT because they sent a new DM. DO NOT restart the conversation. DO NOT respond to the old DM as if it were new. Briefly acknowledge that they just commented/engaged with the keyword and then continue the conversation naturally from the current stage.`
+    : `This is an EXISTING lead who is also engaging via this keyword in addition to their message. Acknowledge the keyword engagement briefly if it adds value, but continue the conversation based on what they actually said.`}
+
+═══════════════════════════════════════
+
+` : "";
+
+  const finalSystemPrompt = welcomeSection + leadSourceSection + reEngagementSection + learningsSection + documentSection + campaignSection + systemPrompt;
 
   const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",

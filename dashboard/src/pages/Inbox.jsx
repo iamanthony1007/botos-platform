@@ -102,7 +102,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }, { data: progressReviews }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged, pre_followup_stage').eq('bot_id', bot.id).neq('channel', 'tester').is('deleted_at', null).order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged, pre_followup_stage, lead_source, lead_source_updated_at').eq('bot_id', bot.id).neq('channel', 'tester').is('deleted_at', null).order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
       supabase.from('reviews').select('id, status, confidence').eq('bot_id', bot.id).not('customer_id', 'ilike', 'tester_%')
     ])
@@ -159,6 +159,9 @@ export default function Inbox() {
         followup_count: c.followup_count || 0,
         re_engaged: c.re_engaged || false,
         pre_followup_stage: c.pre_followup_stage || null,
+        // Step 7 (2026-05-03): carry lead_source for inbox UI display.
+        lead_source: c.lead_source || null,
+        lead_source_updated_at: c.lead_source_updated_at || null,
         pending_count: 0, handoff_count: 0, latest_preview: lastLeadMsg, all_reviews: []
       }
     })
@@ -725,6 +728,22 @@ export default function Inbox() {
       const ts = m.timestamp ? new Date(m.timestamp) : null
       const dateLabel = ts ? fmtDate(ts) : null
       if (dateLabel && dateLabel !== lastDate) { items.push({ type: 'separator', label: dateLabel, key: `sep-${i}` }); lastDate = dateLabel }
+
+      // Step 7 (2026-05-03): lead_source_event entries render as a centered banner,
+      // not a chat bubble. They appear inline in the timeline at their natural
+      // chronological position so setters can see when the lead engaged via a
+      // keyword/comment relative to other messages.
+      if (m.role === 'lead_source_event') {
+        items.push({
+          type: 'lead_source_event',
+          lead_source: m.lead_source || 'unknown',
+          display_text: m.display_text || `Engaged via "${m.lead_source || 'keyword'}"`,
+          timestamp: m.timestamp,
+          key: `lse-${i}`
+        })
+        return
+      }
+
       const botMessages = m.bot_messages || (m.content ? [m.content] : [])
       const matchedReview = m.review_id ? reviewMap[m.review_id] : null
 
@@ -1020,6 +1039,35 @@ export default function Inbox() {
                         <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
                         <span style={{ fontSize: '.69rem', color: 'var(--tx3)', background: '#e8ede8', padding: '3px 10px', borderRadius: '999px', fontWeight: 500, whiteSpace: 'nowrap' }}>{item.label}</span>
                         <div style={{ flex: 1, height: '1px', background: 'var(--bdr)' }} />
+                      </div>
+                    )
+                    // Step 7 (2026-05-03): keyword/comment engagement banner.
+                    // Centered pill, distinct from chat bubbles. Shows the lead source
+                    // and the time the event was recorded.
+                    if (item.type === 'lead_source_event') return (
+                      <div key={item.key} style={{ display: 'flex', justifyContent: 'center', margin: '10px 0' }}>
+                        <div
+                          title={item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            background: '#fef3c7',
+                            border: '1px solid #fde68a',
+                            color: '#92400e',
+                            fontSize: '.74rem',
+                            fontWeight: 600,
+                            padding: '6px 14px',
+                            borderRadius: '999px',
+                            maxWidth: 'min(80%, 480px)'
+                          }}
+                        >
+                          <span>{'\uD83E\uDE9D'}</span>
+                          <span>{item.display_text}</span>
+                          {item.timestamp && (
+                            <span style={{ fontWeight: 400, color: '#a16207' }}>{'\u00B7'} {fmtMessageTime(item.timestamp)}</span>
+                          )}
+                        </div>
                       </div>
                     )
                     const isLead = item.role === 'user' || item.role === 'Lead'
