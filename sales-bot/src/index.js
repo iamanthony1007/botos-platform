@@ -583,9 +583,30 @@ var index_default = {
         // Step 7: same sanitization for lead_source and last_input_text - reject placeholders.
         lead_source = cleanField(lead_source);
         last_input_text = cleanField(last_input_text);
-        // Note: we do NOT clean message here because the validation below requires
-        // a non-empty message and we'd rather return a proper 400 than silently
-        // proceed with no input to Claude.
+
+        // Step 9 (2026-05-03): also sanitize the message field.
+        // Previously we deliberately skipped this, reasoning that an empty
+        // message should 400 the request. That produced a real bug: when
+        // ManyChat fires a keyword automation for a lead who has never sent
+        // a DM (only commented), {{last_input_text}} resolved to nothing
+        // and ManyChat sent the literal string "{{last_input_text}}" as the
+        // message body. The Worker stored that garbage as a user message
+        // and the dashboard rendered chat bubbles containing the placeholder.
+        const cleanedMessage = cleanField(message);
+        message = cleanedMessage;
+
+        // A "keyword-only event" is when ManyChat fired a keyword/comment
+        // automation but the lead has no real DM content. There's nothing
+        // for Claude to respond TO in the message-content sense - the
+        // engagement IS the lead_source. We substitute lead_source as the
+        // message content so the dashboard renders a meaningful bubble (the
+        // setter sees what triggered the event), the lead list preview shows
+        // it, and Claude has something concrete in the developer prompt.
+        const isKeywordOnlyEvent = !message && !!lead_source;
+        if (isKeywordOnlyEvent) {
+          message = lead_source;
+          console.log(`[Step 9] customer_id=${customer_id}: keyword-only event, substituting lead_source="${lead_source}" as message content`);
+        }
 
         if (!customer_id || !message) {
           return new Response(JSON.stringify({ error: "Missing customer_id or message" }), {
@@ -859,11 +880,18 @@ var index_default = {
         // appropriate. The system prompt section is built in callClaude() from
         // memory.lead_source_context. Different framing for fresh leads vs
         // existing leads vs duplicate-DM events.
+        // Step 9 (2026-05-03): added is_keyword_only flag. True when the lead
+        // engaged via comment/keyword without typing a real DM - the bot
+        // should generate a warm opener acknowledging the engagement source.
+        // False when the lead sent a real message that also happened to include
+        // the keyword - the bot should respond to the actual message content
+        // and treat lead_source as metadata about how they came in.
         if (isLeadSourceEvent) {
           memory.lead_source_context = {
             source: lead_source,
             is_duplicate: isDuplicateOfLastMessage,
-            is_fresh_lead: totalMsgs <= 2  // they only have the lead_source_event entry and maybe one earlier message
+            is_fresh_lead: totalMsgs <= 2,  // they only have the lead_source_event entry and maybe one earlier message
+            is_keyword_only: isKeywordOnlyEvent
           };
         }
 
@@ -1945,23 +1973,52 @@ ${memory.welcome_context}
 ` : "";
 
   // Step 7 (2026-05-03): lead_source event context.
-  // Built from memory.lead_source_context which the webhook handler sets when
-  // a ManyChat keyword/comment automation fires. Three modes:
-  //  - Fresh lead: treat the keyword as the entry point (use the keyword opening lines)
-  //  - Existing lead, normal: lead said something new that also triggered a keyword - acknowledge briefly
-  //  - Existing lead, duplicate: keyword event fired but the lead's last DM was already responded to.
-  //                             Acknowledge the new comment/keyword without re-processing the old DM.
+  // Step 9 (2026-05-03): rewritten to be source-agnostic. The bot no longer
+  // relies on hardcoded keywords (BOMBER, FIT, POWER, etc.) being defined in
+  // the system prompt. lead_source is treated as metadata about the entry
+  // path. The bot reasons about it generically: it knows the lead engaged
+  // via SOME source, and should respond appropriately based on whether they
+  // also sent real message content.
+  //
+  // Four modes:
+  //  - keyword-only (lead has no prior history, message IS the source value):
+  //      generate a warm opener that acknowledges the engagement without
+  //      assuming what the source means
+  //  - keyword-only (existing lead): the engagement is a re-trigger; don't
+  //      restart, briefly acknowledge and continue
+  //  - duplicate (existing lead, prior DM was already replied to): same as
+  //      above - don't reprocess the old DM
+  //  - normal (existing lead with a real message that contains the keyword):
+  //      respond to the actual message content, treat source as metadata only
   const leadSourceSection = memory.lead_source_context ? `
 ═══════════════════════════════════════
 🪝 LEAD SOURCE EVENT - READ FIRST
 ═══════════════════════════════════════
 
-The lead just engaged via the keyword/comment "${memory.lead_source_context.source}".
-${memory.lead_source_context.is_fresh_lead
-    ? `This is a FRESH lead with no prior conversation. Treat the keyword as their entry point. Use the entry opening defined in your system prompt for "${memory.lead_source_context.source}" (BOMBER, FIT, POWER, HIP FLOW, TPI, etc.).`
+The lead engaged via the source: "${memory.lead_source_context.source}".
+This is metadata about HOW the lead came in (a comment, a keyword, an automation trigger, etc). It is NOT necessarily a direct request from the lead.
+
+${memory.lead_source_context.is_keyword_only && memory.lead_source_context.is_fresh_lead
+    ? `MODE: keyword-only fresh lead.
+The lead has NO prior conversation history and did not send a real DM. They engaged via a comment, keyword trigger, or automation entry point. Their "message" content is the source value itself, not real text they typed.
+
+How to respond:
+- Generate a warm, friendly opener appropriate to a fresh lead
+- If the source value gives you a clear hint about their interest (e.g. it's a topic name, body part, training type, or content category), you may use that hint to make the opener more specific
+- If the source value is unclear, generic, or just a workflow label (e.g. "User Sent a message/comment early extension"), default to a neutral warm opener
+- DO NOT pretend the lead said something they did not say
+- DO NOT assume what the source means if it is ambiguous`
+    : memory.lead_source_context.is_keyword_only && memory.lead_source_context.is_duplicate
+    ? `MODE: keyword-only duplicate event for an existing lead.
+The lead has prior conversation history. They commented or used a keyword again, but the system already responded to their last DM. Do not restart. Do not re-process. Briefly acknowledge the new engagement and continue the conversation naturally from the current stage.`
+    : memory.lead_source_context.is_keyword_only
+    ? `MODE: keyword-only event for an existing lead.
+The lead has prior conversation history but only the engagement signal (no new DM content) came through. Briefly acknowledge that they just engaged again, and continue the conversation naturally from the current stage.`
     : memory.lead_source_context.is_duplicate
-    ? `This is an EXISTING lead whose previous DM was already responded to in this conversation thread. The keyword event fired because they commented or used the keyword again, NOT because they sent a new DM. DO NOT restart the conversation. DO NOT respond to the old DM as if it were new. Briefly acknowledge that they just commented/engaged with the keyword and then continue the conversation naturally from the current stage.`
-    : `This is an EXISTING lead who is also engaging via this keyword in addition to their message. Acknowledge the keyword engagement briefly if it adds value, but continue the conversation based on what they actually said.`}
+    ? `MODE: existing lead, duplicate DM event.
+The keyword automation fired AND it carried the lead's previous DM as the message text. That DM was already responded to. Do not restart. Do not respond to the old DM as if it were new. Briefly acknowledge they just commented or engaged with the keyword, then continue the conversation naturally from the current stage.`
+    : `MODE: existing lead, real message with keyword present.
+The lead sent a REAL message that also happened to trigger a keyword automation (their text contains a keyword the system watches for). PRIORITIZE responding to the actual message content. Treat the lead_source as metadata only. Do not respond as if they "used the keyword" - they sent a real message that may have coincidentally contained the word.`}
 
 ═══════════════════════════════════════
 
