@@ -404,9 +404,12 @@ export default function Inbox() {
         ...(containsBookingLink ? { status: 'booked' } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     } else {
-      // Row 25: still bump updated_at on approve even when there's no conversation record or stage correction
+      // Step 10 (2026-05-03): no longer bump updated_at on this fallback path.
+      // This branch fires only when the conversation record has no matching
+      // message to update - meaning we're correcting stage/intent/status but NOT
+      // adding a real message. The lead list sort should reflect actual message
+      // exchanges, not admin corrections, so updated_at is left alone.
       await supabase.from('conversations').update({
-        updated_at: new Date().toISOString(),
         ...(finalStage ? { conversation_stage: finalStage } : {}),
         ...(finalIntent ? { lead_intent: finalIntent } : {}),
         ...(containsBookingLink ? { status: 'booked' } : {})
@@ -472,9 +475,10 @@ export default function Inbox() {
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     } else {
-      // Row 25: still bump updated_at on edit even when there is no conversation record
+      // Step 10 (2026-05-03): no longer bump updated_at on this fallback path.
+      // Same reasoning as approve(): this branch only corrects stage/intent
+      // without adding a message. Lead list sort should reflect message exchanges.
       await supabase.from('conversations').update({
-        updated_at: new Date().toISOString(),
         ...(correctedStage ? { conversation_stage: correctedStage } : {}),
         ...(correctedIntent ? { lead_intent: correctedIntent } : {})
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
@@ -493,11 +497,9 @@ export default function Inbox() {
   async function discard() {
     if (!activeReview) return
     await supabase.from('reviews').update({ status: 'discarded', resolved_at: new Date().toISOString() }).eq('id', activeReview.id)
-    // Row 25: also bump the conversation so the inbox list reorders and the review drops out of Pending
-    await supabase.from('conversations')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('bot_id', botId)
-      .eq('customer_id', activeReview.customer_id)
+    // Step 10 (2026-05-03): no longer bump conversation updated_at on discard.
+    // Discard is an admin action, not a message exchange. The realtime subscription
+    // on the reviews table handles inbox refresh and pending-count drop on its own.
     showToast('Discarded', 'info')
     setActiveReview(null)
     setReplyMessages([])
@@ -557,10 +559,10 @@ export default function Inbox() {
 
   async function markAsBooked() {
     if (!selectedLead || !botId) return
+    // Step 10 (2026-05-03): no longer bumps updated_at - admin action, not a message.
     await supabase.from('conversations').update({
       status: 'booked',
-      conversation_stage: 'BOOKED',
-      updated_at: new Date().toISOString()
+      conversation_stage: 'BOOKED'
     }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
     setConversation(prev => prev ? { ...prev, status: 'booked', conversation_stage: 'BOOKED' } : prev)
     setSelectedLead(prev => prev ? { ...prev, conversation_stage: 'BOOKED' } : prev)
@@ -573,10 +575,10 @@ export default function Inbox() {
     if (!confirm('Remove booked status from this lead?')) return
     // Restore the previous stage from the conversation, or default to HOOK / ENTRY
     const previousStage = conversation?.conversation_stage === 'BOOKED' ? 'HOOK / ENTRY' : (conversation?.conversation_stage || 'HOOK / ENTRY')
+    // Step 10 (2026-05-03): no longer bumps updated_at - admin action.
     await supabase.from('conversations').update({
       status: 'active',
-      conversation_stage: previousStage,
-      updated_at: new Date().toISOString()
+      conversation_stage: previousStage
     }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
     setConversation(prev => prev ? { ...prev, status: 'active', conversation_stage: previousStage } : prev)
     setSelectedLead(prev => prev ? { ...prev, conversation_stage: previousStage } : prev)
@@ -595,11 +597,13 @@ export default function Inbox() {
     const currentStage = conversation?.conversation_stage || selectedLead.conversation_stage
     const existingPreStage = conversation?.pre_followup_stage || selectedLead.pre_followup_stage
     const shouldCapturePreStage = currentStage && currentStage !== 'FOLLOW-UP' && !existingPreStage
+    // Step 10 (2026-05-03): no longer bumps updated_at - admin action, not a tracked message.
+    // The DM was sent through Business Suite, off-platform, so we have no message
+    // to add to the thread. The lead list sort should not jump for this.
     const updatePayload = {
       followup_count: newCount,
       followed_up: newCount > 0,
-      re_engaged: false,
-      updated_at: new Date().toISOString()
+      re_engaged: false
     }
     if (shouldCapturePreStage) updatePayload.pre_followup_stage = currentStage
     await supabase.from('conversations').update(updatePayload).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
@@ -617,10 +621,10 @@ export default function Inbox() {
   async function unmarkFollowedUp() {
     if (!selectedLead || !botId) return
     if (!confirm('Reset follow-up count to 0 for this lead?')) return
+    // Step 10 (2026-05-03): no longer bumps updated_at - admin action.
     await supabase.from('conversations').update({
       followup_count: 0,
-      followed_up: false,
-      updated_at: new Date().toISOString()
+      followed_up: false
     }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
     setConversation(prev => prev ? { ...prev, followup_count: 0, followed_up: false } : prev)
     setSelectedLead(prev => prev ? { ...prev, followup_count: 0, followed_up: false } : prev)
@@ -632,8 +636,9 @@ export default function Inbox() {
     if (!selectedLead || !botId) return
     const newUsername = usernameInput.trim().replace(/^@/, '')
     if (!newUsername) return
+    // Step 10 (2026-05-03): no longer bumps updated_at - admin action, not a message.
     const { error } = await supabase.from('conversations')
-      .update({ username: newUsername, updated_at: new Date().toISOString() })
+      .update({ username: newUsername })
       .eq('bot_id', botId)
       .eq('customer_id', selectedLead.customer_id)
     if (error) { showToast('Failed to save username', 'error'); return }
