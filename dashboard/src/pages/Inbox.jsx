@@ -7,7 +7,13 @@ import { useDataCache } from '../lib/DataCache'
 
 const FILTERS = ['All', 'Pending', 'Needs Response', 'Follow Ups', 'Escalated', 'Resolved', 'Test']
 const FOLLOW_UP_HOURS = 21
-const IG_WINDOW_HOURS = 24
+// Step 8 (2026-05-03): IG window threshold lowered from 24h to 23h to give
+// a 1-hour safety buffer. Meta closes the messaging window exactly 24 hours
+// after the lead's last message. We treat 23h as "expired" so that by the
+// time a setter notices and tries to send, there's still room before the
+// hard Meta cutoff. Used for: lead-list badge, inbox header timer, Follow
+// Ups tab filter, and the windowExpired flag.
+const IG_WINDOW_HOURS = 23
 const STAGES = ['HOOK / ENTRY','GOAL','DIAGNOSTIC','INSIGHT','PRIORITY','DECISION','INVITE','SCHEDULE','BOOKED','FOLLOW-UP']
 
 export default function Inbox() {
@@ -789,14 +795,16 @@ export default function Inbox() {
   const filteredLeads = sortedLeads.filter(l => {
     const matchesSearch = !search || getLeadName(l).toLowerCase().includes(search.toLowerCase()) || String(l.customer_id).includes(search) || (l.username && l.username.toLowerCase().includes(search.toLowerCase().replace('@', ''))) || (l.profile_name && l.profile_name.toLowerCase().includes(search.toLowerCase()))
     const isTester = String(l.customer_id).startsWith('tester_') || l.channel === 'tester'
-    // Follow Ups: bot sent last message, lead hasn't replied in 21+ hours, no pending review
+    // Step 8 (2026-05-03): Follow Ups tab semantics changed.
+    // Previously: leads where bot sent last and lead hasn't replied in 21+ hours.
+    // Now: leads whose IG window has expired (last_user_message_at is 23h+ old),
+    // regardless of who sent the most recent message. The tab is now a list of
+    // leads that the setter should NOT message via the bot (window closed) and
+    // should reach out via Business Suite or another off-platform channel instead.
     const isFollowUp = (() => {
-      if (isTester || l.pending_count > 0 || !l.last_bot_sent_at) return false
-      const hoursSinceBotSent = (Date.now() - new Date(l.last_bot_sent_at).getTime()) / 3600000
-      const lastActivityMs = new Date(l.last_activity).getTime()
-      const lastBotMs = new Date(l.last_bot_sent_at).getTime()
-      const leadRepliedAfter = lastActivityMs > lastBotMs + 5 * 60000
-      return hoursSinceBotSent >= FOLLOW_UP_HOURS && !leadRepliedAfter
+      if (isTester || !l.last_user_message_at) return false
+      const hoursSinceLeadMsg = (Date.now() - new Date(l.last_user_message_at).getTime()) / 3600000
+      return hoursSinceLeadMsg >= IG_WINDOW_HOURS
     })()
     // Needs Response: lead sent the last message and hasn't been responded to
     // Includes both within and outside the 24-hour IG window
@@ -885,11 +893,13 @@ export default function Inbox() {
             <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--tx3)', fontSize: '.84rem' }}>{search ? 'No leads match your search' : 'No conversations yet'}</div>
           ) : filteredLeads.map(lead => {
             const isSelected = selectedLead?.customer_id === lead.customer_id
+            // Step 8 (2026-05-03): "Follow up" pill on lead card uses the same
+            // semantics as the Follow Ups tab filter - lead's window has expired
+            // (last_user_message_at is 23h+ old). Previously this used last_bot_sent_at.
             const isFollowUpLead = (() => {
-              if (String(lead.customer_id).startsWith('tester_') || lead.channel === 'tester' || lead.pending_count > 0 || !lead.last_bot_sent_at) return false
-              const hrs = (Date.now() - new Date(lead.last_bot_sent_at).getTime()) / 3600000
-              const leadReplied = new Date(lead.last_activity).getTime() > new Date(lead.last_bot_sent_at).getTime() + 5 * 60000
-              return hrs >= FOLLOW_UP_HOURS && !leadReplied
+              if (String(lead.customer_id).startsWith('tester_') || lead.channel === 'tester' || !lead.last_user_message_at) return false
+              const hrs = (Date.now() - new Date(lead.last_user_message_at).getTime()) / 3600000
+              return hrs >= IG_WINDOW_HOURS
             })()
             return (
               <div key={lead.customer_id} onClick={() => selectLead(lead)} style={{ padding: '12px 14px', cursor: 'pointer', borderBottom: '1px solid var(--bdr)', background: isSelected ? 'var(--accp)' : 'transparent', borderLeft: isSelected ? '3px solid var(--acc)' : '3px solid transparent', transition: 'background .15s' }}>
@@ -907,11 +917,15 @@ export default function Inbox() {
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                       {isFollowUpLead && <span style={{ fontSize: '.68rem', background: '#fff7ed', color: '#d97706', border: '1px solid #fed7aa', padding: '1px 5px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F0'} Follow up</span>}
                       {lead.re_engaged && <span style={{ fontSize: '.68rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '999px', flexShrink: 0, fontWeight: 600 }}>{'\u21BB'} Re-engaged</span>}
-                      {/* 24-hour IG window timer.
-                          Shows on any lead where the lead's last message is the most recent
-                          (user_sent_last) AND at least 21 hours have passed since they sent it.
-                          Stays hidden under 21h to avoid noise on fresh conversations. */}
-                      {lead.user_sent_last && lead.last_user_message_at && (() => {
+                      {/* Step 8 (2026-05-03): IG window timer.
+                          Shows on any lead with a last_user_message_at, once
+                          21+ hours have passed since the lead sent it. Drops
+                          the user_sent_last requirement - per Meta's rule,
+                          bot replies do NOT extend the window. The window
+                          counts down from the lead's last message regardless.
+                          Stays hidden under 21h to avoid noise on fresh
+                          conversations. Expires at IG_WINDOW_HOURS (23h). */}
+                      {lead.last_user_message_at && (() => {
                         const hrsSinceLeadMsg = (Date.now() - new Date(lead.last_user_message_at).getTime()) / 3600000
                         if (hrsSinceLeadMsg < FOLLOW_UP_HOURS) return null
                         const msLeft = (new Date(lead.last_user_message_at).getTime() + IG_WINDOW_HOURS * 3600000) - Date.now()
@@ -965,9 +979,12 @@ export default function Inbox() {
                 ) : (
                   <button onClick={unmarkBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600, opacity: 0.8 }}>{'\u2705'} Booked</button>
                 )}
-                {/* Smart Follow-Up button. Visible on: Follow Ups tab, leads with expired IG window,
-                    or leads carrying the orange "Follow up" badge. Always hidden for booked,
-                    pending-review, or test leads. */}
+                {/* Step 8 (2026-05-03): Smart Follow-Up button visibility simplified.
+                    Previously: shown on Follow Ups tab OR window expired OR lead had
+                    the "Follow up" badge. With the redefined semantics, all three
+                    conditions collapse into a single rule: show when the lead's
+                    window has expired (last_user_message_at 23h+). The button
+                    remains hidden for booked, pending-review, or test leads. */}
                 {(() => {
                   // Hard exclusions - button never shows for these
                   const isTester = String(selectedLead.customer_id).startsWith('tester_') || selectedLead.channel === 'tester'
@@ -975,24 +992,13 @@ export default function Inbox() {
                   const hasPending = selectedLead.pending_count > 0
                   if (isTester || isBooked || hasPending) return null
 
-                  // Condition 1: user is viewing the Follow Ups tab
-                  const onFollowUpsTab = filter === 'Follow Ups'
-
-                  // Condition 2: IG 24-hour window has expired (lead sent last, >24h ago)
-                  const windowExpired = selectedLead.user_sent_last
-                    && selectedLead.last_user_message_at
+                  // Single condition: lead's IG window has expired
+                  // (last_user_message_at is 23h+ old). This matches the Follow Ups
+                  // tab filter and the lead-list "Follow up" badge.
+                  const windowExpired = selectedLead.last_user_message_at
                     && (Date.now() - new Date(selectedLead.last_user_message_at).getTime()) >= IG_WINDOW_HOURS * 3600000
 
-                  // Condition 3: lead carries the orange "Follow up" list badge
-                  // (bot sent last, 21+ hours ago, lead hasn't replied since, no pending review)
-                  const hasFollowUpBadge = (() => {
-                    if (!selectedLead.last_bot_sent_at) return false
-                    const hrs = (Date.now() - new Date(selectedLead.last_bot_sent_at).getTime()) / 3600000
-                    const leadReplied = new Date(selectedLead.last_activity).getTime() > new Date(selectedLead.last_bot_sent_at).getTime() + 5 * 60000
-                    return hrs >= FOLLOW_UP_HOURS && !leadReplied
-                  })()
-
-                  if (!onFollowUpsTab && !windowExpired && !hasFollowUpBadge) return null
+                  if (!windowExpired) return null
 
                   const count = conversation?.followup_count ?? selectedLead.followup_count ?? 0
                   if (count === 0) {
@@ -1006,10 +1012,10 @@ export default function Inbox() {
                   return <button onClick={unmarkFollowedUp} title="Lead is now off the Closest to Booking list until they reply. Click to reset count."
                     style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#92400e', fontWeight: 600 }}>{'\u2709'} Follow-Up ({count}/2) {'\u2022'} Off Priority</button>
                 })()}
-                {/* 24-hour window timer in header.
-                    Same logic as lead list badge: shows when lead's last message
-                    is most recent AND at least 21 hours have passed. */}
-                {selectedLead.user_sent_last && selectedLead.last_user_message_at && (() => {
+                {/* Step 8 (2026-05-03): IG window timer in header.
+                    Same logic as lead list badge: based on last_user_message_at
+                    only (bot replies don't extend the window per Meta's rule). */}
+                {selectedLead.last_user_message_at && (() => {
                   const hrsSinceLeadMsg = (Date.now() - new Date(selectedLead.last_user_message_at).getTime()) / 3600000
                   if (hrsSinceLeadMsg < FOLLOW_UP_HOURS) return null
                   const msLeft = (new Date(selectedLead.last_user_message_at).getTime() + IG_WINDOW_HOURS * 3600000) - Date.now()
