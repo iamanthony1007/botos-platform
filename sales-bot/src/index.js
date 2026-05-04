@@ -3,7 +3,15 @@ var __name = (target, value) => __defProp(target, "name", { value, configurable:
 
 // src/index.js
 const BOT_ID = "00000000-0000-0000-0000-000000000002";
-const SUPABASE_URL = "https://rydkwsjwlgnivlwlvqku.supabase.co";
+
+// SUPABASE_URL is set per-environment via wrangler.toml [vars] section.
+// production: rydkwsjwlgnivlwlvqku.supabase.co (top-level [vars])
+// staging:    hpqdoikpjikqjnxotcvi.supabase.co ([env.staging.vars])
+// Fallback below preserves production behavior if env.SUPABASE_URL is missing.
+function getSupabaseUrl(env) {
+  return env.SUPABASE_URL || "https://rydkwsjwlgnivlwlvqku.supabase.co";
+}
+__name(getSupabaseUrl, "getSupabaseUrl");
 
 // FALLBACK PROMPT - only used if Supabase fails
 const FALLBACK_SYSTEM_PROMPT = `You are Coach Shaun responding to golfers via Instagram DMs. You are an expert appointment setter. Your sole responsibility is to determine fit and book Zoom calls. You sort, not sell.`;
@@ -240,7 +248,7 @@ Focus on: What do they want. What have they tried. Is it working. Is this a prio
 
 async function supabaseInsert(env, table, data) {
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    const response = await fetch(`${getSupabaseUrl(env)}/rest/v1/${table}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -292,7 +300,7 @@ __name(supabaseInsertWithRetry, "supabaseInsertWithRetry");
 
 async function supabaseUpdate(env, table, id, data) {
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${id}`, {
+    const response = await fetch(`${getSupabaseUrl(env)}/rest/v1/${table}?id=eq.${id}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -317,7 +325,7 @@ __name(supabaseUpdate, "supabaseUpdate");
 
 async function supabaseUpsert(env, table, data, onConflict) {
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
+    const response = await fetch(`${getSupabaseUrl(env)}/rest/v1/${table}?on_conflict=${onConflict}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -340,7 +348,7 @@ __name(supabaseUpsert, "supabaseUpsert");
 async function getBotSettings(env) {
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings,welcome_context`,
+      `${getSupabaseUrl(env)}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings,welcome_context`,
       {
         headers: {
           "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
@@ -654,7 +662,7 @@ var index_default = {
         if (!memoryData && username) {
           try {
             const ghlResp = await fetch(
-              `${SUPABASE_URL}/rest/v1/conversations?bot_id=eq.${BOT_ID}&username=eq.${encodeURIComponent(username.toLowerCase())}&history_source=eq.ghl_import&select=messages,running_summary,profile_facts,total_messages&limit=1`,
+              `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&username=eq.${encodeURIComponent(username.toLowerCase())}&history_source=eq.ghl_import&select=messages,running_summary,profile_facts,total_messages&limit=1`,
               { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
             );
             if (ghlResp.ok) {
@@ -687,7 +695,7 @@ var index_default = {
         if (!memoryData && memory.messages.length === 0 && customer_id) {
           try {
             const convResp = await fetch(
-              `${SUPABASE_URL}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=messages,running_summary,profile_facts,total_messages,conversation_stage&limit=1`,
+              `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=messages,running_summary,profile_facts,total_messages,conversation_stage&limit=1`,
               { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
             );
             if (convResp.ok) {
@@ -774,7 +782,7 @@ var index_default = {
           try {
             const sixtySecsAgo = new Date(Date.now() - 60000).toISOString();
             const batchResp = await fetch(
-              `${SUPABASE_URL}/rest/v1/reviews?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&status=eq.pending&created_at=gte.${sixtySecsAgo}&order=created_at.desc&limit=1`,
+              `${getSupabaseUrl(env)}/rest/v1/reviews?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&status=eq.pending&created_at=gte.${sixtySecsAgo}&order=created_at.desc&limit=1`,
               { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
             );
             if (batchResp.ok) {
@@ -801,7 +809,7 @@ var index_default = {
           if (!batchReviewId) {
             try {
               const discardResp = await fetch(
-                `${SUPABASE_URL}/rest/v1/reviews?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&status=eq.pending`,
+                `${getSupabaseUrl(env)}/rest/v1/reviews?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&status=eq.pending`,
                 {
                   method: "PATCH",
                   headers: {
@@ -840,7 +848,7 @@ var index_default = {
         let priorPreFollowupStage = null;
         try {
           const priorResp = await fetch(
-            `${SUPABASE_URL}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=followup_count,re_engaged,conversation_stage,pre_followup_stage&limit=1`,
+            `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=followup_count,re_engaged,conversation_stage,pre_followup_stage&limit=1`,
             { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
           );
           if (priorResp.ok) {
@@ -1576,7 +1584,7 @@ var index_default = {
           created_at: new Date().toISOString()
         }));
 
-        ctx.waitUntil(fetch(`${SUPABASE_URL}/rest/v1/reviews?id=eq.${review_id}`, {
+        ctx.waitUntil(fetch(`${getSupabaseUrl(env)}/rest/v1/reviews?id=eq.${review_id}`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
@@ -1809,7 +1817,7 @@ var index_default = {
 async function fetchRelevantLearnings(env, memory, limit = 30) {
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/learnings?bot_id=eq.${BOT_ID}&order=created_at.desc&limit=${limit}`,
+      `${getSupabaseUrl(env)}/rest/v1/learnings?bot_id=eq.${BOT_ID}&order=created_at.desc&limit=${limit}`,
       {
         headers: {
           "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
@@ -1840,7 +1848,7 @@ __name(fetchRelevantLearnings, "fetchRelevantLearnings");
 async function fetchActiveDocuments(env) {
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&status=eq.active&select=name,content,usage_count`,
+      `${getSupabaseUrl(env)}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&status=eq.active&select=name,content,usage_count`,
       {
         headers: {
           "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
@@ -2071,7 +2079,7 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
   // Increment usage_count (fire and forget)
   if (documents.length > 0) {
     for (const doc of documents) {
-      fetch(`${SUPABASE_URL}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&name=eq.${encodeURIComponent(doc.name)}`, {
+      fetch(`${getSupabaseUrl(env)}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&name=eq.${encodeURIComponent(doc.name)}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

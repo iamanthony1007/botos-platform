@@ -1,3 +1,6 @@
+# Top-level config = production (deployed with `wrangler deploy`)
+# Staging config below = `wrangler deploy --env staging`
+
 name = "sales-bot"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
@@ -9,3 +12,25 @@ id = "34e52c784a4e4e40925b93b17354cbec"
 
 [vars]
 ENVIRONMENT = "production"
+SUPABASE_URL = "https://rydkwsjwlgnivlwlvqku.supabase.co"
+
+
+# ----------------------------------------------------------------------
+# STAGING ENVIRONMENT
+# ----------------------------------------------------------------------
+# Deployed with: wrangler deploy --env staging
+# Worker URL:    https://sales-bot-staging.nellakuate.workers.dev
+# Uses a separate KV namespace and (after secrets are set) separate
+# Supabase + Anthropic credentials. Production is unaffected.
+# ----------------------------------------------------------------------
+
+[env.staging]
+name = "sales-bot-staging"
+
+[[env.staging.kv_namespaces]]
+binding = "MEMORY_STORE"
+id = "e1bc76417c284a3ebd82758623e1d148"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+SUPABASE_URL = "https://hpqdoikpjikqjnxotcvi.supabase.co"
