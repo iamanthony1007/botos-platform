@@ -81,12 +81,26 @@ export default function Layout() {
     const bot = await getAssignedBot(profile, 'id')
     if (!bot) return
 
-    // Count unique leads with pending reviews (not total pending messages)
+    // Count unique leads with pending reviews (not total pending messages).
+    // Step 16 (2026-05-03): subtract for_coach leads. The setter has explicitly
+    // routed those to the Coach, so they should not show as "needing the
+    // setter's reply" anywhere in the UI. The Inbox Pending tab already does
+    // this exclusion (see Step 15 in Inbox.jsx); this brings the sidebar
+    // badge in line so all counts agree.
     const getCount = async () => {
-      const { data } = await supabase
-        .from('reviews').select('customer_id')
-        .eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
-      return new Set((data || []).map(r => r.customer_id)).size
+      const [{ data: pending }, { data: forCoach }] = await Promise.all([
+        supabase.from('reviews').select('customer_id')
+          .eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
+        supabase.from('conversations').select('customer_id')
+          .eq('bot_id', bot.id).eq('for_coach', true)
+      ])
+      const forCoachSet = new Set((forCoach || []).map(c => String(c.customer_id)))
+      const uniqueLeads = new Set(
+        (pending || [])
+          .map(r => String(r.customer_id))
+          .filter(id => !forCoachSet.has(id))
+      )
+      return uniqueLeads.size
     }
 
     const initial = await getCount()
@@ -94,6 +108,12 @@ export default function Layout() {
     setUnreadCount(initial)
 
     if (channelRef.current) supabase.removeChannel(channelRef.current)
+    // Step 16 (2026-05-03): listen to BOTH reviews AND conversations realtime.
+    // The reviews listener fires when AI generates a draft, when the setter
+    // approves/edits/discards. The conversations listener fires when a lead
+    // is flagged or unflagged for_coach. Without the second listener, the
+    // sidebar count would lag (sometimes minutes) until any reviews change
+    // happened to refresh it.
     const channel = supabase.channel(`layout-inbox-${bot.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `bot_id=eq.${bot.id}` }, async () => {
         const next = await getCount()
@@ -103,6 +123,17 @@ export default function Layout() {
           playPing()
           showDesktopNotification(next)
         }
+        prevCountRef.current = next
+        setUnreadCount(next)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations', filter: `bot_id=eq.${bot.id}` }, async () => {
+        // Conversations changes are most often non-pending-affecting (e.g. a
+        // username edit). We still recompute - the operation is cheap (two
+        // small Supabase queries) and ensures the badge is fresh whenever
+        // a flag/unflag happens. We do NOT ping/notify on this path because
+        // a for_coach flag is typically a removal from the queue, not a
+        // genuinely new pending lead.
+        const next = await getCount()
         prevCountRef.current = next
         setUnreadCount(next)
       })

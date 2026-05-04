@@ -5,7 +5,7 @@ import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 import { useDataCache } from '../lib/DataCache'
 
-const FILTERS = ['All', 'Pending', 'Needs Response', 'Follow Ups', 'Escalated', 'Resolved', 'Test']
+const FILTERS = ['All', 'Pending', 'Needs Response', 'Follow Ups', 'Escalated', 'For Coach', 'Resolved', 'Test']
 const FOLLOW_UP_HOURS = 21
 // Step 8 (2026-05-03): IG window threshold lowered from 24h to 23h to give
 // a 1-hour safety buffer. Meta closes the messaging window exactly 24 hours
@@ -21,6 +21,24 @@ const IG_WINDOW_HOURS = 23
 // automatically. Display only - no DB writes.
 const FOLLOW_UP_STALE_HOURS = 72
 const STAGES = ['HOOK / ENTRY','GOAL','DIAGNOSTIC','INSIGHT','PRIORITY','DECISION','INVITE','SCHEDULE','BOOKED','FOLLOW-UP']
+
+// Step 13 (2026-05-03): For Coach routing.
+// Categories the setter (or AI) can use when flagging a lead for the Coach.
+// Each flag event is logged in coach_flag_reasons - manual flags get a
+// category + optional comment, AI flags use the AI's own reasoning text in
+// the comment field. Edit this list to change the dropdown options. The
+// 'requireComment' flag forces a comment when 'Other' is selected so we
+// always have signal for that ambiguous bucket.
+const COACH_FLAG_CATEGORIES = [
+  { key: 'existing_student',  label: 'Existing student / client' },
+  { key: 'personal_contact',  label: 'Personal contact (friend, family, IRL)' },
+  { key: 'industry_peer',     label: 'Other coach / industry peer' },
+  { key: 'press_media',       label: 'Press / media inquiry' },
+  { key: 'past_customer',     label: 'Past customer' },
+  { key: 'non_program_topic', label: 'Question about non-program topic' },
+  { key: 'spam_random',       label: 'Spam / promo / random' },
+  { key: 'other',             label: 'Other', requireComment: true },
+]
 
 export default function Inbox() {
   const { profile } = useAuth()
@@ -58,6 +76,13 @@ export default function Inbox() {
   const [aiProgress, setAiProgress] = useState(null)
   const [editingUsername, setEditingUsername] = useState(false)
   const [usernameInput, setUsernameInput] = useState('')
+  // Step 13 (2026-05-03): For Coach modal state.
+  // coachModalOpen toggles the modal. coachModalCategory holds the selected
+  // category key (one of COACH_FLAG_CATEGORIES). coachModalComment holds the
+  // optional free-text comment. All three reset when the modal closes.
+  const [coachModalOpen, setCoachModalOpen] = useState(false)
+  const [coachModalCategory, setCoachModalCategory] = useState('')
+  const [coachModalComment, setCoachModalComment] = useState('')
   const channelRef = useRef(null)
   const selectedLeadRef = useRef(null)
   const msgEndRef = useRef(null)
@@ -114,7 +139,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }, { data: progressReviews }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged, pre_followup_stage, lead_source, lead_source_updated_at').eq('bot_id', bot.id).neq('channel', 'tester').is('deleted_at', null).order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged, pre_followup_stage, lead_source, lead_source_updated_at, for_coach').eq('bot_id', bot.id).neq('channel', 'tester').is('deleted_at', null).order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
       supabase.from('reviews').select('id, status, confidence').eq('bot_id', bot.id).not('customer_id', 'ilike', 'tester_%')
     ])
@@ -174,6 +199,13 @@ export default function Inbox() {
         // Step 7 (2026-05-03): carry lead_source for inbox UI display.
         lead_source: c.lead_source || null,
         lead_source_updated_at: c.lead_source_updated_at || null,
+        // Step 14 (2026-05-03): For Coach hotfix.
+        // The leads array is rebuilt from scratch on every loadData() call.
+        // Without explicitly carrying for_coach here, the realtime callback
+        // (which fires after every flag) would drop the field, the helper
+        // would return false, and the flagged lead would bounce out of the
+        // For Coach tab within ~2 seconds.
+        for_coach: c.for_coach === true,
         pending_count: 0, handoff_count: 0, latest_preview: lastLeadMsg, all_reviews: []
       }
     })
@@ -592,6 +624,79 @@ export default function Inbox() {
     loadData()
   }
 
+  // Step 13 (2026-05-03): For Coach flagging.
+  // flagForCoach: setter clicks "For Coach" in the thread header, picks a
+  // category in the modal, optionally adds a comment, confirms. We update
+  // conversations.for_coach=true AND insert a row in coach_flag_reasons so
+  // the AI classifier (Step 16) can later use this as a training example.
+  // unflagFromCoach: removes the flag and logs a manual_unflag event.
+  // No updated_at bump - admin action, not a tracked message.
+  async function flagForCoach(category, comment) {
+    if (!selectedLead || !botId) return
+    if (!category) { showToast('Please select a category', 'error'); return }
+    const cat = COACH_FLAG_CATEGORIES.find(c => c.key === category)
+    if (cat?.requireComment && !(comment && comment.trim().length > 0)) {
+      showToast('Please add a comment when selecting Other', 'error')
+      return
+    }
+    // 1) flip the flag on the conversation row
+    const { error: updErr } = await supabase.from('conversations')
+      .update({ for_coach: true })
+      .eq('bot_id', botId)
+      .eq('customer_id', selectedLead.customer_id)
+    if (updErr) { showToast('Failed to flag for Coach', 'error'); return }
+    // 2) log the event in coach_flag_reasons
+    const { error: insErr } = await supabase.from('coach_flag_reasons').insert({
+      bot_id: botId,
+      customer_id: String(selectedLead.customer_id),
+      event_type: 'manual_flag',
+      category,
+      comment: comment && comment.trim().length > 0 ? comment.trim() : null,
+      flagged_by_user_id: profile?.id || null,
+      ai_confidence: null,
+    })
+    if (insErr) {
+      // The flag itself succeeded; the log row didn't. Surface a soft warning
+      // but don't roll back - we'd rather have a missing log row than a lead
+      // stuck between two states.
+      console.error('coach_flag_reasons insert failed:', insErr)
+      showToast('Flagged for Coach (log entry failed)', 'success')
+    } else {
+      showToast('Lead flagged for Coach', 'success')
+    }
+    // 3) update local state so UI reflects immediately
+    setConversation(prev => prev ? { ...prev, for_coach: true } : prev)
+    setSelectedLead(prev => prev ? { ...prev, for_coach: true } : prev)
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, for_coach: true } : l))
+    setCoachModalOpen(false)
+    setCoachModalCategory('')
+    setCoachModalComment('')
+  }
+
+  async function unflagFromCoach() {
+    if (!selectedLead || !botId) return
+    if (!confirm('Move this lead back out of the For Coach tab?')) return
+    const { error: updErr } = await supabase.from('conversations')
+      .update({ for_coach: false })
+      .eq('bot_id', botId)
+      .eq('customer_id', selectedLead.customer_id)
+    if (updErr) { showToast('Failed to unflag', 'error'); return }
+    const { error: insErr } = await supabase.from('coach_flag_reasons').insert({
+      bot_id: botId,
+      customer_id: String(selectedLead.customer_id),
+      event_type: 'manual_unflag',
+      category: null,
+      comment: null,
+      flagged_by_user_id: profile?.id || null,
+      ai_confidence: null,
+    })
+    if (insErr) console.error('coach_flag_reasons unflag log failed:', insErr)
+    setConversation(prev => prev ? { ...prev, for_coach: false } : prev)
+    setSelectedLead(prev => prev ? { ...prev, for_coach: false } : prev)
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, for_coach: false } : l))
+    showToast('Lead moved back out of For Coach', 'success')
+  }
+
   async function markAsFollowedUp() {
     if (!selectedLead || !botId) return
     const currentCount = conversation?.followup_count || selectedLead.followup_count || 0
@@ -813,8 +918,18 @@ export default function Inbox() {
   function isTesterLead(l) {
     return String(l.customer_id).startsWith('tester_') || l.channel === 'tester'
   }
+  // Step 13 (2026-05-03): For Coach helper.
+  // A lead is "for coach" when conversations.for_coach = true. Set either by
+  // the AI classifier (Step 16) or manually by a setter clicking the button
+  // in the thread header. For-coach leads are hidden from every operational
+  // tab (Pending, Needs Response, Follow Ups, Escalated, Resolved) so the
+  // setter can clear those without noise. They show up in the dedicated
+  // For Coach tab and in All (so search still finds them).
+  function isForCoachLead(l) {
+    return l.for_coach === true
+  }
   function isFollowUpLead(l) {
-    if (isTesterLead(l) || !l.last_user_message_at) return false
+    if (isTesterLead(l) || isForCoachLead(l) || !l.last_user_message_at) return false
     const hrs = (Date.now() - new Date(l.last_user_message_at).getTime()) / 3600000
     // Step 12 (2026-05-03): hide leads whose last message is older than
     // FOLLOW_UP_STALE_HOURS (3 days). They're functionally cold; the setter
@@ -826,20 +941,26 @@ export default function Inbox() {
     return hrs >= IG_WINDOW_HOURS && hrs < FOLLOW_UP_STALE_HOURS
   }
   function isNeedsResponseLead(l) {
-    return l.user_sent_last && !l.followed_up && !isTesterLead(l) && l.pending_count === 0
+    return l.user_sent_last && !l.followed_up && !isTesterLead(l) && !isForCoachLead(l) && l.pending_count === 0
   }
 
   const filteredLeads = sortedLeads.filter(l => {
     const matchesSearch = !search || getLeadName(l).toLowerCase().includes(search.toLowerCase()) || String(l.customer_id).includes(search) || (l.username && l.username.toLowerCase().includes(search.toLowerCase().replace('@', ''))) || (l.profile_name && l.profile_name.toLowerCase().includes(search.toLowerCase()))
     const isTester = isTesterLead(l)
+    const isCoach = isForCoachLead(l)
     // Step 11 (2026-05-03): rule lookups use shared helpers (see above) so the
     // badge counter and the list always agree. Pre-Step-11 there was an inline
     // IIFE here for isFollowUp and an inline expression for needsResponse; both
     // are now isFollowUpLead(l) and isNeedsResponseLead(l).
+    // Step 13 (2026-05-03): For Coach tab added. for_coach leads are hidden
+    // from Pending, Escalated, and Resolved (handled inline below since those
+    // don't have helpers). They still appear in All so search works.
     const matchesFilter = filter === 'Test'
       ? isTester
       : isTester ? false
+      : filter === 'For Coach' ? isCoach
       : filter === 'All' ? true
+      : isCoach ? false
       : filter === 'Pending' ? l.pending_count > 0
       : filter === 'Needs Response' ? isNeedsResponseLead(l)
       : filter === 'Follow Ups' ? isFollowUpLead(l)
@@ -857,6 +978,54 @@ export default function Inbox() {
   return (
     <div className="inbox-wrapper">
       {toast.msg && <div className={`toast ${toast.type === 'error' ? 'toast-error' : ''}`}>{toast.msg}</div>}
+
+      {/* Step 13 (2026-05-03): For Coach modal.
+          Renders only when coachModalOpen is true. Setter picks a category
+          (required), optionally adds a comment (required if category=Other),
+          clicks Confirm. Cancel and clicking the backdrop close the modal
+          without saving. State resets in flagForCoach() on success. */}
+      {coachModalOpen && selectedLead && (
+        <div onClick={() => { setCoachModalOpen(false); setCoachModalCategory(''); setCoachModalComment('') }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: '12px', padding: '20px', width: '100%', maxWidth: '440px', boxShadow: '0 20px 50px rgba(0,0,0,.3)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '.95rem', color: 'var(--tx)', marginBottom: '4px' }}>Flag for Coach</div>
+              <div style={{ fontSize: '.78rem', color: 'var(--tx3)', lineHeight: 1.4 }}>
+                This message is personal to Coach, not a prospect lead. The setter will skip it; Coach handles it directly. Pick the category that fits best.
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '.74rem', fontWeight: 600, color: 'var(--tx2)' }}>Category</label>
+              <select value={coachModalCategory} onChange={e => setCoachModalCategory(e.target.value)}
+                style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--bdr)', background: 'var(--surf2)', color: 'var(--tx)', fontSize: '.84rem', fontFamily: 'var(--fn)', outline: 'none' }}>
+                <option value="">Select a category...</option>
+                {COACH_FLAG_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '.74rem', fontWeight: 600, color: 'var(--tx2)' }}>
+                Comment {COACH_FLAG_CATEGORIES.find(c => c.key === coachModalCategory)?.requireComment ? <span style={{ color: '#dc2626' }}>(required)</span> : <span style={{ color: 'var(--tx3)', fontWeight: 400 }}>(optional)</span>}
+              </label>
+              <textarea value={coachModalComment} onChange={e => setCoachModalComment(e.target.value)}
+                placeholder="Add context that would help the AI learn (optional)..."
+                rows={3}
+                style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--bdr)', background: 'var(--surf2)', color: 'var(--tx)', fontSize: '.82rem', fontFamily: 'var(--fn)', outline: 'none', resize: 'vertical' }} />
+            </div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <button onClick={() => { setCoachModalOpen(false); setCoachModalCategory(''); setCoachModalComment('') }}
+                style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--bdr)', background: 'var(--surf2)', color: 'var(--tx2)', fontSize: '.82rem', fontWeight: 500, cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={() => flagForCoach(coachModalCategory, coachModalComment)}
+                disabled={!coachModalCategory}
+                style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: coachModalCategory ? '#db2777' : '#fbcfe8', color: '#fff', fontSize: '.82rem', fontWeight: 600, cursor: coachModalCategory ? 'pointer' : 'not-allowed' }}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ LEFT: LEAD LIST ═══ */}
       <div className="inbox-list" style={{ display: selectedLead ? 'none' : 'flex' }}>
@@ -876,24 +1045,37 @@ export default function Inbox() {
               // counter used last_bot_sent_at + 21h here while the list used
               // last_user_message_at + 23h, which caused the badge to
               // under-count leads with an expired IG window.
-              const count = f === 'Pending' ? totalPending
-                : f === 'Escalated' ? leads.reduce((a, l) => a + l.handoff_count, 0)
+              // Step 13 (2026-05-03): For Coach added. Pending/Escalated/Resolved
+              // now compute from the leads array so we can apply the for_coach
+              // exclusion (the old totalPending came from a Supabase query that
+              // didn't know about for_coach). Counts now match the list exactly.
+              // Step 15 (2026-05-03): exclude testers from Pending/Escalated/Resolved.
+              // The merge in loadData() adds review-only leads with channel='tester'
+              // to the leads array. The list filter excludes them via isTester
+              // gate, but the badge counters didn't, so tester pending reviews
+              // were being counted in the Pending badge. This made the Inbox
+              // Pending count higher than the sidebar (which filters testers in
+              // the Supabase query directly) and the Dashboard "Needs Reply".
+              const count = f === 'For Coach' ? leads.filter(isForCoachLead).length
+                : f === 'Pending' ? leads.filter(l => !isTesterLead(l) && !isForCoachLead(l) && l.pending_count > 0).length
+                : f === 'Escalated' ? leads.filter(l => !isTesterLead(l) && !isForCoachLead(l)).reduce((a, l) => a + l.handoff_count, 0)
                 : f === 'Needs Response' ? leads.filter(isNeedsResponseLead).length
                 : f === 'Follow Ups' ? leads.filter(isFollowUpLead).length
+                : f === 'Resolved' ? leads.filter(l => !isTesterLead(l) && !isForCoachLead(l) && l.pending_count === 0 && l.all_reviews.length > 0).length
                 : f === 'Test' ? leads.filter(isTesterLead).length
                 : null
               return (
                 <button key={f} onClick={() => setFilter(f)} style={{
                   flexShrink: 0, padding: '5px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
                   fontSize: '.72rem', fontWeight: filter === f ? 600 : 400, whiteSpace: 'nowrap',
-                  background: filter === f ? (f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : 'var(--acc)') : 'var(--surf2)',
-                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : 'var(--tx2)',
+                  background: filter === f ? (f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'For Coach' ? '#db2777' : 'var(--acc)') : 'var(--surf2)',
+                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'For Coach' ? '#db2777' : 'var(--tx2)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all .15s'
                 }}>
                   {f}
                   {count > 0 && (
                     <span style={{
-                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : '#e53e3e',
+                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'For Coach' ? '#db2777' : '#e53e3e',
                       color: '#fff', borderRadius: '999px', fontSize: '.6rem',
                       minWidth: '14px', height: '14px', display: 'inline-flex',
                       alignItems: 'center', justifyContent: 'center', padding: '0 3px'
@@ -934,6 +1116,10 @@ export default function Inbox() {
                       {lead.delivery_failed_count > 0 && <span title="One or more AI replies failed to send. Developer has been notified." style={{ fontSize: '.68rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '999px', flexShrink: 0, fontWeight: 700 }}>{'\u26A0'} Not sent</span>}
                       {lead.pending_count > 0 && lead.handoff_count === 0 && <span style={{ fontSize: '.68rem', background: '#d97706', color: '#fff', padding: '1px 6px', borderRadius: '999px', flexShrink: 0 }}>{lead.pending_count}</span>}
                       {showFollowUpPill && <span style={{ fontSize: '.68rem', background: '#fff7ed', color: '#d97706', border: '1px solid #fed7aa', padding: '1px 5px', borderRadius: '999px', flexShrink: 0 }}>{'\u23F0'} Follow up</span>}
+                      {/* Step 13 (2026-05-03): For Coach pill on lead card.
+                          Helps the setter recognize at a glance which leads in
+                          the All view are routed to Coach. */}
+                      {isForCoachLead(lead) && <span style={{ fontSize: '.68rem', background: '#fdf2f8', color: '#db2777', border: '1px solid #fbcfe8', padding: '1px 5px', borderRadius: '999px', flexShrink: 0, fontWeight: 600 }}>{'\u2606'} Coach</span>}
                       {lead.re_engaged && <span style={{ fontSize: '.68rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', padding: '1px 6px', borderRadius: '999px', flexShrink: 0, fontWeight: 600 }}>{'\u21BB'} Re-engaged</span>}
                       {/* Step 8 (2026-05-03): IG window timer.
                           Shows on any lead with a last_user_message_at, once
@@ -996,6 +1182,19 @@ export default function Inbox() {
                   <button onClick={markAsBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600 }}>{'\u2705'} Mark Booked</button>
                 ) : (
                   <button onClick={unmarkBooked} style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#16a34a', fontWeight: 600, opacity: 0.8 }}>{'\u2705'} Booked</button>
+                )}
+                {/* Step 13 (2026-05-03): For Coach button.
+                    When not flagged, opens the category modal. When flagged,
+                    confirms an unflag. Hidden for testers - test leads never
+                    need to be routed to Coach. */}
+                {!isTesterLead(selectedLead) && (
+                  conversation?.for_coach || selectedLead.for_coach ? (
+                    <button onClick={unflagFromCoach} title="Lead is currently in the For Coach tab. Click to move back."
+                      style={{ background: '#fdf2f8', border: '1px solid #fbcfe8', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#db2777', fontWeight: 600 }}>{'\u2606'} For Coach</button>
+                  ) : (
+                    <button onClick={() => setCoachModalOpen(true)} title="Flag this lead as personal-to-Coach. Setter won't reply; Coach will."
+                      style={{ background: '#fdf2f8', border: '1px solid #fbcfe8', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#db2777', fontWeight: 600 }}>{'\u2606'} For Coach</button>
+                  )
                 )}
                 {/* Step 8 (2026-05-03): Smart Follow-Up button visibility simplified.
                     Previously: shown on Follow Ups tab OR window expired OR lead had

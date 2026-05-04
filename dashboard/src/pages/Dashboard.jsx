@@ -72,16 +72,28 @@ export default function Dashboard() {
       if (!botIds.length) { setLoading(false); return }
 
       const since = getDateFilter()
-      const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }] = await Promise.all([
+      // Step 16 (2026-05-03): added for_coach query.
+      // needsReply must subtract for_coach leads so the Dashboard "Needs
+      // Reply" stat agrees with the Inbox Pending tab and the sidebar
+      // badge. Without this, a setter would see "5 leads need reply"
+      // here while the inbox shows 0 (because all 5 are routed to Coach).
+      const [{ data: convos }, { data: allReviews }, { data: pendingReviewsCount }, { data: forCoachConvos }] = await Promise.all([
         supabase.from('conversations').select('customer_id, channel, lead_intent, conversation_stage, username, profile_name, updated_at, status, followup_count, re_engaged, contact_type').in('bot_id', botIds).neq('channel', 'tester').is('deleted_at', null).eq('contact_type', 'prospect').gte('updated_at', since),
         supabase.from('reviews').select('id, status').in('bot_id', botIds).gte('created_at', since).not('customer_id', 'ilike', 'tester_%'),
-        supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
+        supabase.from('reviews').select('customer_id').in('bot_id', botIds).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
+        supabase.from('conversations').select('customer_id').in('bot_id', botIds).eq('for_coach', true)
       ])
 
       const allConvos = (convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test'))
       const reviews = allReviews || []
       const newConversations = allConvos.length
-      const needsReply = new Set((pendingReviewsCount || []).map(r => r.customer_id)).size
+      // Step 16 (2026-05-03): subtract for_coach customer_ids from the unique-leads set.
+      const forCoachIds = new Set((forCoachConvos || []).map(c => String(c.customer_id)))
+      const needsReply = new Set(
+        (pendingReviewsCount || [])
+          .map(r => String(r.customer_id))
+          .filter(id => !forCoachIds.has(id))
+      ).size
       const highIntent = allConvos.filter(c => c.lead_intent === 'HIGH').length
       const aiMessagesSent = reviews.filter(r => r.status === 'approved').length + reviews.filter(r => r.status === 'auto_sent').length
       const booked = allConvos.filter(c => c.status === 'booked').length

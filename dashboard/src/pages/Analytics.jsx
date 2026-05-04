@@ -108,10 +108,16 @@ export default function Analytics() {
 
       const since = getDateFilter()
 
-      const [{ data: convos }, { data: reviewData }, { data: pendingReviews }] = await Promise.all([
+      // Step 16 (2026-05-03): added for_coach query.
+      // needsReply on the Analytics page must agree with the Inbox Pending
+      // tab and the sidebar badge. Subtract for_coach leads from the unique
+      // pending-leads count so all "leads needing setter reply" totals
+      // across the dashboard show the same number.
+      const [{ data: convos }, { data: reviewData }, { data: pendingReviews }, { data: forCoachConvos }] = await Promise.all([
         supabase.from('conversations').select('customer_id, username, profile_name, channel, lead_intent, conversation_stage, status, updated_at').eq('bot_id', bot.id).neq('channel', 'tester').is('deleted_at', null).eq('contact_type', 'prospect').gte('updated_at', since),
         supabase.from('reviews').select('customer_id, action_type, status').eq('bot_id', bot.id).gte('created_at', since).not('customer_id', 'ilike', 'tester_%'),
-        supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%')
+        supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
+        supabase.from('conversations').select('customer_id').eq('bot_id', bot.id).eq('for_coach', true)
       ])
 
       const allConvos = (convos || []).filter(c => !c.username || !c.username.toLowerCase().startsWith('test'))
@@ -127,7 +133,13 @@ export default function Analytics() {
       const autoSent = allReviews.filter(r => r.status === 'approved').length
       const autoSendRate = allReviews.length > 0 ? Math.round((autoSent / allReviews.length) * 100) : 0
       const bookingRate = active > 0 ? parseFloat(((booked / active) * 100).toFixed(1)) : 0
-      const needsReply = new Set((pendingReviews || []).map(r => r.customer_id)).size
+      // Step 16 (2026-05-03): subtract for_coach customer_ids from unique-leads set.
+      const forCoachIds = new Set((forCoachConvos || []).map(c => String(c.customer_id)))
+      const needsReply = new Set(
+        (pendingReviews || [])
+          .map(r => String(r.customer_id))
+          .filter(id => !forCoachIds.has(id))
+      ).size
       const highIntent = allConvos.filter(c => c.lead_intent === 'HIGH').length
       const aiMessagesSent = allReviews.filter(r => r.status === 'approved').length + allReviews.filter(r => r.status === 'auto_sent').length
 
