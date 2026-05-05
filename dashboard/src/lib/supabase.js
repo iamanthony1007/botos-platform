@@ -1,6 +1,23 @@
-﻿import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js'
 
-export const supabase = createClient(
-  'https://rydkwsjwlgnivlwlvqku.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ5ZGt3c2p3bGduaXZsd2x2cWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1MDA1ODEsImV4cCI6MjA5MTA3NjU4MX0.8Th4ObB8I22BgbedX8_S1CAdSlAAZ3nXk8ScA7164G4'
-)
+// Supabase config is loaded from environment variables at BUILD TIME.
+// Vite reads these from .env (production) or .env.staging (when built with --mode staging).
+//
+// production build:  npm run build           reads dashboard/.env
+// staging build:     npm run build:staging   reads dashboard/.env.staging
+//
+// TODO (Phase 3 RLS audit): Anon keys are technically safe to ship to the client
+// because Supabase relies on Row Level Security (RLS) for authorization, but our
+// repo is currently public on GitHub. Re-evaluate whether to gitignore .env files
+// once RLS policies are fully audited and locked down.
+
+const url = import.meta.env.VITE_SUPABASE_URL
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+if (!url || !anonKey) {
+  throw new Error(
+    'Missing Supabase config. Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in dashboard/.env (production) or dashboard/.env.staging (when running npm run build:staging).'
+  )
+}
+
+export const supabase = createClient(url, anonKey)

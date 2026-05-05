@@ -33,4 +33,4 @@ id = "e1bc76417c284a3ebd82758623e1d148"
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
-SUPABASE_URL = "https://hpqdoikpjikqjnxotcvi.supabase.co"
+SUPABASE_URL = "https://hlpucysbaqerhwahfolg.supabase.co"
