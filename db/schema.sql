@@ -107,7 +107,11 @@ CREATE TABLE IF NOT EXISTS public.conversations (
   contact_type           text DEFAULT 'prospect',
   lead_source            text,
   lead_source_updated_at timestamptz,
-  for_coach              boolean DEFAULT false
+  for_coach              boolean DEFAULT false,
+  -- Worker upserts conversations on (bot_id, customer_id). This UNIQUE
+  -- constraint is required by Postgres ON CONFLICT semantics and matches the
+  -- business invariant: one conversation record per (bot, lead) pair.
+  CONSTRAINT conversations_bot_id_customer_id_key UNIQUE (bot_id, customer_id)
 );
 
 -- ----------------------------------------------------------------------------
