@@ -14,11 +14,13 @@
 -- ----------------------------------------------------------------------------
 -- KNOWN GAPS vs production schema (DO NOT use this schema in production)
 -- ----------------------------------------------------------------------------
--- 1. Row Level Security (RLS) is DISABLED on all tables. Production has RLS
---    policies we could not infer from CSVs. For staging used as a single-user
---    development sandbox this is acceptable. DO NOT copy this schema to a
---    multi-tenant or customer-facing environment without re-deriving the RLS
---    policies from production.
+-- 1. Row Level Security (RLS) is DISABLED on all tables (via the ALTER
+--    statements at the end of this file). Supabase enables RLS by default
+--    on tables created in the public schema; without policies in place this
+--    causes every dashboard query to silently return zero rows. We disable
+--    RLS for staging because it is a single-user development sandbox.
+--    Production has RLS on with real policies (NOT captured in this repo
+--    yet). DO NOT use this schema in production.
 -- 2. Foreign keys are NOT created. Production likely has organizations(id)
 --    referenced by bots.organization_id, and possibly bots(id) referenced by
 --    other tables' bot_id columns. We did not export the organizations table
@@ -243,15 +245,172 @@ INSERT INTO public.bots (
 );
 
 -- ============================================================================
+-- ADDITIONAL TABLES (added in migration 002)
+-- ============================================================================
+-- These 8 tables are queried by the dashboard but not by the Worker. Without
+-- them the dashboard hangs on a profiles 404 loop after login (discovered in
+-- 1.1.5b smoke test).
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.organizations (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        text NOT NULL,
+  created_at  timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id               uuid PRIMARY KEY,
+  email            text NOT NULL,
+  name             text,
+  role             text DEFAULT 'setter',
+  organization_id  uuid,
+  assigned_bot_id  uuid,
+  permissions      jsonb DEFAULT '[]'::jsonb,
+  created_at       timestamptz DEFAULT now(),
+  invited_by       uuid,
+  disabled         boolean DEFAULT false
+);
+
+CREATE TABLE IF NOT EXISTS public.invites (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email            text NOT NULL,
+  name             text,
+  token            text NOT NULL,
+  role             text DEFAULT 'setter',
+  assigned_bot_id  uuid,
+  permissions      jsonb DEFAULT '[]'::jsonb,
+  invited_by       uuid,
+  status           text DEFAULT 'pending',
+  expires_at       timestamptz,
+  accepted_at      timestamptz,
+  created_at       timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.coach_flag_reasons (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bot_id              uuid NOT NULL,
+  customer_id         text NOT NULL,
+  event_type          text NOT NULL,
+  category            text,
+  comment             text,
+  flagged_by_user_id  uuid,
+  ai_confidence       float8,
+  created_at          timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.prompt_versions (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bot_id          uuid NOT NULL,
+  prompt          text NOT NULL,
+  note            text,
+  created_at      timestamptz DEFAULT now(),
+  version_number  int4 NOT NULL,
+  label           text
+);
+
+CREATE TABLE IF NOT EXISTS public.conversation_examples (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bot_id          uuid NOT NULL,
+  contact_name    text,
+  contact_id      text,
+  conversation_id text,
+  outcome         text,
+  total_messages  int4 DEFAULT 0,
+  lead_messages   int4 DEFAULT 0,
+  coach_messages  int4 DEFAULT 0,
+  turns           jsonb DEFAULT '[]'::jsonb,
+  has_zoom        boolean DEFAULT false,
+  has_booking     boolean DEFAULT false,
+  has_screening   boolean DEFAULT false,
+  created_at      timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.reconciliation_queue (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bot_id                 uuid NOT NULL,
+  source_customer_id     text,
+  source_username        text,
+  source_profile_name    text,
+  suggested_target_id    text,
+  suggested_match_count  int4 DEFAULT 0,
+  issue_type             text NOT NULL,
+  status                 text DEFAULT 'pending',
+  resolved_by            uuid,
+  resolved_at            timestamptz,
+  notes                  text,
+  created_at             timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.audit_log (
+  id          uuid NOT NULL DEFAULT gen_random_uuid(),
+  table_name  text NOT NULL,
+  record_id   text NOT NULL,
+  field_name  text NOT NULL,
+  old_value   text NULL,
+  new_value   text NULL,
+  changed_by  text NOT NULL,
+  change_type text NOT NULL,
+  reason      text NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT audit_log_pkey PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_record
+  ON public.audit_log USING btree (table_name, record_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_changed_by
+  ON public.audit_log USING btree (changed_by, created_at DESC);
+
+-- Seed the organization that bots.organization_id references.
+INSERT INTO public.organizations (id, name)
+VALUES ('00000000-0000-0000-0000-000000000001', 'Nella Platform (staging)')
+ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================================
+-- DISABLE ROW LEVEL SECURITY (added in migration 003)
+-- ============================================================================
+-- Supabase enables RLS by default on every table in the public schema.
+-- Without policies, this means PostgREST returns 0 rows for every query
+-- made by anyone other than the postgres superuser, causing the dashboard
+-- to fail to load.
+--
+-- For staging (single-user dev sandbox), we disable RLS entirely. For
+-- production, RLS should remain on with real policies. See migration 003
+-- header for full discussion.
+-- ============================================================================
+
+ALTER TABLE public.audit_log              DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bot_documents          DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bots                   DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.coach_flag_reasons     DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversation_examples  DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversations          DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invites                DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.learnings              DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.organizations          DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles               DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.prompt_versions        DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reconciliation_queue   DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reviews                DISABLE ROW LEVEL SECURITY;
+
+-- ============================================================================
 -- VERIFICATION
 -- ============================================================================
 -- After running this file, run these checks in SQL Editor:
 --
 --   SELECT table_name FROM information_schema.tables
 --   WHERE table_schema = 'public' ORDER BY table_name;
---   -- Expected: bot_documents, bots, conversations, learnings, reviews
+--   -- Expected (13 tables): audit_log, bot_documents, bots,
+--   -- coach_flag_reasons, conversation_examples, conversations, invites,
+--   -- learnings, organizations, profiles, prompt_versions,
+--   -- reconciliation_queue, reviews
 --
 --   SELECT id, name, status FROM public.bots;
 --   -- Expected: one row with id 00000000-0000-0000-0000-000000000002
 --
+--   SELECT id, name FROM public.organizations;
+--   -- Expected: one row with id 00000000-0000-0000-0000-000000000001
+--
+-- Profile seeding for the staging test user lives in migration 002 because
+-- it depends on auth.users having the user already created.
 -- ============================================================================
