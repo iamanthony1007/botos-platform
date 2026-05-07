@@ -345,6 +345,37 @@ async function supabaseUpsert(env, table, data, onConflict) {
 }
 __name(supabaseUpsert, "supabaseUpsert");
 
+// ── supabaseRpc: call a Postgres function via PostgREST ───────────────────
+// Used by the race-safe append_conversation_turn function (migration 004).
+// PostgREST exposes any GRANTed function at /rest/v1/rpc/{name}, accepting
+// a JSON body with named parameters and returning the function's result.
+// Logs result for observability (appended_count, skipped_duplicates, etc).
+async function supabaseRpc(env, functionName, args) {
+  try {
+    const response = await fetch(`${getSupabaseUrl(env)}/rest/v1/rpc/${functionName}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        "apikey": env.SUPABASE_SERVICE_KEY
+      },
+      body: JSON.stringify(args)
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`Supabase RPC error (${functionName}):`, errText);
+      return { ok: false, error: errText };
+    }
+    const result = await response.json();
+    console.log(`[RPC] ${functionName}:`, JSON.stringify(result));
+    return { ok: true, result };
+  } catch (error) {
+    console.error(`Supabase RPC exception (${functionName}):`, error.message);
+    return { ok: false, error: error.message };
+  }
+}
+__name(supabaseRpc, "supabaseRpc");
+
 async function getBotSettings(env) {
   try {
     const response = await fetch(
@@ -653,6 +684,11 @@ var index_default = {
           aiBehavior: botSettings.ai_behavior_settings || {}
         };
 
+        // Track messages added to memory.messages during THIS turn only.
+        // These are what get APPENDED to conversations.messages via the RPC,
+        // instead of overwriting the whole array (race-safe).
+        const newTurnMessages = [];
+
         let memory = memoryData || { messages: [], running_summary: "", profile_facts: {} };
 
         // ── GHL History Merge ─────────────────────────────────────────────────
@@ -757,18 +793,22 @@ var index_default = {
           // Insert the lead_source_event marker BEFORE the user message so the
           // banner renders at the correct position in the thread timeline.
           if (isLeadSourceEvent) {
-            memory.messages.push({
+            const leadSourceEntry = {
               role: 'lead_source_event',
               lead_source: lead_source,
               display_text: `Engaged via "${lead_source}"`,
               timestamp: Date.now()
-            });
+            };
+            memory.messages.push(leadSourceEntry);
+            newTurnMessages.push(leadSourceEntry);
           }
 
           // Only push the actual user message if it is NOT a duplicate of the prior one.
           // For duplicate keyword events, the conversation already has that message.
           if (!isDuplicateOfLastMessage) {
-            memory.messages.push({ role: "user", content: message, timestamp: Date.now() });
+            const userEntry = { role: "user", content: message, timestamp: Date.now() };
+            memory.messages.push(userEntry);
+            newTurnMessages.push(userEntry);
           }
           if (memory.messages.length > 15) memory.messages = memory.messages.slice(-15);
         }
@@ -1041,7 +1081,7 @@ var index_default = {
         const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts, memory);
 
-        memory.messages.push({
+        const assistantEntry = {
           role: "assistant",
           content: joinedReply,
           bot_messages: dedupedMessages,
@@ -1049,7 +1089,15 @@ var index_default = {
           timestamp: Date.now(),
           review_id,
           message_count: dedupedMessages.length
-        });
+        };
+        memory.messages.push(assistantEntry);
+        // Only persist assistant turn to DB on AUTO_SEND. SEND_TO_INBOX_REVIEW
+        // and ESCALATE_TO_HUMAN keep the draft in KV memory only - the DB row
+        // gets the assistant turn when (and if) the setter approves it. This
+        // mirrors the bug-fix-2026-04-30 behavior using the new append model.
+        if (finalAction === "AUTO_SEND") {
+          newTurnMessages.push(assistantEntry);
+        }
 
         if (botResponse.memory_update) {
           if (botResponse.memory_update.profile_facts) {
@@ -1124,44 +1172,42 @@ var index_default = {
           if (currentIdx > savedIdx && currentIdx >= 0) preFollowupStageToWrite = null;
         }
 
-        // ── Bug fix 2026-04-30: do not write pending assistant drafts to conversations.messages ──
-        // Inbox-review and escalated replies must NOT appear in the rendered thread
-        // until the setter approves/edits, OR until AUTO_SEND delivery succeeds.
-        // KV memory keeps the assistant reply for Claude's context. The DB thread
-        // only gets the assistant turn when it has actually been sent or auto-sent.
-        const messagesForDb = (finalAction === "AUTO_SEND")
-          ? memory.messages
-          : memory.messages.filter(m => !(m.role === "assistant" && m.review_id === review_id));
-
-        ctx.waitUntil(supabaseUpsert(env, "conversations", {
-          bot_id: BOT_ID,
-          customer_id: String(customer_id),
-          channel,
-          // Bug 1 fix: status='booked' should ONLY be set when stage is BOOKED.
-          // Previously this also fired on SCHEDULE which inflated the booked count
-          // and silently filtered leads out of Closest to Booking. Mark Booked is
-          // now exclusively a manual action (via the dashboard button) or set when
-          // the AI itself promotes the stage to BOOKED.
-          status: botResponse.conversation_stage === "BOOKED" ? "booked" : "active",
-          lead_intent: botResponse.lead_intent || "LOW",
-          contact_type: botResponse.contact_type === 'non_prospect' ? 'non_prospect' : 'prospect',
-          primary_goal: botResponse.primary_goal || null,
-          conversation_stage: botResponse.conversation_stage || null,
-          messages: messagesForDb,
-          profile_facts: memory.profile_facts,
-          running_summary: memory.running_summary,
-          followed_up: false,
-          followup_count: 0,
-          re_engaged: wasFollowedUp,
-          pre_followup_stage: preFollowupStageToWrite,
-          updated_at: new Date().toISOString(),
-          // Step 7 (2026-05-03): persist lead_source on every keyword event.
-          // Spread is conditional so non-keyword webhooks don't overwrite an
-          // existing lead_source value with null.
-          ...(isLeadSourceEvent ? { lead_source: lead_source, lead_source_updated_at: new Date().toISOString() } : {}),
-          ...(username ? { username: String(username) } : {}),
-          ...(profile_name ? { profile_name: String(profile_name) } : {})
-        }, "bot_id,customer_id"));
+        // ── Race-safe conversation write via append_conversation_turn RPC ───
+        // Migration 004 (2026-05-07). The Postgres function uses SELECT ... FOR
+        // UPDATE row locking to serialize concurrent writes for the same lead.
+        // Two webhooks arriving close together each append their turn's
+        // messages atomically instead of racing on a full-row replacement.
+        //
+        // newTurnMessages contains only what was pushed in THIS invocation:
+        //   - lead_source_event marker (if isLeadSourceEvent)
+        //   - new user message (if not a duplicate)
+        //   - new assistant message (only on AUTO_SEND - SEND_TO_INBOX_REVIEW
+        //     and ESCALATE keep the assistant draft in KV memory only)
+        //
+        // The function dedupes by (timestamp, role) against the existing array,
+        // so retried webhooks cannot double-append.
+        ctx.waitUntil(supabaseRpc(env, "append_conversation_turn", {
+          p_bot_id: BOT_ID,
+          p_customer_id: String(customer_id),
+          p_channel: channel,
+          p_new_messages: newTurnMessages,
+          // Bug 1 fix: status='booked' only when stage is BOOKED.
+          p_status: botResponse.conversation_stage === "BOOKED" ? "booked" : "active",
+          p_lead_intent: botResponse.lead_intent || "LOW",
+          p_contact_type: botResponse.contact_type === 'non_prospect' ? 'non_prospect' : 'prospect',
+          p_primary_goal: botResponse.primary_goal || null,
+          p_conversation_stage: botResponse.conversation_stage || null,
+          p_profile_facts: memory.profile_facts,
+          p_running_summary: memory.running_summary,
+          p_re_engaged: wasFollowedUp,
+          p_pre_followup_stage: preFollowupStageToWrite,
+          // Conditional fields: pass NULL to preserve existing DB value via COALESCE.
+          // Step 7 (2026-05-03): only stamp lead_source on actual keyword events.
+          p_lead_source: isLeadSourceEvent ? lead_source : null,
+          p_lead_source_updated_at: isLeadSourceEvent ? new Date().toISOString() : null,
+          p_username: username ? String(username) : null,
+          p_profile_name: profile_name ? String(profile_name) : null
+        }));
 
         // ── DEBUG: track review insert result ──────────────────────────────
         let reviewResult = { success: false, error: "no_review_path_hit" };
