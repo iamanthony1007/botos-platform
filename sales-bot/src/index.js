@@ -2078,7 +2078,31 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
 
 ` : "";
 
-  const finalSystemPrompt = welcomeSection + leadSourceSection + reEngagementSection + learningsSection + documentSection + campaignSection + systemPrompt;
+  // Prompt caching (Step caching-1, 2026-05-08): split the system field into a
+  // stable prefix that Anthropic can cache (90% read discount, 1.25x write
+  // surcharge once per 5-min window) and a per-turn dynamic suffix that
+  // changes per lead and is never cached.
+  //
+  // Static prefix order is intentional:
+  //   learningsSection -> documentSection -> campaignSection -> systemPrompt
+  // The "below" wording inside the learnings section's "OVERRIDE all default
+  // behaviors below" header refers to systemPrompt, so learnings must precede
+  // it. campaign and documents sit between them.
+  //
+  // Dynamic suffix order preserves the "READ FIRST" / "CRITICAL" framing of
+  // welcome/leadSource/reEngagement by placing them adjacent to the user
+  // message, where Claude's recency weighting compensates for them no longer
+  // being at the very top of the system field.
+  const staticPrefix =
+    learningsSection +
+    documentSection +
+    campaignSection +
+    systemPrompt;
+
+  const dynamicSuffix =
+    welcomeSection +
+    leadSourceSection +
+    reEngagementSection;
 
   const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -2090,7 +2114,10 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     body: JSON.stringify({
       model: model,
       max_tokens: 1024,
-      system: finalSystemPrompt,
+      system: [
+        { type: "text", text: staticPrefix, cache_control: { type: "ephemeral" } },
+        { type: "text", text: dynamicSuffix }
+      ],
       messages: [
         { role: "user", content: buildDeveloperPrompt(memory, lastMessages) }
       ],
@@ -2103,6 +2130,16 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     throw new Error(`Claude API error: ${error}`);
   }
   const data = await response.json();
+
+  // Prompt caching observability: log the usage block so we can verify cache
+  // hits in Cloudflare Worker logs. On a fresh cache: cache_creation_input_tokens > 0
+  // and cache_read_input_tokens = 0. On a hit within 5 min: the inverse.
+  // Both zero = caching not active (likely prefix below 2048-token minimum
+  // or static section drifting per-call).
+  try {
+    const u = data.usage || {};
+    console.log(`[cache] model=${model} input=${u.input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0} cache_read=${u.cache_read_input_tokens || 0} output=${u.output_tokens || 0}`);
+  } catch (_) { /* non-fatal */ }
   const rawContent = data.content[0].text;
   // Strip any markdown code fences Claude may add
   const cleanContent = rawContent.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
