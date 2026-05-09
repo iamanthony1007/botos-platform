@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS public.reviews (
   final_messages      jsonb DEFAULT '[]'::jsonb,
   escalation_reason   text,
   emotional_state     text,
+  lead_intent         text,
   profile_name        text
 );
 
