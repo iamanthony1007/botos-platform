@@ -1,4 +1,4 @@
-# BotOS / Mu — Progress
+# BotOS / Mu - Progress
 
 This is the single source of truth for what is done, what is in progress, and what is next on the BotOS / Mu platform. Read this at the start of every session. Update it at the end of every session.
 
@@ -127,7 +127,7 @@ The static prefix held byte-stable across all 21 webhooks: `cache_read=4874` exa
 
 **Cost confirmation:** Per-call savings ~49% on input tokens, matching the smoke-test estimate. No regressions. On-target for halving production API spend once deployed.
 
-### [x] 1.2 Phase 1 — Prompt caching patch designed, deployed to staging, smoke-tested (2026-05-08)
+### [x] 1.2 Phase 1 - Prompt caching patch designed, deployed to staging, smoke-tested (2026-05-08)
 
 **Branch:** `feat-prompt-caching` at commit `0a461c7`, pushed to GitHub.
 
@@ -171,7 +171,7 @@ All three returned valid bot replies. No errors in tail. Bot replies follow expe
 
 ---
 
-## REFERENCE — always-applicable
+## REFERENCE - always-applicable
 
 ### Production (NEVER TOUCH while developing)
 
@@ -193,13 +193,13 @@ All three returned valid bot replies. No errors in tail. Bot replies follow expe
 - Staging Supabase project ref: `hlpucysbaqerhwahfolg`
 - Staging Supabase URL: https://hlpucysbaqerhwahfolg.supabase.co
 - Staging Supabase region: europe (different from prod, acceptable, slight latency only)
-- Staging Worker secrets set: `SUPABASE_SERVICE_KEY` (staging value, JWT-decoded and verified `ref=hlpucysbaqerhwahfolg`), `ANTHROPIC_API_KEY` (currently same as prod — billing flows to Nella's account; future improvement: separate staging API key for spend isolation)
+- Staging Worker secrets set: `SUPABASE_SERVICE_KEY` (staging value, JWT-decoded and verified `ref=hlpucysbaqerhwahfolg`), `ANTHROPIC_API_KEY` (currently same as prod, billing flows to Nella's account; future improvement: separate staging API key for spend isolation)
 - Staging dashboard: `botos-platform-staging` Pages project at https://botos-platform-staging.pages.dev (Cloudflare account: Nellakuate's, account_id `444afb7987a4f1e657e0bad22a528a42`)
 - Staging branch HEAD: see latest commit on `origin/staging` (note: `feat-prompt-caching` is what's actually deployed to the staging Worker right now, not `staging` branch)
 - Staging Supabase tables (13): `audit_log`, `bot_documents`, `bots`, `coach_flag_reasons`, `conversation_examples`, `conversations`, `invites`, `learnings`, `organizations`, `profiles`, `prompt_versions`, `reconciliation_queue`, `reviews`
 - Staging migrations applied: 001, 002, 003, 004 (all current as of 2026-05-08)
 - Staging seeded rows:
-  - `bots`: 1 row at id `00000000-0000-0000-0000-000000000002` (Bombers Blueprint staging) — **system_prompt is byte-exact copy of production as of 2026-05-08, 16,616 chars**
+  - `bots`: 1 row at id `00000000-0000-0000-0000-000000000002` (Bombers Blueprint staging). **system_prompt is byte-exact copy of production as of 2026-05-08, 16,616 chars**
   - `organizations`: 1 row at id `00000000-0000-0000-0000-000000000001` (Nella Platform staging)
   - `profiles`: 1 row for staging-test@botos-platform.local with role=admin and full permissions
   - `auth.users`: 2 rows (staging-test@botos-platform.local for testing, and iamanthony@gmail.com leftover from earlier exploration; the iamanthony row should be deleted as cleanup)
@@ -237,7 +237,7 @@ All three returned valid bot replies. No errors in tail. Bot replies follow expe
 - Workflow: Claude edits files in container, hands back via present_files, user copies via PowerShell, deploys, pushes to GitHub.
 - Local repo path: `C:\Users\Order Account\botos-platform`
 - Soak harness path (kept outside repo): `C:\Users\Order Account\botos-soak`
-- OS: Windows / PowerShell 5.1 default. PowerShell 5.1 has UTF-8 encoding bugs in `Invoke-RestMethod` — use Node.js for any cross-API data copy involving non-ASCII characters (see lessons below).
+- OS: Windows / PowerShell 5.1 default. PowerShell 5.1 has UTF-8 encoding bugs in `Invoke-RestMethod`; use Node.js for any cross-API data copy involving non-ASCII characters (see lessons below).
 - `git --no-pager diff` to avoid the interactive pager.
 - BOM trap on Windows: use `[System.IO.File]::WriteAllText` with `new UTF8Encoding($false)` when creating .env files.
 - Supabase project ownership: Nella owns production. Anon_Techie has dashboard access but does NOT have the production database password. Schema replication must work without it (use CSV exports + DDL from user).
@@ -297,7 +297,7 @@ A progress file that is read once at session start and never updated drifts out 
 
 ---
 
-## DEFERRED — known gaps, not blockers
+## DEFERRED - known gaps, not blockers
 
 - **CLOSED (2026-05-09): `reviews.lead_intent` schema gap.** Migration 005 added the column on staging and production. Caching deploy synthetic test verified the batching UPDATE path now writes all fields correctly. Decision: **no backfill** of historical reviews; full reasoning in the COMPLETED entry for 1.2.1. **Audit question still open (low priority):** how many historical production reviews have stale batched content from the period when the column was missing. Best-effort heuristic backfill from `conversations` would be possible if Coach Shaun's team ever needs historical lead-intent analytics.
 - **Wrangler upgrade (deferred):** local `wrangler` is at `4.65.0`; latest is `4.90.0` as of 2026-05-09. Upgrade is a separate maintenance task, not coupled to any feature work. Run `npm install --save-dev wrangler@latest` in `sales-bot/` and re-test deploy on staging first.
