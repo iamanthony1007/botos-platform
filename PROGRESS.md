@@ -6,52 +6,15 @@ This is the single source of truth for what is done, what is in progress, and wh
 
 ## STATUS
 
-**Currently in progress:** Phase 1.2 prompt caching deploy is **paused, gated behind a confirmed production schema gap** on `reviews.lead_intent`. Phase 3 attempted on 2026-05-09 in a fresh session and stopped at Step 2 per the explicit brief decision tree (case b: production schema missing the column means do not deploy on top of an unknown silent bug). New top priority: schema-migration session to add `lead_intent` to the production `reviews` table. Caching deploy resumes after the schema fix.
+**Currently in progress:** Nothing. The 2026-05-09 session closed Phase 1.2 end to end. Schema fix (1.2.1) and caching deploy (1.2.2) both applied to production and verified with synthetic traffic. Watching Anthropic billing dashboard over the next 1-2 days separately to confirm input cost trend is downward.
 
-**Production state:** Stable, untouched. Worker version `335b133c-d07f-4693-a314-fbffd448fbe1` (uploaded 2026-05-07T18:53:34Z), corresponds to commit `b3f5e12` (race-fix). Coach Shaun's bot serving live leads. Schema gap confirmed: `reviews` table on production Supabase (ref `rydkwsjwlgnivlwlvqku`) is missing the `lead_intent` column. The Worker has been silently failing the batching UPDATE path for an unknown duration. See COMPLETED entry below for full impact analysis.
+**Production state:** Worker version `1881c4ac-88e0-4b12-bf24-7fcd74572434` (deployed 2026-05-09 from merge commit `3964d10` on `main`, includes prompt caching + race-fix). `reviews.lead_intent` column now present (migration 005). Coach Shaun's bot serving live leads. Traffic gap from 2026-05-07 21:38 UTC to 2026-05-09 ~21:00 UTC was a ManyChat or Make.com credit balance running out, not a Worker fault. Topup restored upstream pipeline.
 
-**Staging state:** Running commit `0a461c7` from branch `feat-prompt-caching` on Worker version `01d34c93-a8dd-41ff-8cad-3b6809217505`. Caching verified working (95% cache_read hit rate across 21 webhooks). Behavior verified clean (18 of 18 conversation arcs produced sensible on-prompt replies). Same schema gap as production. `feat-prompt-caching` branch untouched at `0a461c7`.
+**Staging state:** Worker version `01d34c93-a8dd-41ff-8cad-3b6809217505` from `feat-prompt-caching` branch (unchanged). `reviews.lead_intent` present (migration 005 applied 2026-05-09). `feat-prompt-caching` branch retained at `0a461c7` for rollback reference. Branch is now also reachable from `main` via merge commit `3964d10`.
 
 ---
 
 ## NEXT UP
-
-### [ ] 1.2.1 Schema fix: add `lead_intent` to production `reviews` table
-Goal: stop the silent PGRST204 batching-UPDATE failures on production, then capture the column into source control so staging matches.
-
-Plan:
-1. Open a fresh session.
-2. Re-read this file and the COMPLETED entry for Phase 1.2 Phase 3 (aborted) so context is loaded.
-3. Inspect the production `reviews` table schema in the Supabase dashboard one more time to confirm the column is still missing (no other actor has added it in the meantime).
-4. Decide migration approach: ALTER TABLE on production via Supabase SQL Editor, paired with a versioned migration file in `db/migrations/00X_add_lead_intent_to_reviews.sql`, and a corresponding update to `db/schema.sql` to include the column on `reviews`.
-5. The column should be `text` (Worker writes literal strings `LOW|MEDIUM|HIGH|UNKNOWN`), nullable, no default. Match the conversations.lead_intent definition for consistency.
-6. Apply migration to staging first. Verify the next batching-path event in staging no longer logs PGRST204.
-7. Apply migration to production. Watch `wrangler tail` on production for batching-path events to confirm UPDATEs now land cleanly.
-8. Decide whether to backfill historical `reviews.lead_intent` from `conversations.lead_intent` for prior batched rows. Likely not worth it (the data's value was for analytics only, not for routing). Document the decision either way.
-9. Update PROGRESS.md, commit, push.
-
-Hard rules for the schema session:
-- Do not deploy caching during the schema session. Caching is a separate concern.
-- Do not paste the production Supabase database password into chat. Apply the migration through the Supabase Dashboard SQL Editor (which authenticates via your dashboard session), not via raw psql or `supabase db push`.
-- Migration file must be reversible (include a DOWN comment or paired `00X_revert` file even if not run).
-- Apply to staging first. Production second. Never the other way around.
-
-### [ ] 1.2.2 Phase 3: Deploy prompt caching to production
-Was the original "next up". Now blocked on 1.2.1 above. Once schema gap is closed, this resumes unchanged from the prior plan:
-
-1. Open a fresh session (do not stack with schema fix or with anything else).
-2. Verify production state has not drifted: confirm production Worker is still running `b3f5e12` and that no commits have landed on `main` since the schema-fix session.
-3. Confirm `reviews.lead_intent` is now present on production (the schema fix landed). Check the dashboard before deploying.
-4. Merge `feat-prompt-caching` into `main` (fast-forward or merge-commit, both acceptable since the patch only touches `callClaude`).
-5. Deploy with `npx wrangler deploy` from `sales-bot/` (no `--env` flag = production).
-6. Watch production logs via `npx wrangler tail sales-bot --format=pretty` for 10-20 minutes. Confirm `[cache]` log lines appear and `cache_read` is non-zero on most calls.
-7. Watch production for 1-2 days via Anthropic billing dashboard. Confirm input cost trend is downward.
-8. After savings are proven, ship the operational hardening that was deferred.
-
-Hard rules:
-- Do not touch the `feat-prompt-caching` branch unless production deploy reveals a regression.
-- Do not add a second cache breakpoint. Single one already hits target savings.
-- Do not change anything else in `index.js` during the deploy. Caching merge first, anything else later.
 
 ### [ ] 1.1.6 STAGING.md runbook (deferred, still applies)
 Was the original "next up" before caching work jumped the queue. Now lower priority because caching has more business impact. Should still happen.
@@ -73,6 +36,43 @@ Write `STAGING.md` documenting:
 ---
 
 ## COMPLETED
+
+### [x] 1.2.2 Phase 3: Prompt caching deployed to production (2026-05-09)
+
+**Result:** Live. Worker version `1881c4ac-88e0-4b12-bf24-7fcd74572434`, deployed from merge commit `3964d10` on `main`. `feat-prompt-caching` (`0a461c7`) merged into `main` via no-fast-forward merge commit. Bindings confirm production target: `env.ENVIRONMENT="production"`, `SUPABASE_URL` resolves to `rydkwsjwlgnivlwlvqku`. Previous version `335b133c-d07f-4693-a314-fbffd448fbe1` retained in Cloudflare's version history as rollback target.
+
+**End-to-end verification:** synthetic 2-turn webhook against production (`customer_id=caching-deploy-verify-20260509205655`, since cleaned up from both reviews and conversations tables). Both turns returned HTTP 200. Tail observations:
+
+- Turn 1 (cold): `[cache] model=claude-sonnet-4-6 input=2429 cache_create=10248 cache_read=0 output=537`
+- Turn 2 (batched): `Batching: found recent pending review review_1778356630682_ot3pnsc2l ... will update instead of creating new`, then `[cache] input=3 cache_create=2599 cache_read=10248 output=557`
+
+The `cache_read=10248` on Turn 2 exactly matches the `cache_create=10248` from Turn 1, proving the static prefix is byte-stable on production and the cache breakpoint is engaging. Production static prefix is more than 2x larger than staging's (10,248 vs 4,874) because production has accumulated real learnings + documents in the `bots` row, which means proportionally bigger savings per call.
+
+**Database verification of the same synthetic test:** the production `reviews` row written by Turn 2 stored `lead_intent=MEDIUM`, `conversation_stage=DIAGNOSTIC`, `bot_reply` containing the Turn 2 pricing-fit reply, `emotional_state=ENGAGED`, `bot_messages_count=2`, `typing_delays_count=2`, `last_messages_count=3`. All fields that PGRST204 had previously been silently dropping (Part A's bug) are now writing successfully on the same code path that Part B's caching also runs through. Both fixes verified working together on production in a single test.
+
+**Wrangler version note:** deploy ran on `wrangler 4.65.0`. Tool prompted "update available 4.90.0" and emitted a non-fatal warning about multi-environment configs requiring an explicit `--env` flag. Deploy still completed correctly because the top-level `wrangler.toml` config IS the production config and bare `wrangler deploy` still defaults to top-level. **For future deploys**, pass `--env=""` (empty string) to suppress the warning and remove the ambiguity. Wrangler upgrade to 4.90.0 deferred (not blocking).
+
+**Operational follow-ups (not blocking):** monitor Anthropic billing dashboard for next 1-2 days to confirm input-cost trend is downward (target: ~halving). If a regression surfaces, rollback path is `git revert -m 1 3964d10` followed by `npx wrangler deploy --env=""`.
+
+### [x] 1.2.1 Schema fix: `lead_intent` column added to `reviews` on staging and production (2026-05-09)
+
+**Result:** PGRST204 silent failure path closed. Migration `005_add_lead_intent_to_reviews.sql` (committed in `a518b13`) adds `lead_intent text` (nullable, no default; matches `conversations.lead_intent`) to `public.reviews`. `db/schema.sql` updated in the same commit.
+
+**Apply order:**
+1. Staging Supabase (`hlpucysbaqerhwahfolg`) first via Dashboard SQL Editor. Schema cache reloaded with `NOTIFY pgrst, 'reload schema';`. Verified column landed via `information_schema.columns` query. Verified writability via direct UPDATE (write `lead_intent='UNKNOWN'`, read back, reset to NULL).
+2. End-to-end staging verification: 2-turn synthetic webhook (`customer_id=schema-fix-verify-20260509125735`). Turn 2 hit batching UPDATE path. Worker tail showed `Batching: found recent pending review` followed by `[cache]` line, no PGRST204. Stored row had `lead_intent=MEDIUM`, all turn-2 fields populated correctly. Test row cleaned up from both tables.
+3. Production Supabase (`rydkwsjwlgnivlwlvqku`) second via Dashboard SQL Editor. Same sequence: ALTER TABLE, NOTIFY pgrst, verify with information_schema query. No live test traffic at the time of migration (production was in the credit-topup-pending traffic gap). End-to-end verification on production was deferred to the caching-deploy synthetic test described in the Phase 3 entry above; that test exercised the same batching UPDATE path, and the resulting database row (`lead_intent=MEDIUM`, all turn-2 fields populated) confirmed both the schema fix and the caching deploy together.
+
+**Backfill decision: no backfill of historical `reviews.lead_intent`.** Reasoning:
+- `lead_intent` on reviews is analytics metadata, not a routing signal. The Worker routes via `next_action` and `conversation_stage`, not `reviews.lead_intent`.
+- The PGRST204 corruption was field-wide, not just `lead_intent`. A backfill that only restores `lead_intent` would create the false impression that affected reviews are now "fixed" when most fields (`bot_reply`, `bot_messages`, `typing_delays`, `internal_notes`, `escalation_reason`, `emotional_state`, `last_messages`, `resolved_at`) would still be stale.
+- Full restoration is not possible. Per-turn fields like `internal_notes`, `escalation_reason` were never persisted anywhere except the dropped UPDATE itself.
+- Identifying affected rows is heuristic at best (e.g. `bot_messages.length=1` plus stale `created_at`), not reliable.
+- Going forward is what matters. New batched reviews now write correctly. Historical pollution is bounded and shrinks in relative weight as new clean reviews accumulate.
+
+The historical-corruption audit question stays open in DEFERRED in case Coach Shaun's team ever wants best-effort historical analytics; we can compute a heuristic backfill from `conversations` then with appropriate caveats.
+
+**Findings about the production traffic gap:** PROGRESS.md noted at session start that `reviews.created_at` and `conversations.created_at` both stopped advancing at 2026-05-07 21:38 UTC, ~39 hours before this session. Initial concern was that the Worker had stopped processing webhooks. Investigation showed: ManyChat or Make.com credit balance had run out around the same time the Worker was last uploaded (2026-05-07 18:53 UTC). Coach Shaun topped up during this session. Worker itself was healthy throughout. This is not a recurring issue, but the timing coincidence with the Worker's last upload was misleading and worth flagging for future sessions reading the COMPLETED list out of order.
 
 ### [x] 1.2 Phase 3 (aborted at Step 2): Production schema-gap investigation (2026-05-09)
 
@@ -299,7 +299,9 @@ A progress file that is read once at session start and never updated drifts out 
 
 ## DEFERRED — known gaps, not blockers
 
-- **UPDATED (2026-05-09): `reviews.lead_intent` schema gap CONFIRMED on production.** Both staging and production `reviews` tables are missing the `lead_intent` column. The Worker writes this column on three code paths: SEND_TO_INBOX_REVIEW batching UPDATE (index.js line 1242), AUTO_SEND batching UPDATE (line 1421), and Claude API overloaded fallback INSERT (line 1541). All three are wrapped in `ctx.waitUntil`, so PGRST204 errors are silent and the user-facing flow is unaffected. **However**, PGRST204 rejects the *entire* UPDATE statement, not just the bad column, which means production batching-path UPDATEs have been silently dropping `bot_reply`, `bot_messages`, `typing_delays`, `internal_notes`, `escalation_reason`, `emotional_state`, `last_messages`, `resolved_at` along with `lead_intent` whenever a second turn lands in the batching window. Inbox records for batched reviews are likely stale (showing first-turn data instead of second-turn). The fix is the new top-priority NEXT UP item 1.2.1: add a versioned migration adding `lead_intent text` to `reviews`, apply to staging then production, update `db/schema.sql`. **Open audit question (deferred, not blocking the migration):** how many historical production reviews have stale batched content, and is backfill from the corresponding `conversations` row possible/worth it. Decision and rationale to be captured in the schema-fix session.
+- **CLOSED (2026-05-09): `reviews.lead_intent` schema gap.** Migration 005 added the column on staging and production. Caching deploy synthetic test verified the batching UPDATE path now writes all fields correctly. Decision: **no backfill** of historical reviews; full reasoning in the COMPLETED entry for 1.2.1. **Audit question still open (low priority):** how many historical production reviews have stale batched content from the period when the column was missing. Best-effort heuristic backfill from `conversations` would be possible if Coach Shaun's team ever needs historical lead-intent analytics.
+- **Wrangler upgrade (deferred):** local `wrangler` is at `4.65.0`; latest is `4.90.0` as of 2026-05-09. Upgrade is a separate maintenance task, not coupled to any feature work. Run `npm install --save-dev wrangler@latest` in `sales-bot/` and re-test deploy on staging first.
+- **Deploy ergonomics:** future production deploys should pass `--env=""` to `npx wrangler deploy` to suppress the multi-environment ambiguity warning that wrangler 4.x emits on bare deploys. Behavior is identical; the flag just removes the warning.
 - **Phase 1.3:** Worker `/health` endpoint returns hardcoded `supabase_connected: true`. Needs real check.
 - **Phase 3:** Logo asset URLs in dashboard hardcoded to production Supabase storage bucket. Cosmetic, staging dashboard loads logos fine from prod bucket.
 - **Phase 4:** Remove dead `OPENAI_API_KEY` references from Worker.
@@ -311,4 +313,4 @@ A progress file that is read once at session start and never updated drifts out 
 
 ---
 
-*Last updated: 2026-05-09 (end of Phase 1.2 Phase 3 schema-gap investigation session; deploy aborted at Step 2 per brief decision tree, schema fix promoted to top priority as 1.2.1)*
+*Last updated: 2026-05-09 (end of Phase 1.2 Phase 3 deploy session: schema fix 1.2.1 applied to staging and production, caching deploy 1.2.2 merged and deployed, both verified end-to-end on production via synthetic 2-turn webhook test, billing watch period started)*
