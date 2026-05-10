@@ -1408,12 +1408,17 @@ export default function Inbox() {
                   <div ref={msgEndRef} />
                 </div>
 
-                {/* Manual Reply Input - only visible when the user is on the Follow Ups tab.
-                    For active prospects, setters should use the AI approve path
-                    so the learning system captures their corrections. Manual
-                    replies bypass that, which is appropriate for follow-up
-                    chasing where the AI may not generate the right tone. */}
-                {filter === 'Follow Ups' && (
+                {/* Manual Reply Input - visible on Follow Ups and Needs Response tabs.
+                    Follow Ups: setter chases a cold lead off-platform; AI may not
+                    generate the right tone for re-engagement. Needs Response: lead
+                    is waiting and the system has no AI draft (typically because a
+                    prior review was discarded). Manual reply is the only way to
+                    respond from inside the inbox.
+                    Both paths bypass the learning system, which is acceptable here
+                    since there's no AI draft to learn corrections from. For active
+                    prospects with an AI draft, the approve path on the Pending tab
+                    still drives the learning loop. */}
+                {(filter === 'Follow Ups' || filter === 'Needs Response') && (
                   <div style={{ padding: '10px 16px', borderTop: '1px solid var(--bdr)', background: 'var(--surf)', display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0 }}>
                     <textarea
                       ref={manualInputRef}
