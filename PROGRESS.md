@@ -6,11 +6,11 @@ This is the single source of truth for what is done, what is in progress, and wh
 
 ## STATUS
 
-**Currently in progress:** Nothing. The 2026-05-09 session closed Phase 1.2 end to end. Schema fix (1.2.1) and caching deploy (1.2.2) both applied to production and verified with synthetic traffic. Watching Anthropic billing dashboard over the next 1-2 days separately to confirm input cost trend is downward.
+**Currently in progress:** Nothing. Two production changes shipped on 2026-05-09: Phase 1.2 (schema fix 1.2.1 + caching deploy 1.2.2) and an inbox UX fix (manual reply textarea now visible on the Needs Response tab). Watching Anthropic billing dashboard over the next 1-2 days separately to confirm input cost trend is downward from caching.
 
-**Production state:** Worker version `1881c4ac-88e0-4b12-bf24-7fcd74572434` (deployed 2026-05-09 from merge commit `3964d10` on `main`, includes prompt caching + race-fix). `reviews.lead_intent` column now present (migration 005). Coach Shaun's bot serving live leads. Traffic gap from 2026-05-07 21:38 UTC to 2026-05-09 ~21:00 UTC was a ManyChat or Make.com credit balance running out, not a Worker fault. Topup restored upstream pipeline.
+**Production state:** Worker version `1881c4ac-88e0-4b12-bf24-7fcd74572434` (deployed 2026-05-09 from merge commit `3964d10` on `main`, includes prompt caching + race-fix). Dashboard at commit `a7ec441` (deployed 2026-05-09, bundle `index-BRUtjbJE.js`, deployment URL `https://e54a1529.botos-platform-3ar.pages.dev`). `reviews.lead_intent` column present (migration 005). Coach Shaun's bot serving live leads. Traffic gap from 2026-05-07 21:38 UTC to 2026-05-09 ~21:00 UTC was a ManyChat or Make.com credit balance running out; topup restored upstream pipeline.
 
-**Staging state:** Worker version `01d34c93-a8dd-41ff-8cad-3b6809217505` from `feat-prompt-caching` branch (unchanged). `reviews.lead_intent` present (migration 005 applied 2026-05-09). `feat-prompt-caching` branch retained at `0a461c7` for rollback reference. Branch is now also reachable from `main` via merge commit `3964d10`.
+**Staging state:** Worker version `01d34c93-a8dd-41ff-8cad-3b6809217505` from `feat-prompt-caching` branch (unchanged). Dashboard last redeployed 2026-05-09 to verify the Needs Response UI change before production rollout (bundle `index-Drhe6KdK.js` at https://botos-platform-staging.pages.dev). `reviews.lead_intent` present (migration 005 applied 2026-05-09). `feat-prompt-caching` branch retained at `0a461c7` for rollback reference; also reachable from `main` via merge commit `3964d10`.
 
 ---
 
@@ -36,6 +36,37 @@ Write `STAGING.md` documenting:
 ---
 
 ## COMPLETED
+
+### [x] Inbox UX: manual reply textarea on Needs Response tab (2026-05-09)
+
+**Result:** Live on production. Commit `a7ec441` on `main`. Production dashboard rebuilt and deployed to `botos-platform` Pages project, bundle `index-BRUtjbJE.js`. Deployment URL `https://e54a1529.botos-platform-3ar.pages.dev`, bare URL `https://botos-platform-3ar.pages.dev` confirmed serving the new bundle.
+
+**Why:** the Needs Response tab surfaces leads whose last message is unanswered AND have no AI draft pending (typically because a prior review was discarded). Before this change, leads in this state were listed but the inbox UI offered no way to respond. Setters had to either ignore the lead, flag it as followed-up (which lied about what happened), or switch to Instagram/Business Suite to send the reply. The tab surfaced a problem with no in-product solution.
+
+**Change:** single conditional in `dashboard/src/pages/Inbox.jsx` line 1416 (now 1421). Manual reply textarea was previously gated behind `filter === 'Follow Ups'`; the gate now also matches `filter === 'Needs Response'`. No other code changes. The `sendManualReply` function was already correct: it writes the assistant message to `conversations.messages`, which flips `user_sent_last` to false on the next `loadData` refresh, automatically removing the lead from the tab. The comment block above the gate was rewritten to explain the new dual-tab behavior.
+
+**Verification on staging:**
+1. Synthetic webhook against staging Worker (`customer_id=needs-response-ui-test-20260510091254`).
+2. Pending review created.
+3. Setter discarded the review in the staging dashboard.
+4. Lead appeared in Needs Response tab.
+5. Textarea visible at the bottom of the conversation thread.
+6. Manual reply typed and sent: toast confirmed success, message appeared in thread with "Manual" tag, lead disappeared from Needs Response on the next refresh.
+7. Regression checks: textarea still appears on Follow Ups, textarea correctly absent on Pending/All/Escalated/For Coach/Resolved/Test, no console errors.
+
+**Verification on production:**
+- Bundle hash match: built locally `index-BRUtjbJE.js`, served at deployment URL and at bare production URL (all three match).
+- Real Needs Response leads checked in browser: textarea now visible, AI panel correctly absent (since `pending_count = 0`).
+- Follow Ups tab: textarea still present (regression check).
+- Pending tab: AI approve panel still present, no textarea (regression check).
+- No console errors.
+
+**Path that creates Needs Response leads (root cause analysis from this session):**
+The most common path is review discard. When a setter clicks Discard on a pending review, `reviews.status` flips to `discarded`, but `conversations.messages` is not touched. The lead's last user message remains the most recent in `messages`, so `user_sent_last` stays true. `pending_count` becomes 0 because the review is no longer pending. Both conditions of `isNeedsResponseLead` are satisfied. Other possible paths (Worker errors writing partial state, AUTO_SEND-followed-by-new-user-message timing) are theoretically possible but less common.
+
+**Related but not changed:** the for_coach exclusion, the tester filter, and the `isNeedsResponseLead` helper itself were not touched. The only behavioral change is what UI controls render when the user is on the Needs Response tab.
+
+**Deploy ergonomics note:** wrangler 4.73.0 emits a warning if the working directory is dirty (`Your working directory is a git repo and has uncommitted changes`). Suppressed with `--commit-dirty=true` on the production deploy. The change was committed to git after both staging and production deploys verified working.
 
 ### [x] 1.2.2 Phase 3: Prompt caching deployed to production (2026-05-09)
 
@@ -313,4 +344,4 @@ A progress file that is read once at session start and never updated drifts out 
 
 ---
 
-*Last updated: 2026-05-09 (end of Phase 1.2 Phase 3 deploy session: schema fix 1.2.1 applied to staging and production, caching deploy 1.2.2 merged and deployed, both verified end-to-end on production via synthetic 2-turn webhook test, billing watch period started)*
+*Last updated: 2026-05-09 (Phase 1.2 deploy session closed; inbox UX fix shipped same day adding manual reply on Needs Response tab; commit a7ec441 on main, production bundle index-BRUtjbJE.js)*
