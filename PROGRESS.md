@@ -6,11 +6,11 @@ This is the single source of truth for what is done, what is in progress, and wh
 
 ## STATUS
 
-**Currently in progress:** Nothing. Two production changes shipped on 2026-05-09: Phase 1.2 (schema fix 1.2.1 + caching deploy 1.2.2) and an inbox UX fix (manual reply textarea now visible on the Needs Response tab). Watching Anthropic billing dashboard over the next 1-2 days separately to confirm input cost trend is downward from caching.
+**Currently in progress:** Nothing. Three production changes shipped 2026-05-11: the empty-system-block bugfix on the Worker (`b2f765d`), a router enhancement on Make Scenario 1 adding `GetSubscriberInfo` lookup for leads with missing ig_username, and an inbox UX fix yesterday (still relevant). Watching Anthropic billing dashboard 1-2 days separately to confirm caching cost trend is downward.
 
-**Production state:** Worker version `1881c4ac-88e0-4b12-bf24-7fcd74572434` (deployed 2026-05-09 from merge commit `3964d10` on `main`, includes prompt caching + race-fix). Dashboard at commit `a7ec441` (deployed 2026-05-09, bundle `index-BRUtjbJE.js`, deployment URL `https://e54a1529.botos-platform-3ar.pages.dev`). `reviews.lead_intent` column present (migration 005). Coach Shaun's bot serving live leads. Traffic gap from 2026-05-07 21:38 UTC to 2026-05-09 ~21:00 UTC was a ManyChat or Make.com credit balance running out; topup restored upstream pipeline.
+**Production state:** Worker version `87921362-776a-4990-99bc-dcf36a315d3a` (deployed 2026-05-11 from `main` at commit `b2f765d`, includes prompt caching + race-fix + empty-system-block guard). Dashboard at commit `a7ec441` (deployed 2026-05-09, bundle `index-BRUtjbJE.js`). `reviews.lead_intent` column present (migration 005). Make Scenario 1 `8264588` updated 2026-05-11 18:27 UTC with router + Branch B (Sleep 15s + GetSubscriberInfo + email-on-error + Resume + HTTP-to-Worker with `ifempty()` username mapping). Coach Shaun's bot serving live leads.
 
-**Staging state:** Worker version `01d34c93-a8dd-41ff-8cad-3b6809217505` from `feat-prompt-caching` branch (unchanged). Dashboard last redeployed 2026-05-09 to verify the Needs Response UI change before production rollout (bundle `index-Drhe6KdK.js` at https://botos-platform-staging.pages.dev). `reviews.lead_intent` present (migration 005 applied 2026-05-09). `feat-prompt-caching` branch retained at `0a461c7` for rollback reference; also reachable from `main` via merge commit `3964d10`.
+**Staging state:** Worker version `b23f9121-f660-4260-bacd-94f4ad914345` (deployed 2026-05-11 to verify the empty-system-block fix before production). Dashboard last redeployed 2026-05-09 (bundle `index-Drhe6KdK.js`). `reviews.lead_intent` present. `feat-prompt-caching` branch retained at `0a461c7` for rollback reference; also reachable from `main` via merge commit `3964d10`. Previous staging Worker version `01d34c93-a8dd-41ff-8cad-3b6809217505` from before the empty-block fix is also retained in Cloudflare's version history.
 
 ---
 
@@ -36,6 +36,79 @@ Write `STAGING.md` documenting:
 ---
 
 ## COMPLETED
+
+### [x] Make Scenario 1: router + GetSubscriberInfo for missing-username leads (2026-05-11)
+
+**Result:** Live in production. Make Scenario 1 `8264588` "Manychat DM Mu Ai" updated 2026-05-11 18:27 UTC. Recovery snapshot of the prior blueprint preserved in the deploy session transcript.
+
+**Why:** ~10-15 leads per day arrive from ManyChat with `ig_username: null` because ManyChat hasn't resolved the Instagram handle by the time it fires the webhook. The Worker's fallback (`"Instagram Lead"`) is functional but makes the inbox messy and removes the setter's ability to look up these leads in Business Suite by handle. Migration 004's `COALESCE` healing only helps leads who message again. Many never do.
+
+**Investigation that led to the fix:**
+1. Created standalone test scenario `9210835` "Test - GetSubscriberInfo" with a hardcoded subscriber ID (`1702389996`) of a real lead whose original webhook had `ig_username: null`. Ran once via the Make UI.
+2. ManyChat's `/fb/subscriber/getInfo` API returned `ig_username: "captain.wilko"` for that same subscriber 5 days later. Confirmed ManyChat eventually resolves usernames asynchronously, and the API surfaces them.
+3. Designed a router pattern: Branch A (has username) pass-through, Branch B (missing username) does Sleep 15s + GetSubscriberInfo + HTTP-to-Worker with `ifempty(API.ig_username; webhook.ig_username)`.
+
+**Change:** Live Scenario 1 blueprint restructured. Pre-change flow was sequential: 75 (CustomWebHook) → 76 (Respond) → 78 (HTTP Worker) → 90/91/92/93 (AUTO_SEND chain, dead code in practice). Post-change flow: 75 → 76 → 200 (Router) splitting into two parallel chains. Branch A duplicates the original behavior (modules 78, 90, 91, 92, 93 with onerror chains). Branch B introduces 300 (Sleep 15s), 301 (GetSubscriberInfo with onerror sending email to `iamanthony1007@gmail.com` then Resume directive), 400 (HTTP to Worker using `ifempty(301.ig_username; 75.ig_username)`), and 500/501/502/503 mirroring the AUTO_SEND chain for missing-username leads.
+
+**Trade-offs:**
+- Missing-username leads now wait an extra 15 seconds before bot reply (totally acceptable; the bot's first reply already includes typing delays of similar magnitude).
+- Branch B costs more Make operations per execution (5-7 ops vs the standard 3) but only fires on ~10-15 leads/day.
+- AUTO_SEND modules in both branches remain dead code: the Worker currently never returns `next_action: AUTO_SEND` in webhook responses (it triggers Scenario 2 `9057459` directly via `sendToMakeScenario2`). Kept in both branches anyway for parity and future-proofing.
+
+**Why the router pattern was chosen over inline filters:**
+Initially recommended inline filters (Sleep and GetSubscriberInfo with filters "ig_username is empty"). Reversed after pushback. The router pattern is more explicit in Make's diagram view, which matters for future maintainers. Reading the actual blueprint structure on the live scenario revealed both downstream chains needed to coexist without rejoining (Make routers can't cleanly converge into a single downstream chain), so the duplication overhead was accepted.
+
+**Verification:** Watching real production executions starting from the 18:27 UTC deploy. First post-deploy execution arrived clean. Branch B trigger conditions exercised when leads with missing usernames hit the webhook.
+
+**Test artifacts to clean up later:**
+- Make scenario `9210835` "Test - GetSubscriberInfo" (standalone test that proved API resolution works)
+- Make scenario `9210857` "Test - Router Username Fix" (test clone that never completed end-to-end testing due to BasicTrigger UI quirks; was activated briefly via API then deactivated)
+
+**Caveat:** If ManyChat itself never resolves the username (genuinely unrecoverable cases), Branch B falls through with the original null webhook value and the Worker's `"Instagram Lead"` fallback applies. This is the expected behavior, not a bug.
+
+### [x] Worker empty system-block bugfix (2026-05-11)
+
+**Result:** Live in production. Commit `b2f765d` on `main`. Worker version `87921362-776a-4990-99bc-dcf36a315d3a` deployed via `npx wrangler deploy --env=""`. Previous version `1881c4ac-88e0-4b12-bf24-7fcd74572434` retained in Cloudflare's version history as rollback target.
+
+**Symptom:** Production Make Scenario 1 returned 500 for an existing lead (`customer_id: 28531692, ig_username: mbarks69`) sending "I should be finished 4.30 pm on Tuesday start at 6am". Error body from the Worker: `Claude API error: {"type":"error","error":{"type":"invalid_request_error","message":"system: text content blocks must be non-empty"}}`. The lead got no reply.
+
+**Root cause:** The caching deploy (commit `3964d10`, 2026-05-09) split the previously-single `finalSystemPrompt` string into two pieces in `callClaude`: a `staticPrefix` (learningsSection + documentSection + campaignSection + systemPrompt, cacheable) and a `dynamicSuffix` (welcomeSection + leadSourceSection + reEngagementSection, per-turn). Both were sent as a two-element array under the `system` field with a `cache_control: ephemeral` breakpoint on `staticPrefix`. For existing leads with no welcome injection (totalMsgs > 3), no lead_source event in the message, and no re-engagement context, all three suffix sections evaluate to empty strings, so `dynamicSuffix` is an empty string. Anthropic's API rejects empty text content blocks.
+
+**Timing of exposure:** The bug was latent. Make Scenario 1 was OFF from before the caching deploy until 2026-05-11 ~05:00 UTC (~30 hours of no real traffic). When re-enabled, the very next existing-conversation message hit the bug. The 25+ status-2 executions in the next ~5 hours indicate ~25 affected leads. Each generated an error email to `iamanthony1007@gmail.com` from Scenario 1's existing onerror chain on module 78.
+
+**Why the soak test missed it:** Phase 2 soak used 18 fresh customer_ids (`soak-2026-05-09-001..018`). Fresh leads with `totalMsgs <= 3` always hit the welcome path, where `welcomeSection` is non-empty. The synthetic webhooks used to verify production after the caching deploy used the same pattern. Neither exercised the multi-turn-existing-conversation case where `dynamicSuffix` legitimately resolves to empty.
+
+**Fix:** Build the `system` array conditionally. Always emit the static prefix block (which carries `cache_control: ephemeral`). Only emit the dynamic suffix block when it has content. Caching is unaffected; single-block requests cache the static prefix identically to two-block requests because the breakpoint is on staticPrefix in both paths.
+
+```js
+const systemBlocks = [
+  { type: "text", text: staticPrefix, cache_control: { type: "ephemeral" } }
+];
+if (dynamicSuffix && dynamicSuffix.trim().length > 0) {
+  systemBlocks.push({ type: "text", text: dynamicSuffix });
+}
+// ...
+system: systemBlocks,
+```
+
+Patch is 16 insertions, 4 deletions in `sales-bot/src/index.js` around line 2107.
+
+**Verification:**
+1. Patched code deployed to staging Worker `b23f9121-f660-4260-bacd-94f4ad914345`. 3-turn synthetic test designed to defeat the soak blind spot: Turn 1 fresh (welcome path), 35s delay, Turn 2 (also welcome path due to `totalMsgs=2`), 35s delay, Turn 3 hits empty-dynamicSuffix path (totalMsgs=4, no welcome / leadSource / reEngagement). Result: Turn 3 returned `status: 200, batched: false, msg_count: 5` with coherent bot reply.
+2. Same patched code deployed to production Worker `87921362`. Same 3-turn test with 40s delays. Turn 3 returned `status: 200, batched: false, msg_count: 5` with reply "Before I get into that, helps to know a bit more about what you're actually tryi...".
+3. Make Scenario 1 was re-enabled at 07:07 UTC. First post-fix real auto-execution at 07:27 UTC returned status: 1 (success). The same lead (`mbarks69`) that broke the system earlier now received a clean reply.
+
+**Lesson learned (added to REFERENCE section):** synthetic soak tests using fresh customer_ids only exercise the welcome path. Future tests must include multi-turn scenarios that push `totalMsgs > 3` to cover the most common production state.
+
+**Recovery process used today's session:**
+1. Backed up `sales-bot/src/index.js` to `index.js.bak-empty-system-block` before patching.
+2. First PowerShell patch attempt failed due to `[System.IO.File]::ReadAllText` ignoring `$PWD` and `Resolve-Path` needed.
+3. Second attempt failed due to PowerShell here-string newline quirks vs file's CRLF endings.
+4. Switched to Python script (`patch_empty_system_block.py`) that reads bytes, detects line endings, preserves them, and is idempotent. Worked.
+5. Backup file recovered the original when the second attempt accidentally wrote empty content. No data loss.
+
+**Test artifact to clean up later:**
+- Production `conversations` row for `customer_id: empty-suffix-prod-fix-20260511072641` (3 synthetic turns, 5 messages)
 
 ### [x] Inbox UX: manual reply textarea on Needs Response tab (2026-05-09)
 
@@ -344,4 +417,4 @@ A progress file that is read once at session start and never updated drifts out 
 
 ---
 
-*Last updated: 2026-05-09 (Phase 1.2 deploy session closed; inbox UX fix shipped same day adding manual reply on Needs Response tab; commit a7ec441 on main, production bundle index-BRUtjbJE.js)*
+*Last updated: 2026-05-11 (empty system-block bugfix shipped commit b2f765d, Worker 87921362; Make Scenario 1 router added for username resolution via GetSubscriberInfo lookup)*
