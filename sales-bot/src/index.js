@@ -2104,6 +2104,21 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     leadSourceSection +
     reEngagementSection;
 
+  // Bugfix 2026-05-09: Anthropic rejects empty text content blocks with
+  // "system: text content blocks must be non-empty". For existing leads
+  // with no welcome injection, no lead_source event, and no re-engagement
+  // context, all three suffix sections evaluate to "" and dynamicSuffix
+  // is an empty string. Build the system array conditionally so we only
+  // emit the dynamic block when it has content. Caching breakpoint stays
+  // on staticPrefix in both cases (single block or two blocks), so cache
+  // hits work identically.
+  const systemBlocks = [
+    { type: "text", text: staticPrefix, cache_control: { type: "ephemeral" } }
+  ];
+  if (dynamicSuffix && dynamicSuffix.trim().length > 0) {
+    systemBlocks.push({ type: "text", text: dynamicSuffix });
+  }
+
   const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -2114,10 +2129,7 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     body: JSON.stringify({
       model: model,
       max_tokens: 1024,
-      system: [
-        { type: "text", text: staticPrefix, cache_control: { type: "ephemeral" } },
-        { type: "text", text: dynamicSuffix }
-      ],
+      system: systemBlocks,
       messages: [
         { role: "user", content: buildDeveloperPrompt(memory, lastMessages) }
       ],
