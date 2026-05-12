@@ -16,7 +16,110 @@ This is the single source of truth for what is done, what is in progress, and wh
 
 ## NEXT UP
 
-### [ ] 1.1.6 STAGING.md runbook (deferred, still applies)
+The next session should pick up these four priorities in order. Each was scoped during the 2026-05-11 end-of-session conversation. Design decisions are recorded; open questions are flagged. Do not re-derive what is already decided.
+
+### [ ] Priority 1: Username resolution monitoring (no build work, just observation)
+
+**State:** Implementation shipped tonight in production Make Scenario 1 (router + Branch B with Sleep 15s + GetSubscriberInfo + email-on-error + Resume + HTTP-to-Worker with `ifempty()` mapping). Worker fix shipped tonight too (`b2f765d`).
+
+**What to do next session:**
+- Check production Anthropic billing dashboard for caching cost trend (expected to be downward since 2026-05-09 caching deploy).
+- Watch Make Scenario 1 executions over the past few days. Confirm Branch B is firing for missing-username leads. Confirm executions are completing successfully (status 1, not 2 or 3).
+- Check inbox for emails to `iamanthony1007@gmail.com` with subject `[Mu AI] ManyChat GetSubscriberInfo failed for subscriber...`. These indicate ManyChat API errors. A small number (< 5%) is normal; a flood means something's wrong.
+- Spot-check the production dashboard inbox for leads that previously had "Instagram Lead" placeholders to see if their usernames have populated correctly.
+
+**No code change expected unless monitoring surfaces a problem.**
+
+### [ ] Priority 2: Auto-send based on per-stage approval history + confidence
+
+**Design (decided tonight, after research push-back on Nella's original N=30 fixed-count rule):**
+
+Auto-send IF and ONLY IF all of these conditions are true:
+1. Bot has approval rate >= 90% over last 30 reviewed drafts AT this conversation_stage (rolling window; not reset on discard, but auto-drops out when quality drifts).
+2. This specific draft's `confidence` >= 0.80.
+3. This message does NOT contain a Jotform / booking link (booking-stage messages always go through human review).
+4. `lead_intent` is not `HIGH` (high-intent leads are too valuable to risk).
+5. `escalation_reason` is null.
+
+**Per stage, per bot.** A bot proving itself on HOOK / ENTRY says nothing about its readiness for BOOKED. Different stages have different stakes.
+
+**Auto-sent messages still write a review row** to Supabase, with `status: auto_sent` (new status value) instead of `pending`. This preserves audit trail and lets setters retroactively review what was sent.
+
+**The rolling-window logic** is the key safety net. If the bot starts drifting (Coach Shaun changes the prompt, new edge case, hallucination), the setter starts discarding drafts. As discards accumulate in the rolling window, the approval rate drops below 90%, auto-send turns off automatically for that stage. No manual kill switch needed.
+
+**Open questions for next session:**
+- Where does the rolling-window state live? Computed on-the-fly from the `reviews` table at each draft? Or denormalized into a new `bot_stage_stats` table for performance?
+- What about cold start? A bot with only 5 reviewed drafts at a stage has insufficient data. Minimum-sample-size guard: require at least 30 reviewed drafts before auto-send is even considered.
+- Dashboard: need an "Auto Sent" filter tab so setters can audit. Tab design to be decided during build.
+- Settings page: should setters be able to manually disable auto-send for a stage even if the rate is high?
+
+### [ ] Priority 3: Auto follow-up at T+20h after lead's last message
+
+**Design (decided tonight):**
+
+When a lead's last user message is between 20-21 hours ago AND the IG window has NOT yet expired (which it won't have at T+20h, since IG window is 24h), send ONE follow-up message containing just the lead's name with a question mark: `James?`, `Anna?`, etc.
+
+**Name resolution priority:**
+1. Use `conversations.profile_name` if present (Instagram display name).
+2. Fall back to `conversations.name` if `profile_name` is empty but `name` is set.
+3. If neither is available: **skip the follow-up entirely.** Do not attempt to derive a name from `ig_username` because heuristics risk sending weird/embarrassing messages to real people (Path 1 decision, conservative).
+
+**Mechanism:** Cloudflare Worker Cron Trigger (Option A). Runs hourly. Queries Supabase for leads where:
+- `conversations.followed_up_at IS NULL` (idempotency: one follow-up per lead, ever)
+- Last user message in `conversations.messages` is between 20-21 hours ago
+- `for_coach IS FALSE`
+- `escalation_reason IS NULL`
+- Conversation stage is NOT `BOOKED`
+- Not a tester account (per existing `isTesterLead` logic)
+- Last message in conversation is from `bot` (i.e., we replied; we're following up, not initiating)
+- Most recent bot message does NOT contain a Jotform link (booked-pending leads excluded)
+
+For each matching lead, the Worker:
+- Resolves the name per the priority above; if no name, skip
+- Calls Make Scenario 2 directly via `sendToMakeScenario2(customerId, [{ text: "James?", typing_delay_ms: 1000 }])` (same pattern as the existing AUTO_SEND path)
+- Sets `conversations.followed_up_at = NOW()` after the Scenario 2 call succeeds
+
+**Why Cloudflare Worker Cron (not Make-based scheduling):**
+- Worker already has Supabase credentials, the Make Scenario 2 webhook URL, and the right judgment helpers (isTesterLead, for_coach detection, etc.)
+- Free at our volume (Cloudflare Cron triggers are unlimited on the Workers Paid plan, ~100K invocations/day on free)
+- One central place to add the logic; doesn't fragment automation across Make and Worker
+
+**Open questions for next session:**
+- Migration needed: add `conversations.followed_up_at TIMESTAMP NULL` column. Schedule with migration 006.
+- Make Scenario 2 currently expects messages with typing delays. Confirm the call shape works for a single short message.
+- Inbox dashboard implications: when an auto-follow-up sends, where does it appear? Two candidate behaviors:
+  - **Option X:** Keep Needs Response tab, but redefine its meaning to "lead never responded AND IG window has expired (>24h)." This becomes a Business Suite triage queue. Follow-ups that fail (lead doesn't respond after 24h) end up here.
+  - **Option Y:** Remove Needs Response tab entirely. Follow-Ups tab becomes the catch-all for leads needing setter attention (auto-follow-up sent but lead didn't respond, OR auto-follow-up couldn't fire because profile_name was missing).
+  - **Decision: decide during build**, once we can see the actual state flowing through.
+- Edge case: what if a lead messages between T+19h and T+20h? Re-querying at the top of the next hour would no longer match (last message is now < 20h ago), so the follow-up is naturally skipped. Good.
+- Cron schedule: hourly is the maximum granularity that gives precise T+20h timing. Confirm Cloudflare's cron trigger overhead is fine.
+
+### [ ] Priority 4: Custom domain setup (blocked pending Nella's domain docs)
+
+**State:** Nella has purchased a domain. Domain document not yet uploaded to project knowledge. Setup blocked until uploaded.
+
+**Expected scope once unblocked:**
+- DNS configuration for the new domain (probably at the registrar's DNS panel)
+- Cloudflare custom domain mapping for the Worker (`api.<domain>` or similar)
+- Cloudflare Pages custom domain mapping for the dashboard (`dashboard.<domain>` or `app.<domain>`)
+- Update Make Scenario 1's HTTP module URL if Worker domain changes
+- Update Make Scenario 2's webhook URL only if we're proxying through the new domain
+- Verify SSL certificates issue correctly
+- Update PROGRESS.md and ARCHITECTURE.md with new URLs
+
+**Open questions to ask Nella when unblocking:**
+- Domain name (what is it?)
+- Registrar (Cloudflare Registrar makes this easiest, others work but require more DNS work)
+- Desired subdomain layout: `api.<domain>`, `dashboard.<domain>`, both?
+- Email on the domain (if relevant, affects MX/SPF/DKIM/DMARC records)
+
+### [ ] Future: System audit document
+
+Nella asked for a comprehensive audit document covering the system as a whole: architecture, every tool, every functionality. Estimated 8-15 pages. Would serve handoff to Nella, onboarding any future engineer, and helping Coach Shaun understand the platform. **Not blocking the four priorities above**; can be tackled as a separate work stream once the priorities are shipped or as a parallel writeup if the current sessions feel light on coding. Suggested format: a new `SYSTEM-AUDIT.md` file at the repo root.
+
+### [ ] Deferred (still applies, lower priority)
+
+#### STAGING.md runbook
 Was the original "next up" before caching work jumped the queue. Now lower priority because caching has more business impact. Should still happen.
 
 Write `STAGING.md` documenting:
@@ -28,7 +131,7 @@ Write `STAGING.md` documenting:
 - Test webhook command for ad-hoc smoke testing
 - Soak harness: how to re-run the Phase 2 behavior soak (cases file, runner, report). Soak artifacts archived at `C:\Users\Order Account\botos-soak\`.
 
-### [ ] Operational hardening (deferred until caching ships to production)
+#### Operational hardening
 - Slack alert when Worker errors
 - Reconciliation job for orphaned reviews / conversations
 - Runbook for common production incidents
@@ -417,4 +520,30 @@ A progress file that is read once at session start and never updated drifts out 
 
 ---
 
-*Last updated: 2026-05-11 (empty system-block bugfix shipped commit b2f765d, Worker 87921362; Make Scenario 1 router added for username resolution via GetSubscriberInfo lookup)*
+*Last updated: 2026-05-11 (next-priorities recorded: username monitoring, per-stage auto-send, T+20h auto-follow-up, custom domain; session pickup prompt appended)*
+
+---
+
+## SESSION PICKUP PROMPT
+
+*This block is designed to be pasted as the first message of the next session, so the new Claude conversation can orient itself without re-deriving today's context. Copy from "PASTE THIS" down to the end.*
+
+PASTE THIS:
+
+> I'm Anon_Techie continuing work on the BotOS / Mu AI sales bot for Coach Shaun. You have full project knowledge including PROGRESS.md and SYSTEM-AUDIT.md.
+>
+> The last session (2026-05-11) shipped four production changes: migration 005 (`reviews.lead_intent`), prompt caching deploy (Worker `87921362`), inbox manual-reply textarea on Needs Response tab, empty-system-block bugfix (commit `b2f765d`), and Make Scenario 1 router for username resolution (Branch B does Sleep 15s + GetSubscriberInfo + ifempty mapping). The session ALSO produced a clear `## NEXT UP` priority list in PROGRESS.md with design decisions and open questions for each item. Do not re-derive what's already decided there.
+>
+> Tonight I want to work on **[FILL IN: priority 1 / 2 / 3 / 4 / something else]**. Read the relevant section of `## NEXT UP` in PROGRESS.md, then ask me any clarifying questions before starting. If I haven't given you a priority, ask which one to pick up.
+>
+> Production state right now: Worker version `87921362-776a-4990-99bc-dcf36a315d3a`, dashboard commit `a7ec441` (bundle `index-BRUtjbJE.js`), Make Scenario 1 has the router structure, Make Scenario 2 unchanged. Coach Shaun's bot is serving live traffic. No active incidents.
+>
+> Remember the standing rules:
+> - No em dashes anywhere in any output.
+> - `ctx.waitUntil` stays for Supabase writes (never `await`).
+> - PROGRESS.md is the single source of truth; update at end of session.
+> - Staging deploys before production.
+> - I have zero coding experience; deliver complete files and step-by-step instructions, not diffs or partial edits.
+
+END PASTE.
+
