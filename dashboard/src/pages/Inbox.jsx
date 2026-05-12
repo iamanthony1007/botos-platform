@@ -139,7 +139,7 @@ export default function Inbox() {
 
     const [{ data: allReviews }, { data: convos }, { data: pendingOnly }, { data: progressReviews }] = await Promise.all([
       supabase.from('reviews').select('*').eq('bot_id', bot.id).order('created_at', { ascending: false }),
-      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged, pre_followup_stage, lead_source, lead_source_updated_at, for_coach').eq('bot_id', bot.id).neq('channel', 'tester').is('deleted_at', null).order('updated_at', { ascending: false }),
+      supabase.from('conversations').select('customer_id, channel, lead_intent, primary_goal, conversation_stage, profile_facts, running_summary, username, profile_name, updated_at, messages, followed_up, followup_count, re_engaged, pre_followup_stage, lead_source, lead_source_updated_at, for_coach, last_followup_source').eq('bot_id', bot.id).neq('channel', 'tester').is('deleted_at', null).order('updated_at', { ascending: false }),
       supabase.from('reviews').select('customer_id').eq('bot_id', bot.id).eq('status', 'pending').not('customer_id', 'ilike', 'tester_%'),
       supabase.from('reviews').select('id, status, confidence').eq('bot_id', bot.id).not('customer_id', 'ilike', 'tester_%')
     ])
@@ -206,6 +206,7 @@ export default function Inbox() {
         // would return false, and the flagged lead would bounce out of the
         // For Coach tab within ~2 seconds.
         for_coach: c.for_coach === true,
+        last_followup_source: c.last_followup_source || null,
         pending_count: 0, handoff_count: 0, latest_preview: lastLeadMsg, all_reviews: []
       }
     })
@@ -714,11 +715,12 @@ export default function Inbox() {
     const updatePayload = {
       followup_count: newCount,
       followed_up: newCount > 0,
-      re_engaged: false
+      re_engaged: false,
+      last_followup_source: 'manual'
     }
     if (shouldCapturePreStage) updatePayload.pre_followup_stage = currentStage
     await supabase.from('conversations').update(updatePayload).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
-    const localPatch = { followup_count: newCount, followed_up: true, re_engaged: false, ...(shouldCapturePreStage ? { pre_followup_stage: currentStage } : {}) }
+    const localPatch = { followup_count: newCount, followed_up: true, re_engaged: false, last_followup_source: 'manual', ...(shouldCapturePreStage ? { pre_followup_stage: currentStage } : {}) }
     setConversation(prev => prev ? { ...prev, ...localPatch } : prev)
     setSelectedLead(prev => prev ? { ...prev, ...localPatch } : prev)
     setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, ...localPatch } : l))
@@ -735,11 +737,12 @@ export default function Inbox() {
     // Step 10 (2026-05-03): no longer bumps updated_at - admin action.
     await supabase.from('conversations').update({
       followup_count: 0,
-      followed_up: false
+      followed_up: false,
+      last_followup_source: null
     }).eq('bot_id', botId).eq('customer_id', selectedLead.customer_id)
-    setConversation(prev => prev ? { ...prev, followup_count: 0, followed_up: false } : prev)
-    setSelectedLead(prev => prev ? { ...prev, followup_count: 0, followed_up: false } : prev)
-    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followup_count: 0, followed_up: false } : l))
+    setConversation(prev => prev ? { ...prev, followup_count: 0, followed_up: false, last_followup_source: null } : prev)
+    setSelectedLead(prev => prev ? { ...prev, followup_count: 0, followed_up: false, last_followup_source: null } : prev)
+    setLeads(prev => prev.map(l => l.customer_id === selectedLead.customer_id ? { ...l, followup_count: 0, followed_up: false, last_followup_source: null } : l))
     showToast('Follow-up count reset', 'info')
   }
 
@@ -1228,6 +1231,21 @@ export default function Inbox() {
                   }
                   return <button onClick={unmarkFollowedUp} title="Lead is now off the Closest to Booking list until they reply. Click to reset count."
                     style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer', fontSize: '.72rem', color: '#92400e', fontWeight: 600 }}>{'\u2709'} Follow-Up ({count}/2) {'\u2022'} Off Priority</button>
+                })()}
+                {(() => {
+                  const followed = conversation?.followed_up ?? selectedLead.followed_up
+                  const src = conversation?.last_followup_source ?? selectedLead.last_followup_source
+                  if (!followed || !src) return null
+                  const count = conversation?.followup_count ?? selectedLead.followup_count ?? 0
+                  const isAuto = src === 'auto'
+                  const bg = isAuto ? '#fff7ed' : '#ede9fe'
+                  const bd = isAuto ? '#fed7aa' : '#c4b5fd'
+                  const tx = isAuto ? '#d97706' : '#6d28d9'
+                  const label = isAuto ? 'auto' : 'manual'
+                  const title = isAuto
+                    ? 'Most recent follow-up nudge was sent automatically by the T+20h cron.'
+                    : 'Most recent follow-up nudge was logged manually by a setter.'
+                  return <span title={title} style={{ background: bg, border: '1px solid ' + bd, borderRadius: '8px', padding: '5px 10px', fontSize: '.72rem', color: tx, fontWeight: 600 }}>{label} {'\u00D7'}{count}</span>
                 })()}
                 {/* Step 8 (2026-05-03): IG window timer in header.
                     Same logic as lead list badge: based on last_user_message_at
