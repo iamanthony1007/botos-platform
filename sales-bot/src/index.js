@@ -575,7 +575,218 @@ async function sendDeliveryFailureEmail(env, payload) {
 
 // Main Worker
 
+// ---------------------------------------------------------------------------
+// Priority 3 (2026-05-12): auto follow-up at T+20h after lead's last message.
+// Helpers below are used by the scheduled() handler. See PROGRESS.md for the
+// full design. The cron sends a single-word message ("James?") to leads who
+// went quiet between T+20h and T+21h, then sets followed_up=true and
+// last_followup_source='auto' on the conversation row.
+// ---------------------------------------------------------------------------
+
+const TESTER_CUSTOMER_IDS = new Set([]);
+function isTesterLeadForCron(conv) {
+  const cid = String(conv.customer_id || "");
+  if (cid.startsWith("soak-")) return true;
+  if (cid.startsWith("tester_")) return true;
+  if (TESTER_CUSTOMER_IDS.has(cid)) return true;
+  const uname = String(conv.username || "").trim().toLowerCase();
+  if (/^bot[\s_-]?tester$/i.test(uname)) return true;
+  return false;
+}
+__name(isTesterLeadForCron, "isTesterLeadForCron");
+
+function extractLastUserAndBotMessage(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { lastUserAtMs: null, lastBotAtMs: null, lastMsgRole: null, lastBotText: null };
+  }
+  let lastUserAtMs = null;
+  let lastBotAtMs = null;
+  let lastBotText = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || typeof m !== "object") continue;
+    const role = String(m.role || "").toLowerCase();
+    const ts = Number(m.timestamp);
+    const tsValid = Number.isFinite(ts) && ts > 0;
+    if (role === "user" && lastUserAtMs === null && tsValid) {
+      lastUserAtMs = ts;
+    }
+    if ((role === "bot" || role === "assistant") && lastBotAtMs === null) {
+      if (tsValid) lastBotAtMs = ts;
+      lastBotText = typeof m.content === "string" ? m.content : null;
+    }
+    if (lastUserAtMs !== null && lastBotAtMs !== null) break;
+  }
+  const last = messages[messages.length - 1];
+  const lastMsgRole = last && typeof last === "object" ? String(last.role || "").toLowerCase() : null;
+  return { lastUserAtMs, lastBotAtMs, lastMsgRole, lastBotText };
+}
+__name(extractLastUserAndBotMessage, "extractLastUserAndBotMessage");
+
+function containsBookingLink(text) {
+  if (!text || typeof text !== "string") return false;
+  return /jotform\.com|cal\.com\/|calendar\.app\.google|calendly\.com|book(ing)?\s*link/i.test(text);
+}
+__name(containsBookingLink, "containsBookingLink");
+
+function looksLikeEscalationHandoff(text) {
+  if (!text || typeof text !== "string") return false;
+  const patterns = [
+    /\bI'?ll\s+(get|grab|tell|let)\s+(shaun|the coach|coach\s+shaun)/i,
+    /\b(let me|let's)\s+(pass|hand|loop)\s+(you|this)/i,
+    /\b(a human|someone from the team|the team will|coach will)\s+(will|can)?\s*(reach out|message you|follow up|be in touch|get back)/i,
+    /\bhand(ing)?\s+(you\s+)?(over|off)/i,
+    /\bpass(ing)?\s+you\s+(over|on)\s+to/i
+  ];
+  return patterns.some(re => re.test(text));
+}
+__name(looksLikeEscalationHandoff, "looksLikeEscalationHandoff");
+
+function resolveFollowUpName(conv) {
+  const pn = String(conv.profile_name || "").trim();
+  if (pn.length === 0) return null;
+  const firstWord = pn.split(/\s+/)[0];
+  if (!firstWord || firstWord.length === 0) return null;
+  return firstWord.slice(0, 30);
+}
+__name(resolveFollowUpName, "resolveFollowUpName");
+
+async function runFollowUpCron(env, ctx, now) {
+  const MAX_PER_RUN = 50;
+  const WINDOW_MIN_MS = 20 * 3600000;
+  const WINDOW_MAX_MS = 21 * 3600000;
+  const FOLLOWUP_TYPING_DELAY_MS = 1000;
+
+  const lower = new Date(now - WINDOW_MAX_MS).toISOString();
+  const upper = new Date(now - WINDOW_MIN_MS).toISOString();
+
+  const stats = {
+    examined: 0,
+    sent: 0,
+    capped: false,
+    skipped: {
+      no_messages: 0,
+      no_user_message: 0,
+      last_message_not_bot: 0,
+      user_message_outside_window: 0,
+      booking_link: 0,
+      escalation_handoff: 0,
+      tester: 0,
+      no_profile_name: 0,
+      make_send_failed: 0
+    }
+  };
+
+  const baseUrl = `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&followed_up=eq.false&for_coach=eq.false&conversation_stage=not.eq.BOOKED&updated_at=gte.${lower}&updated_at=lte.${upper}&select=id,customer_id,username,profile_name,messages,conversation_stage&limit=200`;
+
+  let convs = [];
+  try {
+    const resp = await fetch(baseUrl, {
+      headers: {
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        "apikey": env.SUPABASE_SERVICE_KEY
+      }
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error(`[cron] eligibility query failed: ${resp.status} ${errText.slice(0, 300)}`);
+      return { ok: false, error: `eligibility query ${resp.status}`, stats };
+    }
+    convs = await resp.json();
+  } catch (e) {
+    console.error(`[cron] eligibility query threw: ${e.message}`);
+    return { ok: false, error: e.message, stats };
+  }
+
+  console.log(`[cron] window ${lower} to ${upper}; ${convs.length} candidates returned`);
+
+  for (const c of convs) {
+    if (stats.sent >= MAX_PER_RUN) {
+      stats.capped = true;
+      console.warn(`[cron] hit MAX_PER_RUN=${MAX_PER_RUN}; remaining candidates skipped`);
+      break;
+    }
+    stats.examined++;
+
+    if (isTesterLeadForCron(c)) { stats.skipped.tester++; continue; }
+
+    const msgs = c.messages;
+    if (!Array.isArray(msgs) || msgs.length === 0) { stats.skipped.no_messages++; continue; }
+
+    const { lastUserAtMs, lastBotAtMs, lastMsgRole, lastBotText } =
+      extractLastUserAndBotMessage(msgs);
+
+    if (!lastUserAtMs) { stats.skipped.no_user_message++; continue; }
+    if (lastMsgRole !== "bot" && lastMsgRole !== "assistant") {
+      stats.skipped.last_message_not_bot++; continue;
+    }
+    const userMsgAgeMs = now - lastUserAtMs;
+    if (userMsgAgeMs < WINDOW_MIN_MS || userMsgAgeMs >= WINDOW_MAX_MS) {
+      stats.skipped.user_message_outside_window++; continue;
+    }
+    if (containsBookingLink(lastBotText)) { stats.skipped.booking_link++; continue; }
+    if (looksLikeEscalationHandoff(lastBotText)) { stats.skipped.escalation_handoff++; continue; }
+
+    const name = resolveFollowUpName(c);
+    if (!name) { stats.skipped.no_profile_name++; continue; }
+
+    const sanitized = sanitizeBotMessage(`${name}?`);
+    const sendResult = await sendToMakeScenario2(
+      c.customer_id,
+      [{ text: sanitized, typing_delay_ms: FOLLOWUP_TYPING_DELAY_MS }],
+      [FOLLOWUP_TYPING_DELAY_MS]
+    );
+
+    if (!sendResult || !sendResult.ok) {
+      stats.skipped.make_send_failed++;
+      console.warn(`[cron] Make send failed for ${c.customer_id}: ${sendResult && sendResult.code}`);
+      continue;
+    }
+
+    const patchUrl = `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(c.customer_id))}`;
+    const patchBody = JSON.stringify({
+      followed_up: true,
+      followup_count: 1,
+      last_followup_source: "auto"
+    });
+    ctx.waitUntil(
+      fetch(patchUrl, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          "apikey": env.SUPABASE_SERVICE_KEY,
+          "Prefer": "return=minimal"
+        },
+        body: patchBody
+      }).then(r => {
+        if (!r.ok) {
+          return r.text().then(t => console.error(`[cron] PATCH failed for ${c.customer_id}: ${r.status} ${t.slice(0, 300)}`));
+        }
+      }).catch(e => console.error(`[cron] PATCH threw for ${c.customer_id}: ${e.message}`))
+    );
+
+    stats.sent++;
+    console.log(`[cron] sent follow-up to ${c.customer_id} (${name})`);
+
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  console.log(`[cron] done. examined=${stats.examined} sent=${stats.sent} skipped=${JSON.stringify(stats.skipped)}`);
+  return { ok: true, stats };
+}
+__name(runFollowUpCron, "runFollowUpCron");
+
 var index_default = {
+  async scheduled(event, env, ctx) {
+    console.log(`[cron] tick at ${new Date().toISOString()} (cron=${event && event.cron})`);
+    try {
+      const result = await runFollowUpCron(env, ctx, Date.now());
+      console.log(`[cron] result: ok=${result.ok} examined=${result.stats && result.stats.examined} sent=${result.stats && result.stats.sent}`);
+    } catch (e) {
+      console.error(`[cron] uncaught: ${e && e.message}`);
+    }
+  },
   async fetch(request, env, ctx) {
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
@@ -588,6 +799,22 @@ var index_default = {
     }
 
     const url = new URL(request.url);
+
+    // Priority 3 (2026-05-12): staging-only manual cron trigger.
+    if (url.pathname === "/__cron-test" && request.method === "GET") {
+      if (env.ENVIRONMENT !== "staging") {
+        return new Response(JSON.stringify({ error: "not available in this environment" }),
+          { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      try {
+        const result = await runFollowUpCron(env, ctx, Date.now());
+        return new Response(JSON.stringify(result, null, 2),
+          { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }),
+          { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+    }
 
     // /webhook
     if (url.pathname === "/webhook" && request.method === "POST") {

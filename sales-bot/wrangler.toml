@@ -14,6 +14,14 @@ id = "34e52c784a4e4e40925b93b17354cbec"
 ENVIRONMENT = "production"
 SUPABASE_URL = "https://rydkwsjwlgnivlwlvqku.supabase.co"
 
+# Priority 3 (2026-05-12): hourly cron trigger for T+20h auto follow-up.
+# Schedule is UTC. The scheduled() handler in src/index.js runs the
+# follow-up logic. Staging overrides this to crons=[] below so the
+# handler exists in the code but does not fire automatically; we test
+# in staging via GET /__cron-test (gated by ENVIRONMENT=staging).
+[triggers]
+crons = ["0 * * * *"]
+
 
 # ----------------------------------------------------------------------
 # STAGING ENVIRONMENT
@@ -34,3 +42,8 @@ id = "e1bc76417c284a3ebd82758623e1d148"
 [env.staging.vars]
 ENVIRONMENT = "staging"
 SUPABASE_URL = "https://hlpucysbaqerhwahfolg.supabase.co"
+
+# Staging: cron handler present in code, schedule explicitly disabled.
+# Manual invocation via GET https://sales-bot-staging.nellakuate.workers.dev/__cron-test
+[env.staging.triggers]
+crons = []
