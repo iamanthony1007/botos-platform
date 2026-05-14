@@ -6,30 +6,39 @@ This is the single source of truth for what is done, what is in progress, and wh
 
 ## STATUS
 
-**Currently in progress:** Nothing. Three production changes shipped 2026-05-12: migration 006 (`conversations.last_followup_source` column plus partial index `idx_conversations_followup_eligibility`), patched Worker with Priority 3 cron handler, and `wrangler.toml` with hourly cron schedule for production. First production cron tick fires at the top of the next UTC hour after deploy (21:05 UTC). Watching the first 24 hours of cron ticks for follow-up volume and any error signals.
+**Currently in progress:** Critical bug discovered tonight (2026-05-13) during post-deploy monitoring of Priority 3. The cron is writing the DB flag (`last_followup_source='auto'`, `followup_count=1`, `followed_up=true`) but NOT actually sending the follow-up DM to the lead. Confirmed on production lead `bradgov313` (customer_id 603832635): DB row marked auto-followed-up, but the conversation's `messages` JSONB has no T+20h follow-up text; the thread ends at the bot's own 14:55 UTC DM from the normal flow. The row's `updated_at` also stayed at 13:55 UTC, suggesting the PATCH wrote the three flag columns but the JSONB append and the Make Scenario 2 dispatch either failed silently or were never attempted. 10 production rows currently flagged `last_followup_source='auto'`; none have actually received the IG DM. Top priority for the next session is investigating the `scheduled()` handler in `sales-bot/src/index.js`, specifically the Make Scenario 2 dispatch and the messages-JSONB append.
 
-**Production state:** Worker version `7b4862bc-bb15-4a19-87ef-7aacc14ad6f4` (deployed 2026-05-12 21:05 UTC from `main` at commit `b7b70a4`, includes prompt caching, race-fix, empty-system-block guard, Priority 3 cron handler with `scheduled()` entry point, `/__cron-test` staging-only debug endpoint). Cron schedule `0 * * * *` active. Dashboard at commit `a7ec441` (deployed 2026-05-09, bundle `index-BRUtjbJE.js`). `reviews.lead_intent` column present (migration 005). `conversations.last_followup_source` column and `idx_conversations_followup_eligibility` partial index present (migration 006). Make Scenario 1 `8264588` has router structure with Branch B for missing-username leads (last updated 2026-05-11 18:27 UTC). Coach Shaun's bot serving live leads.
+**Production state:** Worker version `7b4862bc-bb15-4a19-87ef-7aacc14ad6f4` (deployed 2026-05-12 21:05 UTC from `main` at commit `b7b70a4`, includes prompt caching, race-fix, empty-system-block guard, Priority 3 cron handler with `scheduled()` entry point, `/__cron-test` staging-only debug endpoint). Cron schedule `0 * * * *` active but flagging only, NOT sending (see "Currently in progress" above). Dashboard at commit `6fc0f54` (deployed 2026-05-13 via Cloudflare Pages project `botos-platform`, deploy hash `caa2a57e`, bundle `index-JIvVZDjR.js`, served at domain `botos-platform-3ar.pages.dev`). `reviews.lead_intent` column present (migration 005). `conversations.last_followup_source` column and `idx_conversations_followup_eligibility` partial index present (migration 006). Make Scenario 1 `8264588` has router structure with Branch B for missing-username leads (last updated 2026-05-11 18:27 UTC). Coach Shaun's bot serving live leads.
 
-**Staging state:** Worker version `ec5d9b28-4cc8-4cfa-b48c-391f77b03ce3` (deployed 2026-05-12 from `main` at commit `b7b70a4`, same Priority 3 patch as production but with empty `crons = []` so the cron handler is in code but does not fire automatically). Dashboard last redeployed 2026-05-09 (bundle `index-Drhe6KdK.js`). Migrations 005 and 006 present. `feat-prompt-caching` branch retained at `0a461c7` for rollback reference. Previous staging Worker `b23f9121-f660-4260-bacd-94f4ad914345` (pre-Priority-3) retained in Cloudflare version history.
+**Staging state:** Worker version `ec5d9b28-4cc8-4cfa-b48c-391f77b03ce3` (deployed 2026-05-12 from `main` at commit `b7b70a4`, same Priority 3 patch as production but with empty `crons = []` so the cron handler is in code but does not fire automatically). Dashboard at commit `6fc0f54` (deployed 2026-05-13 via Cloudflare Pages project `botos-platform-staging`, deploy hash `75847182`). Staging Pages project env vars `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` now correctly point at staging Supabase (`hlpucysbaqerhwahfolg.supabase.co`); this was set up tonight, before this session the staging Pages project had no env vars and any vite build there would have fallen back to whatever was in `dashboard/.env` (which is production). Migrations 005 and 006 present. `feat-prompt-caching` branch retained at `0a461c7` for rollback reference. Previous staging Worker `b23f9121-f660-4260-bacd-94f4ad914345` (pre-Priority-3) retained in Cloudflare version history.
 
-**Open monitoring items:** see "Post-deploy monitoring" at the top of NEXT UP.
+**Open monitoring items:** see "CRITICAL: Priority 3 cron writes flag but doesn't send" at the top of NEXT UP.
 
 ---
 
 ## NEXT UP
 
-The next session should pick up these items in order. Priority 3 (T+20h auto follow-up) shipped this session, see COMPLETED. The monitoring item below is the first thing to check next session.
+The next session should pick up these items in order. The CRITICAL item below is the most urgent and blocks closing the Priority 3 post-deploy watch.
 
-### [ ] Post-deploy monitoring: Priority 3 first 24h
+### [ ] CRITICAL: Priority 3 cron writes flag but does NOT send the DM
 
-Things to verify in the next session, in order:
-- Cloudflare Worker logs (`npx wrangler tail` from `sales-bot/`) for the first few cron ticks after 22:00 UTC 2026-05-12. Each tick should log a line starting with `[cron] tick at ...` and ending with `[cron] done. examined=N sent=M skipped=...`. If a tick logs `[cron] eligibility query failed` or `[cron] uncaught:`, investigate the Worker-side error.
-- Make Scenario 2 execution history (Make UI) for new runs we did not manually trigger. These are the cron-driven sends. Each should complete successfully (status 1). If many show status 2 or 3, check the bundle payload structure: the cron sends `[{ text: "Name?", typing_delay_ms: 1000 }]` not the typing-delays-with-multiple-messages format Scenario 2 normally sees.
-- Production Supabase: `SELECT customer_id, profile_name, followup_count, last_followup_source, updated_at FROM conversations WHERE last_followup_source = 'auto' ORDER BY updated_at DESC LIMIT 20;`. After 24 hours this should show a handful of auto-followed-up leads.
-- Inbox spot-check: leads with `followed_up = true AND last_followup_source = 'auto'` should appear in the dashboard's Follow Ups tab once their `last_user_message_at` crosses 23h (the dashboard's `IG_WINDOW_HOURS` threshold).
-- Email watch: `iamanthony1007@gmail.com` for Make Scenario 2 alert emails about delivery failures. A small number (under 5%) is normal; a flood means something's wrong.
+**State:** Discovered during post-deploy verification on 2026-05-13. The hourly cron is updating Supabase with `followed_up=true`, `followup_count=1`, `last_followup_source='auto'` on eligible rows, but the lead never receives the T+20h IG DM. Production currently has 10 conversation rows with `last_followup_source='auto'`; none have an assistant-role follow-up message appended to their `messages` JSONB and none received the DM through ManyChat.
 
-**Decision point:** after 48 hours of clean cron operation, the post-deploy watch can be closed. If anything is misbehaving, design a fix.
+**Evidence:**
+- Production lead `bradgov313` (customer_id 603832635): DB row shows `followed_up=true`, `followup_count=1`, `last_followup_source='auto'`. The conversation's `messages` JSONB ends at the bot's own 14:55 UTC DM from the normal conversation flow, with no T+20h follow-up text appended. The row's `updated_at` is 13:55 UTC, NOT bumped by the cron's PATCH despite the three flag columns being updated. This is consistent with the PATCH succeeding for the flag columns while the JSONB append and the Make Scenario 2 dispatch either failed silently or were never attempted.
+- 10 rows in production with `last_followup_source='auto'`, 0 with corresponding follow-up text in `messages`.
+
+**Where to investigate (in order):**
+1. `scheduled()` handler in `sales-bot/src/index.js`, specifically `runFollowUpCron(env, ctx, Date.now())`. Read the function end-to-end and trace what fires before the PATCH. The PATCH writes the three flag columns; everything that should happen before it (the `sendToMakeScenario2` call, any `messages` JSONB append) is the suspect zone.
+2. Make Scenario 2 execution history (Make UI): filter the last 24 hours for runs originating from the Worker cron path (not from manual setter clicks or the normal bot flow). If there are none, the Worker is never reaching the dispatch and the bug is upstream of the HTTP call.
+3. `messages` JSONB append: the cron should append an assistant-role message with the follow-up text. If this path was never wired up (the original Priority 3 spec described it but the code may have been simplified to PATCH the three flag columns only), this is the silent failure.
+4. `npx wrangler tail` from `sales-bot/` around the top of the hour (UTC) to see live logs from the handler on the next cron tick.
+
+**Likely outcome:** Worker code change to actually dispatch Scenario 2 and append the message, then a remediation step to reset the 10 incorrectly-flagged production rows back to `followed_up=false`, `followup_count=0`, `last_followup_source=NULL` so they become eligible again. Staging cron does not fire automatically, so testing will go via the `/__cron-test` debug endpoint as before.
+
+**Why this is critical:** The cron silently over-counts follow-ups and removes leads from the dashboard's Closest to Booking list (which excludes `followup_count >= 2`) without ever having reached out to them. Leads can go cold without anyone noticing because the dashboard reports them as followed up. This is a production data-integrity issue, not just a missing feature.
+
+**Status of original Post-deploy monitoring item:** Closed by the discovery of this bug. Monitoring did its job: a silent failure invisible from the DB flag columns alone was caught by manual inspection of `messages` JSONB alongside the flag, then visually confirmed in the dashboard once the Priority 3 dashboard pass was live.
 
 ### [ ] Priority 1: Username resolution monitoring (no build work, just observation)
 
@@ -58,18 +67,6 @@ Per stage, per bot. Auto-sent messages still write a review row with `status: au
 - Dashboard: "Auto Sent" filter tab.
 - Settings: should setters be able to manually disable auto-send for a stage even if the rate is high?
 
-### [ ] Priority 3 dashboard pass: show `last_followup_source` in inbox UI
-
-**State:** Worker side complete. Dashboard does not yet read `last_followup_source` and does not yet write `'manual'` when the setter clicks the "Mark as followed up" button.
-
-**What to do:**
-- Update `dashboard/src/pages/Inbox.jsx` to pull `last_followup_source` in the conversations select (line ~142).
-- Show the source as a small pill in the lead detail header: "auto x1" or "manual x1".
-- Update `markAsFollowedUp()` (line ~700) to set `last_followup_source: 'manual'` in the PATCH payload.
-- Deploy dashboard via `wrangler pages deploy dist --project-name=botos-platform`.
-
-**Why deferred:** dashboard and Worker ship through different pipelines. Splitting the deploy limits blast radius.
-
 ### [ ] Priority 4: Custom domain setup (blocked pending Nella's domain docs)
 
 **State:** Nella has purchased a domain. Domain document not yet uploaded to project knowledge. Setup blocked until uploaded.
@@ -89,6 +86,31 @@ Nella asked for a comprehensive audit document covering the system as a whole. E
 ---
 
 ## COMPLETED
+
+### [x] Priority 3 dashboard pass: surface `last_followup_source` in Inbox (2026-05-13)
+
+**Result:** Dashboard now reads and writes `conversations.last_followup_source`. Shipped to production via Cloudflare Pages project `botos-platform` (deploy hash `caa2a57e`, bundle `index-JIvVZDjR.js`, domain `botos-platform-3ar.pages.dev`). Commit `6fc0f54` on `main` (fast-forwarded from feature branch `feat-inbox-followup-source`). Only `dashboard/src/pages/Inbox.jsx` changed (+25 / -7).
+
+**Why:** The Worker shipped 2026-05-12 writes `last_followup_source='auto'` when the cron fires, but the dashboard had no awareness of the column. The setter could not tell whether a flagged follow-up was the cron's automatic action or a setter's manual log. The dashboard also had to start writing `'manual'` on the setter-driven path so the column is fully populated from both sides.
+
+**Five edits to `dashboard/src/pages/Inbox.jsx`:**
+1. `loadData` conversations SELECT: pull `last_followup_source`.
+2. `leadsMap` forEach: carry the column onto each lead object so realtime callbacks do not drop it.
+3. `markAsFollowedUp`: write `last_followup_source='manual'` to the Supabase UPDATE and to the local optimistic state patch.
+4. `unmarkFollowedUp`: clear `last_followup_source` to NULL on the Supabase UPDATE and on all three local state setters (`setConversation`, `setSelectedLead`, `setLeads`).
+5. Lead detail header: new pill rendered as a sibling of the existing follow-up button. Auto variant uses the Follow Ups tab palette (`#fff7ed` / `#fed7aa` / `#d97706`). Manual variant uses a half-shade purple (`#ede9fe` / `#c4b5fd` / `#6d28d9`) to visually separate from the adjacent Mark Follow-Up button. Render guard requires both `followed_up=true` and `last_followup_source` set, so the pill is "current state", not "history". Re-engagement clears `followed_up` via `append_conversation_turn` and the pill stops rendering.
+
+**Verification path:**
+1. Local `npm run build` clean. 361 modules transformed, output `index-JIvVZDjR.js`.
+2. Deployed to staging Pages project `botos-platform-staging` (deploy hash `75847182`). Seeded two synthetic test rows in staging Supabase, one with `last_followup_source='auto'` and one with `'manual'`. Visited the staging dashboard, opened each lead, confirmed the pills rendered with correct colors and counts. Cleaned up test rows after.
+3. Deployed to production Pages project `botos-platform` (deploy hash `caa2a57e`). Opened production lead `@njtexan` (real `last_followup_source='auto'` row populated by the cron). Pill rendered correctly.
+4. The production visual verification is what surfaced the Worker-side cron bug separately captured under NEXT UP CRITICAL. The dashboard correctly displays what the Worker wrote; the Worker is writing the flag without sending the DM.
+
+**Incidental fixes during this session:**
+- Cloudflare Pages staging project `botos-platform-staging` had no env vars set before this session. Added `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` pointing at staging Supabase (`hlpucysbaqerhwahfolg.supabase.co`). Before this fix, vite builds running in the Pages staging environment would have fallen back to whatever was in `dashboard/.env`, which is production.
+- Staging Supabase had an `auth.users` row for `iamanthony1007@gmail.com` with no matching `public.profiles` row, causing the dashboard to hang on 406 errors during login. Inserted the matching profiles row (admin role, org `00000000-...0001`, bot `00000000-...0002`).
+
+---
 
 ### [x] Priority 3: T+20h auto follow-up via Cloudflare cron (2026-05-12)
 
@@ -165,7 +187,10 @@ Nella asked for a comprehensive audit document covering the system as a whole. E
 - **Pre-existing em-dash count in `sales-bot/src/index.js` is 23.** All in strings/comments (log messages, doc comments, email subject lines). None in code paths that emit messages to leads (the `sanitizeBotMessage` function strips em-dashes from any bot reply before send). Cleanup is a code-hygiene task, not a behavioral one. Schedule for a future session.
 - **`sales-bot/node_modules/.cache/wrangler/wrangler-account.json` is tracked by git.** This file contains wrangler OAuth state and should not be in version control. The 2026-05-12 `wrangler login` rotated the file, surfacing this issue. Next session: `git rm --cached sales-bot/node_modules/.cache/wrangler/wrangler-account.json` to untrack, then verify `.gitignore` actually excludes the whole `node_modules/` tree. **Also: audit git history for any prior commits of this file; if OAuth secrets were ever committed, they should be considered exposed and rotated.**
 - **Local tooling scripts at the repo root.** `patch_worker_priority3.py` and `diagnose_index_default.py` are one-shot scripts from the 2026-05-12 session. They are useful as future reference. Either commit them to a `tools/` directory or add them to `.gitignore`. Currently untracked.
-- **Wrangler upgrade (deferred):** local `wrangler` is at `4.65.0`; latest is `4.90.0`. Upgrade is a separate maintenance task.
+- **Wrangler upgrade (deferred):** local `wrangler` is at `4.73.0`; latest is `4.90.1`. Upgrade is a separate maintenance task.
+- **`dashboard/.env` and `dashboard/.env.staging` are tracked in git.** Both files contain Supabase URLs and anon keys. Anon keys are designed to be public and are RLS-gated, so this is not a credential leak, but committing `.env` files is unusual and the root `.gitignore` already contains `.env`. The files were committed before that rule was added. Either untrack the files and document how setters bootstrap a local dev env, or accept the current state and remove the rule. Discussed 2026-05-13, no change made.
+- **Cloudflare Pages project naming clarification.** Production Pages project is named `botos-platform`; the live domain is `botos-platform-3ar.pages.dev`. Earlier PROGRESS.md entries that referred to the project as `botos-platform-3ar` were referring to the domain prefix, not the project name. Corrected in tonight's STATUS block.
+- **Staging dashboard Supabase wiring (resolved 2026-05-13).** FYI for future sessions: as of tonight the staging dashboard at Cloudflare Pages project `botos-platform-staging` correctly points at staging Supabase. Before tonight the Pages project had no env vars, so any vite build running there would have fallen back to `dashboard/.env` (production). Earlier "staging" UI testing may have been against production Supabase by accident.
 - **Deploy ergonomics:** production deploys should pass `--env=""` to suppress the multi-environment ambiguity warning. Already followed for the 2026-05-12 deploy.
 - **Phase 1.3:** Worker `/health` endpoint returns hardcoded `supabase_connected: true`. Needs real check.
 - **Phase 3:** Logo asset URLs in dashboard hardcoded to production Supabase storage bucket.
@@ -178,7 +203,7 @@ Nella asked for a comprehensive audit document covering the system as a whole. E
 
 ---
 
-*Last updated: 2026-05-12 (Priority 3 shipped: migration 006, Worker `7b4862bc`, cron `0 * * * *` active in production; staging Worker `ec5d9b28`; post-deploy monitoring scheduled for next session).*
+*Last updated: 2026-05-13 (Priority 3 dashboard pass shipped: commit `6fc0f54`, production Pages deploy `caa2a57e`, bundle `index-JIvVZDjR.js`. Critical cron bug discovered during post-deploy verification: cron writes flag but does NOT send the DM. Top priority for next session).*
 
 ---
 
@@ -190,11 +215,11 @@ PASTE THIS:
 
 > I'm Anon_Techie continuing work on the BotOS / Mu AI sales bot for Coach Shaun. You have full project knowledge including PROGRESS.md and SYSTEM-AUDIT.md.
 >
-> The last session (2026-05-12) shipped Priority 3: T+20h auto follow-up via Cloudflare cron. Migration 006 applied to both staging and production Supabase (added `conversations.last_followup_source` text column and partial index `idx_conversations_followup_eligibility`). Patched Worker deployed to production as version `7b4862bc-bb15-4a19-87ef-7aacc14ad6f4` (commit `b7b70a4`) with hourly cron schedule. Staging Worker at `ec5d9b28-4cc8-4cfa-b48c-391f77b03ce3` with cron handler in code but `crons=[]` so manual test only via GET `/__cron-test`. Full end-to-end verified on staging with synthetic test row.
+> The last session (2026-05-13) shipped the Priority 3 dashboard pass: `dashboard/src/pages/Inbox.jsx` now reads `last_followup_source`, writes `'manual'` on setter-driven follow-ups, clears it on unmark, and renders an auto/manual pill in the lead detail header. Commit `6fc0f54` on `main`. Production dashboard deployed via Cloudflare Pages project `botos-platform` (deploy hash `caa2a57e`, bundle `index-JIvVZDjR.js`, served at `botos-platform-3ar.pages.dev`). Staging dashboard at deploy hash `75847182` on Pages project `botos-platform-staging`, env vars finally wired to staging Supabase.
 >
-> Tonight I want to work on **[FILL IN: post-deploy monitoring / priority 1 / priority 2 / priority 3 dashboard pass / priority 4 / something else]**. Read the relevant section in PROGRESS.md.
+> Tonight's priority is the CRITICAL item in PROGRESS.md NEXT UP: the Priority 3 cron is writing the DB flag but NOT sending the T+20h DM. 10 production rows are incorrectly marked auto-followed-up; no leads have actually received the IG DM. Investigation starts in `sales-bot/src/index.js` `scheduled()` handler and `runFollowUpCron`. See the CRITICAL section in NEXT UP for the full investigation plan.
 >
-> Production state right now: Worker version `7b4862bc-bb15-4a19-87ef-7aacc14ad6f4`, cron `0 * * * *` active, dashboard at `a7ec441` (unchanged, dashboard pass still pending), Make Scenario 1 has router structure (unchanged), Make Scenario 2 unchanged. Coach Shaun's bot serving live traffic.
+> Production state right now: Worker version `7b4862bc-bb15-4a19-87ef-7aacc14ad6f4` (cron flagging but NOT sending, see CRITICAL), dashboard at commit `6fc0f54` / bundle `index-JIvVZDjR.js` / Pages deploy `caa2a57e`, Make Scenario 1 router structure unchanged, Make Scenario 2 unchanged. Coach Shaun's bot serving live traffic.
 >
 > Remember the standing rules:
 > - No em dashes anywhere in any output.
