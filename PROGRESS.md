@@ -50,6 +50,34 @@ The next session should pick up these items in order. The CRITICAL item below is
 - Check inbox for emails to `iamanthony1007@gmail.com` with subject `[Mu AI] ManyChat GetSubscriberInfo failed for subscriber...`.
 - Spot-check the production dashboard inbox for leads that previously had "Instagram Lead" placeholders.
 
+### [ ] Inbound visibility: capture coach's manual IG replies in dashboard
+
+**Why:** Coach Shaun raised that Lead Wizard and GoHighLevel show the full conversation thread including replies he types manually from the IG app on his phone or in ManyChat Live Chat. Mu AI currently only sees messages that flow through the bot's automation pipeline, so manual replies are invisible and the dashboard has gaps. He sees this as a competitive disadvantage. Nella relayed the request 2026-05-13 and called it a top irritation point for the client.
+
+**Current state:**
+- Inbound lead messages arrive via ManyChat webhook → Make Scenario 1 → Worker → Supabase. Logged.
+- Bot replies (drafted by the Worker, approved by setter in dashboard, sent via Make Scenario 2 → ManyChat → IG). Logged.
+- Manual replies typed by Coach Shaun (or any team member) directly in the IG app on their phone: NOT logged. Never touch our pipeline.
+- Manual replies typed in ManyChat's Live Chat: NOT logged. Currently bypass our webhook subscription.
+
+**How competitors do it:** Both Lead Wizard and GoHighLevel use Meta's Instagram Messaging API `conversations` endpoint, which returns the full thread including any message regardless of who sent it. ManyChat itself reads from Meta's API for this reason, which is why Coach Shaun's manual replies appear inside ManyChat but not in Mu AI.
+
+**Proposed fix (two parts, both needed):**
+
+1. Subscribe to ManyChat's outbound-message webhook events. When Coach replies via Live Chat, ManyChat fires an event we currently don't listen for. Adding the subscription captures replies that go through ManyChat. Lower effort, narrower coverage.
+
+2. Pull conversation history directly from Meta's Instagram Messaging API. This catches replies that bypass ManyChat entirely (typed directly in the IG app on the coach's phone). Higher effort, full coverage. Probably needs a periodic reconciliation job that, for each open conversation, fetches the recent Meta thread and merges any messages we don't already have into the `conversations.messages` JSONB.
+
+**Open questions before scoping:**
+- What Meta App permissions does Coach Shaun's IG business account currently have? Need `instagram_basic`, `instagram_manage_messages`, possibly `pages_messaging` depending on whether the IG account is connected to a Facebook page. To be confirmed with Nella.
+- How frequently does Coach Shaun reply via IG app on phone vs. ManyChat Live Chat vs. letting the bot handle it? Affects which path is the higher-impact win. To be confirmed with Nella.
+- Rate limits on Meta's API for the `conversations` endpoint. Need to research before designing the reconciliation interval.
+- Conflict handling: if the bot drafts a reply while Coach is also typing one manually, who wins? Two messages going out is worse than a small dashboard gap.
+
+**Estimated scope:** Likely 2-3 sessions: one to add the ManyChat outbound webhook subscription (quick win that closes the gap for ManyChat Live Chat users), one to integrate Meta's `conversations` API and the reconciliation logic, one for testing and edge case handling.
+
+**Not blocking other work:** The bot's primary path (draft, approve, send) is unaffected by this gap. Existing customers can use Mu AI as a setter-review platform without it. Coach Shaun's complaint is about audit and visibility, not functionality.
+
 ### [ ] Priority 2: Auto-send based on per-stage approval history + confidence
 
 **Design (locked):** Auto-send when ALL of:
@@ -220,6 +248,8 @@ PASTE THIS:
 > Tonight's priority is the CRITICAL item in PROGRESS.md NEXT UP: the Priority 3 cron is writing the DB flag but NOT sending the T+20h DM. 10 production rows are incorrectly marked auto-followed-up; no leads have actually received the IG DM. Investigation starts in `sales-bot/src/index.js` `scheduled()` handler and `runFollowUpCron`. See the CRITICAL section in NEXT UP for the full investigation plan.
 >
 > Production state right now: Worker version `7b4862bc-bb15-4a19-87ef-7aacc14ad6f4` (cron flagging but NOT sending, see CRITICAL), dashboard at commit `6fc0f54` / bundle `index-JIvVZDjR.js` / Pages deploy `caa2a57e`, Make Scenario 1 router structure unchanged, Make Scenario 2 unchanged. Coach Shaun's bot serving live traffic.
+>
+> New NEXT UP item added 2026-05-13 from Nella's client meeting: "Inbound visibility: capture coach's manual IG replies in dashboard". Sits between Priority 1 and Priority 2. Coach Shaun compared us unfavorably to Lead Wizard and GoHighLevel on this; treat it as the next feature work after the CRITICAL cron bug is resolved.
 >
 > Remember the standing rules:
 > - No em dashes anywhere in any output.
