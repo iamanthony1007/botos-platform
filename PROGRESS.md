@@ -12,7 +12,7 @@ This is the single source of truth for what is done, what is in progress, and wh
 
 **Staging state:** Worker version `ec5d9b28-4cc8-4cfa-b48c-391f77b03ce3` (deployed 2026-05-12 from `main` at commit `b7b70a4`, same Priority 3 patch as production but with empty `crons = []` so the cron handler is in code but does not fire automatically). Dashboard at commit `6fc0f54` (deployed 2026-05-13 via Cloudflare Pages project `botos-platform-staging`, deploy hash `75847182`). Staging Pages project env vars `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` now correctly point at staging Supabase (`hlpucysbaqerhwahfolg.supabase.co`); this was set up tonight, before this session the staging Pages project had no env vars and any vite build there would have fallen back to whatever was in `dashboard/.env` (which is production). Migrations 005 and 006 present. `feat-prompt-caching` branch retained at `0a461c7` for rollback reference. Previous staging Worker `b23f9121-f660-4260-bacd-94f4ad914345` (pre-Priority-3) retained in Cloudflare version history.
 
-**Open monitoring items:** see "CRITICAL: Priority 3 cron writes flag but doesn't send" at the top of NEXT UP.
+**Open monitoring items:** see "CRITICAL: Priority 3 cron writes flag but doesn't send" and "BUG: Lead-source-event re-fires cause duplicate or regenerated drafts" at the top of NEXT UP.
 
 ---
 
@@ -39,6 +39,43 @@ The next session should pick up these items in order. The CRITICAL item below is
 **Why this is critical:** The cron silently over-counts follow-ups and removes leads from the dashboard's Closest to Booking list (which excludes `followup_count >= 2`) without ever having reached out to them. Leads can go cold without anyone noticing because the dashboard reports them as followed up. This is a production data-integrity issue, not just a missing feature.
 
 **Status of original Post-deploy monitoring item:** Closed by the discovery of this bug. Monitoring did its job: a silent failure invisible from the DB flag columns alone was caught by manual inspection of `messages` JSONB alongside the flag, then visually confirmed in the dashboard once the Priority 3 dashboard pass was live.
+
+### [ ] BUG: Lead-source-event re-fires cause duplicate or regenerated drafts (Worker)
+
+**State:** Real bug confirmed via code investigation 2026-05-15. Symptom: setter sees the Suggested Reply panel render text that is identical or near-identical to a previously-sent assistant message in the same thread. Surfaced on production lead `@sethwallace33` (customer_id 190508016); Nella manually corrected by erasing the wrong suggestion and typing a proper reply. The bad pending row is gone now (overwritten by her edit), so the DB no longer carries direct evidence, but the bug pattern is reproducible by the code analysis.
+
+**Root cause:** When ManyChat fires a keyword or comment `lead_source_event` for an already-engaged lead, Make Scenario 1 often passes the lead's PREVIOUS user message (via `last_input_text` resolution), not a new one. The Worker correctly recognizes the duplicate at `sales-bot/src/index.js:1005-1017` and sets `isDuplicateOfLastMessage=true`. But it does not early-return. It then:
+1. Pushes a `lead_source_event` marker into memory with no `content` field (`sales-bot/src/index.js:1022-1031`).
+2. Finds the recent pending review from the prior turn and decides to batch onto it (`sales-bot/src/index.js:1047-1065`).
+3. Removes the last assistant message from memory.
+4. Calls Claude again at `sales-bot/src/index.js:1173`.
+5. Claude sees a context nearly identical to the previous turn, with one noisy `"You: undefined"` line added (from the contentless `lead_source_event` marker rendered at `buildDeveloperPrompt`, `:156`).
+6. With temperature 0.7, Claude often returns text identical or near-identical to its previous draft.
+7. The fresh `joinedReply` overwrites `bot_reply` on the existing pending review.
+
+**Contributing factor (separate but related):** The Worker's KV memory always stores the ORIGINAL Claude draft as the bot's previous message, never the setter's edited version sent through Make Scenario 2. So Claude is always working from a falsified history of what the bot actually said. This compounds the duplicate-context problem and may cause subtle drift in long conversations even outside `lead_source_event` scenarios.
+
+**Production impact:**
+- Bug is rare; only triggers on `lead_source_event` webhooks for already-engaged leads (keyword re-engagement, repeat comments on the same post, etc).
+- Not silent. Setters see the wrong suggestion and correct it manually before sending. The end lead does NOT see duplicate or wrong messages.
+- Wastes Claude API tokens on a regeneration that should be a no-op.
+
+**Fix plan for next session (2 to 3 hours of work, single Worker change, staging-testable):**
+
+1. Recommendation 2 from the 2026-05-15 investigation: when `isDuplicateOfLastMessage` is true AND `batchReviewId` is set, early-return at `sales-bot/src/index.js:1035` before pushing the marker, before the batching check, and before the Claude call. The existing pending review already represents the actual unanswered state. Optionally bump `conversations.updated_at` and append a `lead_source_event` marker so the inbox sees the re-engagement event, but skip the regeneration entirely.
+
+2. Recommendation 3 from the same investigation: stop showing Claude a contentless marker. Either give `lead_source_event` entries a real `content` field like `"[System: lead engaged via X]"` or filter them out of the array passed to `buildDeveloperPrompt` at `sales-bot/src/index.js:2143`. Pick one and apply consistently.
+
+3. Staging test: use the `/__cron-test` or a synthetic `lead_source_event` POST against staging Worker to confirm the early-return path is taken and no second pending review is created. The staging Worker version is `ec5d9b28-4cc8-4cfa-b48c-391f77b03ce3`, cron handler in code but `crons=[]`, so testable in isolation.
+
+4. Production deploy: standard staging-then-prod with version capture.
+
+**Deferred to a separate session: Recommendation 4 from the investigation.** Sync setter edits back to KV memory so Claude works from real conversation history rather than its own (possibly edited away) prior drafts. This is the architectural root-cause fix but spans Worker + dashboard and is a larger scope.
+
+**Why this is NOT the #1 priority over the CRITICAL cron bug:**
+- This bug fails visibly to setters; they correct it manually. The cron bug fails silently and creates production data-integrity issues (10 leads currently flagged as auto-followed-up with zero actual outreach).
+- This bug has a known workaround (manual edit before send). The cron bug has no workaround.
+- Both bugs probably take similar investigation time to fix; ordering by impact, cron first.
 
 ### [ ] Priority 1: Username resolution monitoring (no build work, just observation)
 
@@ -231,7 +268,7 @@ Nella asked for a comprehensive audit document covering the system as a whole. E
 
 ---
 
-*Last updated: 2026-05-13 (Priority 3 dashboard pass shipped: commit `6fc0f54`, production Pages deploy `caa2a57e`, bundle `index-JIvVZDjR.js`. Critical cron bug discovered during post-deploy verification: cron writes flag but does NOT send the DM. Top priority for next session).*
+*Last updated: 2026-05-15 (code investigation confirmed a Worker bug where `lead_source_event` re-fires for already-engaged leads cause Claude to regenerate near-identical drafts that overwrite existing pending review rows. Surfaced via @sethwallace33; symptom reproducible by code analysis. Logged as the #2 NEXT UP item; ranked below the CRITICAL cron bug because it fails visibly to setters with a manual workaround. No code changes shipped this session).*
 
 ---
 
