@@ -645,6 +645,27 @@ __name(looksLikeEscalationHandoff, "looksLikeEscalationHandoff");
 function resolveFollowUpName(conv) {
   const pn = String(conv.profile_name || "").trim();
   if (pn.length === 0) return null;
+
+  // Defensive guard: reject profile_name that looks like the username.
+  // Catches three cases:
+  //   (a) profile_name exactly equals username (e.g. "bradgov313" / "bradgov313")
+  //   (b) profile_name's normalised form (lowercased, non-alphanum stripped) equals username's normalised form
+  //   (c) profile_name's first word equals username (after lowercasing)
+  // Why: even after the Make Scenario 1 mapping was corrected on 2026-05-18,
+  // bad data may arrive from other ingestion paths or future regressions.
+  // Skipping is better than sending "shank_golf_society?" as a follow-up.
+  const un = String(conv.username || "").trim();
+  if (un.length > 0) {
+    const pnLower = pn.toLowerCase();
+    const unLower = un.toLowerCase();
+    if (pnLower === unLower) return null;
+    const pnNorm = pnLower.replace(/[^a-z0-9]/g, "");
+    const unNorm = unLower.replace(/[^a-z0-9]/g, "");
+    if (pnNorm.length > 0 && pnNorm === unNorm) return null;
+    const firstWordLower = pnLower.split(/\s+/)[0];
+    if (firstWordLower === unLower) return null;
+  }
+
   const firstWord = pn.split(/\s+/)[0];
   if (!firstWord || firstWord.length === 0) return null;
   return firstWord.slice(0, 30);
@@ -731,9 +752,13 @@ async function runFollowUpCron(env, ctx, now) {
     if (!name) { stats.skipped.no_profile_name++; continue; }
 
     const sanitized = sanitizeBotMessage(`${name}?`);
+    // Cron sends plain strings to match Scenario 2 webhook interface contract.
+    // The webhook expects messages: [string], not messages: [{text, typing_delay_ms}].
+    // Sending objects causes Make BasicFeeder to emit empty 90.value which fails
+    // the Manychat SetSubscriberCustomField step with BundleValidationError.
     const sendResult = await sendToMakeScenario2(
       c.customer_id,
-      [{ text: sanitized, typing_delay_ms: FOLLOWUP_TYPING_DELAY_MS }],
+      [sanitized],
       [FOLLOWUP_TYPING_DELAY_MS]
     );
 
