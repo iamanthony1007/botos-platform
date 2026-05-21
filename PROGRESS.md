@@ -412,3 +412,98 @@ Phase D and E to be executed by browser Claude Code in a new session. Reads PHAS
 - Phase E: staging deploy, synthetic test, production deploy, 30-60 min monitor
 - 24h measurement of actual savings via [cache] log lines + Anthropic billing dashboard
 - Followup tomorrow with Nella to share results
+
+## 2026-05-21 - Phase D shipped to production (semantic retrieval live)
+
+Phase D of the Anthropic cost reduction work is live on production.
+sales-bot.nellakuate.workers.dev now uses Voyage AI semantic retrieval
+instead of chronological "newest 30 learnings" injection.
+
+### Production state at end of session
+
+- Worker version: a1b9ec9c-4425-4ff7-9a5c-d84ebcc09178
+- Branch: feat-semantic-retrieval-phase-d (commit 21b3c19)
+- Deployed via wrangler deploy at 2026-05-21 01:07 UTC
+
+### Synthetic test on production (one-call measurement)
+
+Single test call to /webhook with customer_id=phase-d-prod-test-001-DELETE-ME:
+
+  [retrieval] learnings=8 docs=2 embed_dim=1024 similarity_top=0.666
+  [cache] model=claude-sonnet-4-6 input=2410 cache_create=7399 cache_read=0 output=447
+
+Latency: 12,471 ms (comparable to pre-Phase-D ~12,000-13,000 range).
+Bot reply was coherent and slightly improved over staging quality.
+
+### Measured impact (preliminary, one call)
+
+Static prefix size: 10,248 tokens (pre-Phase-D) -> 7,399 tokens (Phase D)
+Reduction: 28%
+
+Output token count: 447 (well under the new 512 cap).
+
+### Cost projection
+
+Pre-Phase-D monthly bill: ~$80-100 (per dashboard CSV through 2026-05-16).
+Post-Phase-D projection: 24% bill reduction = ~$60-76/month.
+
+This is below the original "ambitious 50%+" target. To hit 50%+, additional
+phases needed (deferred):
+- Phase E: model routing (Haiku for simple turns)
+- Phase F: system prompt trim (the 4,300-token systemPrompt is now the
+  dominant chunk of the static prefix)
+- Phase G: remove caching entirely (write surcharge no longer worth it)
+
+24h of production data will be the real measurement. The single-call test
+is directional, not definitive.
+
+### Test data to clean up
+
+One row in production database:
+- reviews.customer_id = 'phase-d-prod-test-001-DELETE-ME'
+- conversations.customer_id = 'phase-d-prod-test-001-DELETE-ME'
+
+Delete tomorrow morning. SQL:
+  DELETE FROM reviews WHERE customer_id = 'phase-d-prod-test-001-DELETE-ME';
+  DELETE FROM conversations WHERE customer_id = 'phase-d-prod-test-001-DELETE-ME';
+
+### What was NOT touched
+
+- /train endpoint and dashboard prompt editor
+- /explain-learning endpoint
+- Cron handler (T+20h follow-up still on hourly schedule)
+- Make.com scenarios
+- ManyChat integration
+- Dashboard pages
+- Learning insertion via Inbox (still inserts to learnings table; no auto-embedding yet)
+
+### Known issue: new learnings will not be auto-embedded
+
+When setters edit a bot reply via Inbox, the new learning gets inserted
+into the learnings table with embedding=NULL. The semantic match function
+filters out NULL-embedding rows, so new learnings won't surface in the
+bot's context until they're embedded. Currently this requires manually
+re-running scripts/backfill-embeddings.mjs.
+
+This is a Phase 2 polish item: add a Postgres trigger or Edge Function
+that auto-embeds new learnings on insert. Documented as a known gap.
+
+### Lessons from this session
+
+- 40-60% reduction projection was too optimistic for Phase D alone.
+  Honest measured reduction is 28%. Hitting 50%+ requires stacking
+  multiple phases.
+- Two-terminal pattern for wrangler tail + curl works reliably on
+  Windows where Start-Job has subtle subprocess streaming issues.
+- ECONNRESET on wrangler tail is a known transient issue. Retry usually
+  works.
+- Production has stronger semantic match quality than staging
+  (similarity_top 0.666 vs 0.598) because of larger learning pool.
+
+### Follow-up actions
+
+For Anthony tomorrow:
+- Send Nella update with honest 28% reduction number
+- Delete the DELETE-ME test row in production database
+- Schedule Phase E session (model routing) within next 1-2 weeks
+- Schedule Phase F session (prompt trim) after Phase E lands
