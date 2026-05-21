@@ -324,3 +324,186 @@ PASTE THIS:
 > - Push to feature branch, not main; web Claude Code sessions can't push to main directly due to branch protection.
 
 END PASTE.
+
+## 2026-05-19 - Phase A+B+C of Anthropic cost reduction (semantic retrieval foundation)
+
+Goal: reduce Anthropic API spend from ~$80-100/mo to ~$30-50/mo by replacing chronological "newest 30 learnings injection" with semantic retrieval via Voyage AI embeddings + pgvector. Trigger: Anthropic spend cap hit $50 on 2026-05-16. May 2026 caching deploy still firing but only 27.6% hit rate because most leads respond 24h+ later (well past the 5-min TTL).
+
+Decision: caching at any TTL is wrong for this traffic pattern. Architecture change to semantic RAG follows industry standard (TELUS, Zapier, Pinecone, Google ADK patterns).
+
+### Done tonight
+
+Phase A: Voyage AI account
+- Account created on Nella's email, payment method added (rate-limit unlock; stays in 200M free tier; ~$0 actual billing at our volume)
+- VOYAGE_API_KEY uploaded as Cloudflare Worker secret on production (top-level) AND staging (--env staging)
+- Verified key works: voyage-4 model returns 1024-dimensional embeddings
+
+Phase B: Database schema (both Supabase projects)
+- pgvector extension enabled on production (rydkwsjwlgnivlwlvqku) and staging (hlpucysbaqerhwahfolg)
+- learnings.embedding vector(1024) column added to both
+- bot_documents.embedding vector(1024) column added to both
+- HNSW cosine_ops indexes on both (m=16, ef_construction=64)
+- match_learnings(query_embedding, target_bot_id, match_threshold, match_count) RPC created on both
+- match_documents(query_embedding, target_bot_id, match_threshold, match_count) RPC created on both
+- All idempotent migrations; safe to re-run
+
+Schema drift discovered and documented (not blocking):
+- learnings.tags is jsonb on staging, text[] on production
+- match_learnings function signatures differ accordingly between environments
+- Both PostgREST-serialize to JS arrays, so Worker code reads identically via tags || []
+- Worth a unified-schema cleanup eventually but not blocking Phase D
+
+Phase C: Embedding backfill
+- Production: all 296 learnings + 3 documents embedded via Voyage voyage-4
+- Staging: 20 sampled production learnings + 3 documents seeded with embeddings (for Phase D testing)
+- Smoke test on both: top-result similarity = 1.000 (self-match), descending naturally to ~0.58-0.84
+- Production semantic retrieval working as expected
+
+### Files added (committed in this session)
+
+- scripts/backfill-embeddings.mjs (idempotent, filters embedding IS NULL, Voyage batch=64)
+- scripts/seed-staging.mjs (cross-environment copy: prod -> staging with embeddings)
+- PHASE-D-BRIEFING.md (24KB comprehensive brief for Phase D execution)
+
+Worker source unchanged. Production Worker still on commit 8afdeb3, version unchanged from 2026-05-18.
+
+### Pre-flight findings for Phase D (verified 2026-05-19 late session)
+
+Anchor lines in sales-bot/src/index.js:
+- BOT_ID const at line 5 (module-level, also redeclared at line 1780 locally)
+- getSupabaseUrl(env) at line 11
+- async function fetchRelevantLearnings(env, memory, limit = 30) at line 2115
+- async function fetchActiveDocuments(env) at line 2146
+- async function callClaude(env, memory, learnings, documents, systemPrompt, ...) at line 2167
+- max_tokens: 1024 at line 2383
+- /learnings endpoint call: await fetchRelevantLearnings(env, {}, 50) at line 2092
+- Main webhook call: Promise.all at lines 1129-1132 (calls both fetchRelevantLearnings(env, memory) and fetchActiveDocuments(env))
+
+File state:
+- 130,358 bytes
+- CRLF line endings confirmed (1024 CRLF in first 50KB sample, 0 LF-only)
+
+Untracked at end of session (not Phase D related):
+- patch_worker.py: 9,350-byte leftover from 2026-05-18 cron fix session
+- scripts/check-cron-deploy-2026-05-18.mjs: another leftover from same session
+
+### Lessons learned this session
+
+- Schema-first: always query column types before writing migrations. Lost 30 min on tags jsonb vs text[].
+- Always check third-party API rate limits, not just pricing. Voyage's 3 RPM free tier without payment method blocked production backfill.
+- PowerShell env vars don't survive across new shell windows. Re-prompt for keys when shell recycles.
+- Staging schemas can drift from production silently.
+- Idempotent scripts (embedding IS NULL filter) saved us when transient fetch failures hit mid-batch.
+- Use absolute paths for [System.IO.File] methods in PowerShell; CWD doesn't propagate to .NET. Hit this twice tonight.
+- Browser Claude Code is the right tool for Worker mechanical edits, not web chat.
+
+### Handoff to browser Claude Code
+
+Phase D and E to be executed by browser Claude Code in a new session. Reads PHASE-D-BRIEFING.md from repo. Anthony continues as planner via web chat. Pre-flight findings above are the verified ground truth; Claude Code does not need to re-discover them.
+
+### Next session deliverables
+
+- Phase D: Worker code changes per PHASE-D-BRIEFING.md
+  - embedQueryText() helper for Voyage (input_type: query)
+  - fetchRelevantLearningsSemantic via match_learnings RPC
+  - fetchRelevantDocumentsSemantic via match_documents RPC
+  - max_tokens 1024 -> 512
+  - Keep legacy functions for rollback
+- Phase E: staging deploy, synthetic test, production deploy, 30-60 min monitor
+- 24h measurement of actual savings via [cache] log lines + Anthropic billing dashboard
+- Followup tomorrow with Nella to share results
+
+## 2026-05-21 - Phase D shipped to production (semantic retrieval live)
+
+Phase D of the Anthropic cost reduction work is live on production.
+sales-bot.nellakuate.workers.dev now uses Voyage AI semantic retrieval
+instead of chronological "newest 30 learnings" injection.
+
+### Production state at end of session
+
+- Worker version: a1b9ec9c-4425-4ff7-9a5c-d84ebcc09178
+- Branch: feat-semantic-retrieval-phase-d (commit 21b3c19)
+- Deployed via wrangler deploy at 2026-05-21 01:07 UTC
+
+### Synthetic test on production (one-call measurement)
+
+Single test call to /webhook with customer_id=phase-d-prod-test-001-DELETE-ME:
+
+  [retrieval] learnings=8 docs=2 embed_dim=1024 similarity_top=0.666
+  [cache] model=claude-sonnet-4-6 input=2410 cache_create=7399 cache_read=0 output=447
+
+Latency: 12,471 ms (comparable to pre-Phase-D ~12,000-13,000 range).
+Bot reply was coherent and slightly improved over staging quality.
+
+### Measured impact (preliminary, one call)
+
+Static prefix size: 10,248 tokens (pre-Phase-D) -> 7,399 tokens (Phase D)
+Reduction: 28%
+
+Output token count: 447 (well under the new 512 cap).
+
+### Cost projection
+
+Pre-Phase-D monthly bill: ~$80-100 (per dashboard CSV through 2026-05-16).
+Post-Phase-D projection: 24% bill reduction = ~$60-76/month.
+
+This is below the original "ambitious 50%+" target. To hit 50%+, additional
+phases needed (deferred):
+- Phase E: model routing (Haiku for simple turns)
+- Phase F: system prompt trim (the 4,300-token systemPrompt is now the
+  dominant chunk of the static prefix)
+- Phase G: remove caching entirely (write surcharge no longer worth it)
+
+24h of production data will be the real measurement. The single-call test
+is directional, not definitive.
+
+### Test data to clean up
+
+One row in production database:
+- reviews.customer_id = 'phase-d-prod-test-001-DELETE-ME'
+- conversations.customer_id = 'phase-d-prod-test-001-DELETE-ME'
+
+Delete tomorrow morning. SQL:
+  DELETE FROM reviews WHERE customer_id = 'phase-d-prod-test-001-DELETE-ME';
+  DELETE FROM conversations WHERE customer_id = 'phase-d-prod-test-001-DELETE-ME';
+
+### What was NOT touched
+
+- /train endpoint and dashboard prompt editor
+- /explain-learning endpoint
+- Cron handler (T+20h follow-up still on hourly schedule)
+- Make.com scenarios
+- ManyChat integration
+- Dashboard pages
+- Learning insertion via Inbox (still inserts to learnings table; no auto-embedding yet)
+
+### Known issue: new learnings will not be auto-embedded
+
+When setters edit a bot reply via Inbox, the new learning gets inserted
+into the learnings table with embedding=NULL. The semantic match function
+filters out NULL-embedding rows, so new learnings won't surface in the
+bot's context until they're embedded. Currently this requires manually
+re-running scripts/backfill-embeddings.mjs.
+
+This is a Phase 2 polish item: add a Postgres trigger or Edge Function
+that auto-embeds new learnings on insert. Documented as a known gap.
+
+### Lessons from this session
+
+- 40-60% reduction projection was too optimistic for Phase D alone.
+  Honest measured reduction is 28%. Hitting 50%+ requires stacking
+  multiple phases.
+- Two-terminal pattern for wrangler tail + curl works reliably on
+  Windows where Start-Job has subtle subprocess streaming issues.
+- ECONNRESET on wrangler tail is a known transient issue. Retry usually
+  works.
+- Production has stronger semantic match quality than staging
+  (similarity_top 0.666 vs 0.598) because of larger learning pool.
+
+### Follow-up actions
+
+For Anthony tomorrow:
+- Send Nella update with honest 28% reduction number
+- Delete the DELETE-ME test row in production database
+- Schedule Phase E session (model routing) within next 1-2 weeks
+- Schedule Phase F session (prompt trim) after Phase E lands

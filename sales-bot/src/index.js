@@ -1126,10 +1126,26 @@ var index_default = {
           }
         }
 
+        // Phase D (2026-05-19): semantic retrieval of learnings + documents.
+        // Embed the user's most recent message joined with last bot reply (for
+        // conversational context) and retrieve top-K semantically matched rows.
+        // Falls back gracefully if Voyage is down: queryEmbedding is null and
+        // both fetches return empty arrays. Legacy functions retained for rollback.
+        const retrievalUserMessage = (memory.messages || [])
+          .filter(m => m.role === "user")
+          .slice(-1)[0]?.content || message || "";
+        const retrievalBotMessage = (memory.messages || [])
+          .filter(m => m.role === "assistant")
+          .slice(-1)[0]?.content || "";
+        const queryText = retrievalBotMessage
+          ? `${retrievalBotMessage}\n\nUser response: ${retrievalUserMessage}`
+          : retrievalUserMessage;
+        const queryEmbedding = await embedQueryText(env, queryText);
         const [learnings, documents] = await Promise.all([
-          fetchRelevantLearnings(env, memory),
-          fetchActiveDocuments(env)
+          fetchRelevantLearningsSemantic(env, queryEmbedding),
+          fetchRelevantDocumentsSemantic(env, queryEmbedding)
         ]);
+        console.log(`[retrieval] learnings=${learnings.length} docs=${documents.length} embed_dim=${queryEmbedding?.length || 0} similarity_top=${learnings[0]?.similarity?.toFixed(3) || "n/a"}`);
 
         // Bug 7: Read prior conversation state BEFORE calling Claude.
         // We need to know if the lead was previously followed up and what stage
@@ -2089,7 +2105,7 @@ var index_default = {
     // /learnings
     if (url.pathname === "/learnings" && request.method === "GET") {
       try {
-        const allLearnings = await fetchRelevantLearnings(env, {}, 50);
+        const allLearnings = await fetchRelevantLearningsLegacy(env, {}, 50);
         return new Response(JSON.stringify({ total_learnings: allLearnings.length, learnings: allLearnings }), {
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
@@ -2112,7 +2128,7 @@ var index_default = {
 
 // Helpers
 
-async function fetchRelevantLearnings(env, memory, limit = 30) {
+async function fetchRelevantLearningsLegacy(env, memory, limit = 30) {
   try {
     const response = await fetch(
       `${getSupabaseUrl(env)}/rest/v1/learnings?bot_id=eq.${BOT_ID}&order=created_at.desc&limit=${limit}`,
@@ -2141,9 +2157,54 @@ async function fetchRelevantLearnings(env, memory, limit = 30) {
     return [];
   }
 }
-__name(fetchRelevantLearnings, "fetchRelevantLearnings");
+__name(fetchRelevantLearningsLegacy, "fetchRelevantLearningsLegacy");
 
-async function fetchActiveDocuments(env) {
+async function fetchRelevantLearningsSemantic(env, queryEmbedding, options = {}) {
+  // Semantic retrieval of learnings via pgvector match_learnings RPC.
+  // Falls back to empty array if queryEmbedding is null (Voyage failed).
+  if (!queryEmbedding) return [];
+  const matchThreshold = options.threshold ?? 0.3;
+  const matchCount = options.count ?? 8;
+  try {
+    const response = await fetch(
+      `${getSupabaseUrl(env)}/rest/v1/rpc/match_learnings`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          "apikey": env.SUPABASE_SERVICE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          query_embedding: queryEmbedding,
+          target_bot_id: BOT_ID,
+          match_threshold: matchThreshold,
+          match_count: matchCount
+        })
+      }
+    );
+    if (!response.ok) {
+      console.error(`[semantic-learnings] RPC failed: ${response.status} ${await response.text()}`);
+      return [];
+    }
+    const data = await response.json();
+    return (data || []).map(l => ({
+      conversation_stage: l.conversation_stage,
+      situation_context: l.situation_context,
+      original_reply: l.original_reply,
+      edited_reply: l.corrected_reply,
+      reason: l.reason,
+      tags: l.tags || [],
+      similarity: l.similarity
+    }));
+  } catch (err) {
+    console.error(`[semantic-learnings] exception: ${err.message}`);
+    return [];
+  }
+}
+__name(fetchRelevantLearningsSemantic, "fetchRelevantLearningsSemantic");
+
+async function fetchActiveDocumentsLegacy(env) {
   try {
     const response = await fetch(
       `${getSupabaseUrl(env)}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&status=eq.active&select=name,content,usage_count`,
@@ -2162,7 +2223,43 @@ async function fetchActiveDocuments(env) {
     return [];
   }
 }
-__name(fetchActiveDocuments, "fetchActiveDocuments");
+__name(fetchActiveDocumentsLegacy, "fetchActiveDocumentsLegacy");
+
+async function fetchRelevantDocumentsSemantic(env, queryEmbedding, options = {}) {
+  // Semantic retrieval of documents via pgvector match_documents RPC.
+  if (!queryEmbedding) return [];
+  const matchThreshold = options.threshold ?? 0.2;
+  const matchCount = options.count ?? 2;
+  try {
+    const response = await fetch(
+      `${getSupabaseUrl(env)}/rest/v1/rpc/match_documents`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          "apikey": env.SUPABASE_SERVICE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          query_embedding: queryEmbedding,
+          target_bot_id: BOT_ID,
+          match_threshold: matchThreshold,
+          match_count: matchCount
+        })
+      }
+    );
+    if (!response.ok) {
+      console.error(`[semantic-documents] RPC failed: ${response.status} ${await response.text()}`);
+      return [];
+    }
+    const data = await response.json();
+    return data || [];
+  } catch (err) {
+    console.error(`[semantic-documents] exception: ${err.message}`);
+    return [];
+  }
+}
+__name(fetchRelevantDocumentsSemantic, "fetchRelevantDocumentsSemantic");
 
 async function callClaude(env, memory, learnings = [], documents = [], systemPrompt, model = 'claude-sonnet-4-6', intentDefs = {}, campaignConfig = {}) {
   const lastMessages = (memory.messages || []).slice(-10);
@@ -2380,7 +2477,7 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     },
     body: JSON.stringify({
       model: model,
-      max_tokens: 1024,
+      max_tokens: 512,
       system: systemBlocks,
       messages: [
         { role: "user", content: buildDeveloperPrompt(memory, lastMessages) }
@@ -2441,6 +2538,38 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
 
   return parsed;
 }
+
+async function embedQueryText(env, text) {
+  // Embed a query string via Voyage AI for semantic retrieval.
+  // Returns 1024-dim float array, or null on failure (graceful degradation).
+  // input_type="query" optimizes for retrieval search vs "document" for indexing.
+  if (!text || !env.VOYAGE_API_KEY) return null;
+  try {
+    const response = await fetch("https://api.voyageai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.VOYAGE_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        input: [text.slice(0, 8000)],
+        model: "voyage-4",
+        input_type: "query"
+      })
+    });
+    if (!response.ok) {
+      console.error(`[voyage] embedding failed: ${response.status} ${await response.text()}`);
+      return null;
+    }
+    const data = await response.json();
+    return data?.data?.[0]?.embedding || null;
+  } catch (err) {
+    console.error(`[voyage] embedding exception: ${err.message}`);
+    return null;
+  }
+}
+__name(embedQueryText, "embedQueryText");
+
 __name(callClaude, "callClaude");
 
 async function sendToSlack(env, data) {
