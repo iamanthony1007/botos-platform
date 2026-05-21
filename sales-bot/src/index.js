@@ -2462,7 +2462,7 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
   // on staticPrefix in both cases (single block or two blocks), so cache
   // hits work identically.
   const systemBlocks = [
-    { type: "text", text: staticPrefix, cache_control: { type: "ephemeral" } }
+    { type: "text", text: staticPrefix }
   ];
   if (dynamicSuffix && dynamicSuffix.trim().length > 0) {
     systemBlocks.push({ type: "text", text: dynamicSuffix });
@@ -2477,7 +2477,7 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     },
     body: JSON.stringify({
       model: model,
-      max_tokens: 512,
+      max_tokens: 768,
       system: systemBlocks,
       messages: [
         { role: "user", content: buildDeveloperPrompt(memory, lastMessages) }
