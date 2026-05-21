@@ -28,3 +28,9 @@ Thumbs.db
 *.zip
 
 node_modules/
+
+# Session-specific debugging scripts (not for repo)
+patch_worker.py
+scripts/check-cron-deploy-*.mjs
+.progress-entry.tmp
+.commit-msg.tmp
