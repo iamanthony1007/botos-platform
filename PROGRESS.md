@@ -507,3 +507,119 @@ For Anthony tomorrow:
 - Delete the DELETE-ME test row in production database
 - Schedule Phase E session (model routing) within next 1-2 weeks
 - Schedule Phase F session (prompt trim) after Phase E lands
+
+## 2026-05-21 (late session) - Phase G1 shipped + Phase D merged to main
+
+Continuation of cost reduction work the same UTC day as Phase D shipped earlier. Two architectural fixes plus the operational cleanup of getting deployed code onto main.
+
+### Done tonight
+
+**Phase D merged into main (PR #2, merge commit bbaa723)**
+
+Phase A+B+C and Phase D were both sitting on feature branches while production ran the code. Anyone reading main on GitHub would see pre-Phase-D code that did not match production. Tonight's merge brought deployed code onto main as the single source of truth. No code changes; pure branch hygiene. Project knowledge now auto-syncs to current state from main.
+
+Files arriving on main from the merge: .gitignore, PROGRESS.md (Phase D entry), sales-bot/src/index.js (Phase D code), scripts/backfill-embeddings.mjs, scripts/seed-staging.mjs.
+
+**Phase G1 deployed to production (PR #3, merge commit b1fb053)**
+
+Two-line change to sales-bot/src/index.js:
+- Removed cache_control from systemBlocks (no more 1.25x cache write surcharge)
+- Bumped max_tokens 512 to 768 (avoid the JSON truncation failure mode discovered tonight)
+
+Deployed:
+- Staging worker version 286e66d6-aa92-4606-926e-ffdd905ded5a at 2026-05-21 04:43 UTC
+- Production worker version a0858eed-38f7-4dcc-9d44-4784b08e4086 at 2026-05-21 04:48 UTC
+
+Synthetic test on production confirmed the change took effect:
+
+Before G1 (from Phase D ship test):
+[cache] model=claude-sonnet-4-6 input=2410 cache_create=7399 cache_read=0 output=447
+
+After G1 (production test tonight):
+[cache] model=claude-sonnet-4-6 input=9857 cache_create=0 cache_read=0 output=400
+
+The 7,400 cached-prefix tokens now flow as regular input tokens. No more surcharge being paid for cache writes that never get read. Semantic retrieval [retrieval] line unchanged.
+
+### The architectural finding that drove Phase G1
+
+Diagnostics tonight revealed that cache_read=0 on every observable production call, not just the 2 AM synthetic test that shipped Phase D. Real production traffic from two unrelated leads at 03:11 and 04:11 UTC both showed cache_read=0. A controlled identical-message test with three calls in a 2-minute window against a fresh customer_id ALSO showed cache_read=0 on all three.
+
+Root cause traced through three sequential diagnostics:
+1. Read deployed Phase D Worker source. Confirmed staticPrefix includes learningsSection.
+2. Re-ran controlled identical-message test. Confirmed cache miss persists even with identical user input.
+3. Read embedQueryText function and its call site. Found the call site concatenates retrievalBotMessage (the most recent bot reply) with the user message before embedding.
+
+The embed query changes every turn because retrievalBotMessage changes every turn. Different embed query produces different top-8 semantic-match learnings, which produces different learningsSection text, which produces different staticPrefix bytes, which breaks the cache key. The cache has effectively been dead since Phase D shipped.
+
+### Why Phase G1 instead of fixing the cache
+
+Two reasons. First, the embed query could be stabilized by passing only the user message, but that would degrade retrieval quality (bot message context currently helps Voyage find relevant learnings). Tradeoff with product implications.
+
+Second and decisive: the bot operates in manual-review mode. Setters review and approve bot replies in the Inbox before they are sent via Make Scenario 2. Real lead turn-gaps frequently exceed 1 hour, well past both the 5-min and 1-hour Anthropic cache TTLs. Even a byte-stable prefix would rarely produce cache hits under current operating mode. Caching becomes worth re-enabling only when auto_send_enabled is flipped to true for trusted bots and turn-gaps compress to minutes.
+
+### Empirical cost impact
+
+Per-call savings on the static prefix: roughly $0.006 (cache_create 7400 at $3.75/MTok = $0.0278 vs input 9857 at $3.00/MTok = $0.0296 with the saved surcharge differential).
+
+This works out to approximately 15% per-call cost reduction on the static prefix line item. At current production volume, estimated monthly impact is $3-8.
+
+Not transformative. The operational benefit of getting deployed code onto main (PR #2) is arguably more valuable than the cost savings itself. Honest accounting: this was a small win that was worth doing because the cache surcharge was pure waste, not because the headline number is impressive.
+
+The 20% projection from theoretical pricing math was slightly optimistic. Actual savings comes only from the cache-write surcharge differential ($0.75/MTok on the prefix portion), not from removing prefix tokens entirely.
+
+### Diagnostic surfacing the max_tokens issue
+
+During diagnostic 1's 3-call synthetic test, call 3 returned a 500 to the client. The Worker successfully called Anthropic and received a response, but the JSON body was truncated at output=511 (one token below the 512 cap), causing the JSON parse to fail. The response was structurally valid up to the truncation point but missing the closing brace.
+
+This is happening in production on similar verbose turns where Claude generates detailed internal_notes plus full memory_update plus tags. The 768 bump should eliminate this failure mode without bloating typical output costs (Claude only generates as many tokens as needed; the cap just prevents truncation).
+
+### Open follow-ups (carried forward)
+
+Phase F still the highest-value remaining lever: the 4,300-token systemPrompt is now ~44% of the 9,857-token total prefix-as-input. Trimming it reduces every call's input cost directly. Could plausibly deliver 15-25% additional savings depending on how aggressive the trim, but requires careful product testing because the systemPrompt encodes bot behavior.
+
+Phase E (model routing Haiku vs Sonnet) deferred further. Highest theoretical savings but highest product risk; a bad routing decision means worse customer experience. Wait until we have more confidence in measuring bot output quality.
+
+The "fix the cache" path (stabilize embed query OR move learningsSection out of cached prefix) becomes worth revisiting when auto_send_enabled is flipped to true. Not before.
+
+Auto-embedding new learnings inserted via Inbox: still broken. Setters edit a reply, the new learning gets embedding=NULL, semantic match filters out NULL rows, the lesson is invisible to the bot until manual backfill. Real product gap that gets worse over time. Needs a Postgres trigger or Edge Function for auto-embedding on insert.
+
+Schema drift learnings.tags jsonb (staging) vs text[] (production) still present. PostgREST serializes identically so Worker is unaffected, but the divergence will bite eventually.
+
+Voyage AI payment method: still on Anthony's personal card. Transfer to Nella when she sets up her own.
+
+### Cleanup queue (to batch in next session)
+
+Five DELETE-ME test rows accumulated this session and the prior Phase D session. Production:
+- phase-d-prod-test-001-DELETE-ME (Phase D ship test, 2026-05-21 01:07 UTC)
+- phase-test-1779331900-DELETE-ME (diagnostic 1, 02:53 UTC)
+- phase-test-diag2-1779337354-DELETE-ME (diagnostic 2, 04:22 UTC)
+- phase-g1-prod-1779342529-DELETE-ME (G1 production verification, 05:48 UTC)
+
+Staging:
+- phase-g1-staging-1779342216-DELETE-ME (G1 staging verification, 05:43 UTC)
+
+Cleanup approach: SELECT first to verify exact rows, then DELETE with explicit IN list (not LIKE pattern). To be done with fresh eyes, not at 6 AM after a long session.
+
+### Files added on main this session
+
+- PHASE-G1-BRIEFING.md (Claude Code execution brief)
+
+### Worker version IDs deployed this session
+
+- Production: a0858eed-38f7-4dcc-9d44-4784b08e4086 (Phase G1)
+- Staging: 286e66d6-aa92-4606-926e-ffdd905ded5a (Phase G1)
+
+Previous: a1b9ec9c-4425-4ff7-9a5c-d84ebcc09178 (Phase D), now superseded.
+
+### Lessons this session
+
+- Real-traffic data beats synthetic. The 28% Phase D measurement was one synthetic call. Real production calls tonight showed semantic retrieval working but cache failing for an architectural reason we did not understand at Phase D ship time.
+- Diagnostics in sequence, not in parallel. Three rounds of diagnosis tonight, each refining the theory based on the previous round. Resisted the urge to commit to fix design after diagnostic 1 (when I thought semantic drift was the cause); diagnostic 2 forced me to look deeper, diagnostic 3 found the real mechanism.
+- Verify deployed code on the branch, not on main. Project knowledge was stale to deployed code throughout this session until the Phase D merge. Branch-vs-main drift is its own operational risk; PR #2 addressed it.
+- Conservative percentage promises. Last session promised 40-60% for Phase D, delivered 28%. This session promised "about 20%" for Phase G1, measured 15%. Stay conservative. Real production traffic will be the final word, not theoretical math.
+- Two-window tail+fire pattern works reliably. SSL/TLS intermittent errors on Invoke-WebRequest now seem to be tolerable: retry once and proceed. Cause likely a transient network issue on the client side, not a Worker problem.
+- max_tokens=512 was too aggressive. Phase D's reduction caused a real 500 to a client tonight. Always test verbose response paths before clamping output limits.
+
+### Standing rules reaffirmed
+
+No em dashes anywhere. ctx.waitUntil for Supabase writes. Staging before production. Feature branches only, never push to main directly. PROGRESS.md updated at session end (this entry). Long commit messages via temp file plus git commit --file=. PowerShell multi-step commands as single blocks. Use absolute paths in [System.IO.File] .NET calls.
