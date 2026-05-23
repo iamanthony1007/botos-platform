@@ -1211,7 +1211,7 @@ var index_default = {
           };
         }
 
-        const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig);
+        const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig, priorStage, isLeadSourceEvent);
         if (!botResponse || (!botResponse.reply && !botResponse.messages)) throw new Error("Invalid bot response structure");
 
         // Bug 2: Sanitize internal_notes (the AI Insight panel text) using the same
@@ -1955,7 +1955,7 @@ var index_default = {
           body: JSON.stringify({
             model: "claude-sonnet-4-6",
             max_tokens: 8000,
-            system: "You are a prompt engineering assistant. You receive a system prompt and a plain-English instruction. Make ONLY the requested change. Preserve all formatting. Return a raw JSON object with keys: updated_prompt, explanation, changes (array), needs_clarification (bool). If clarification is needed set needs_clarification to true and add a question key. Output NOTHING except the JSON object — no markdown, no preamble.",
+            system: "You are a prompt engineering assistant. You receive a system prompt and a plain-English instruction. Make ONLY the requested change. Preserve all formatting, especially any '## SECTION_NAME' markdown headers (these are load-bearing, the runtime parses sections by these markers). Return a raw JSON object with keys: updated_prompt, explanation, changes (array), needs_clarification (bool). If clarification is needed set needs_clarification to true and add a question key. Output NOTHING except the JSON object, no markdown, no preamble.",
             messages: [
               { role: "user", content: userMessage }
             ],
@@ -2261,7 +2261,7 @@ async function fetchRelevantDocumentsSemantic(env, queryEmbedding, options = {})
 }
 __name(fetchRelevantDocumentsSemantic, "fetchRelevantDocumentsSemantic");
 
-async function callClaude(env, memory, learnings = [], documents = [], systemPrompt, model = 'claude-sonnet-4-6', intentDefs = {}, campaignConfig = {}) {
+async function callClaude(env, memory, learnings = [], documents = [], systemPrompt, model = 'claude-sonnet-4-6', intentDefs = {}, campaignConfig = {}, priorStage = null, hasLeadSourceEvent = false) {
   const lastMessages = (memory.messages || []).slice(-10);
 
   const learningsSection = learnings && learnings.length > 0 ? `
@@ -2442,11 +2442,36 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
   // welcome/leadSource/reEngagement by placing them adjacent to the user
   // message, where Claude's recency weighting compensates for them no longer
   // being at the very top of the system field.
+  // Phase F (2026-05-21): parse the bot's system_prompt into named sections
+  // and inject only the relevant ones based on the conversation stage.
+  // Falls back to identical pre-Phase-F behavior when the prompt has no
+  // "## " section markers (parseSystemPrompt returns the whole text under
+  // __PRELUDE__ and decideRequestedSections returns just that key).
+  const parsedSections = parseSystemPrompt(systemPrompt);
+  const requestedNames = decideRequestedSections(
+    parsedSections,
+    priorStage,
+    hasLeadSourceEvent
+  );
+  const lazyPromptBody = requestedNames
+    .map(name => {
+      const body = parsedSections[name];
+      if (!body) return "";
+      if (name === "__PRELUDE__") return body;
+      return `## ${name}\n${body}`;
+    })
+    .filter(s => s && s.length > 0)
+    .join("\n\n");
+
+  try {
+    console.log(`[phase-f] priorStage=${priorStage || "null"} hasLeadSourceEvent=${hasLeadSourceEvent} sectionsInjected=${requestedNames.join(",")}`);
+  } catch (_) { /* non-fatal */ }
+
   const staticPrefix =
     learningsSection +
     documentSection +
     campaignSection +
-    systemPrompt;
+    lazyPromptBody;
 
   const dynamicSuffix =
     welcomeSection +
@@ -2569,6 +2594,100 @@ async function embedQueryText(env, text) {
   }
 }
 __name(embedQueryText, "embedQueryText");
+
+// Phase F (2026-05-21): section-marker-aware system prompt assembly.
+//
+// parseSystemPrompt splits a prompt string into named sections by markdown
+// headers. Anything before the first "## " header is the prelude. Each
+// "## NAME" header opens a new section that runs until the next header.
+//
+// decideRequestedSections returns the list of section names to inject based
+// on the current conversation stage. Always-on sections load unconditionally;
+// lazy sections load per the STAGE_GRAPH below.
+//
+// Backward compatible: a prompt with no "## " markers parses into a single
+// "__PRELUDE__" containing the whole text, and decideRequestedSections
+// returns just that key, producing identical behavior to pre-Phase-F.
+
+function parseSystemPrompt(promptText) {
+  const sections = {};
+  if (!promptText || typeof promptText !== "string") {
+    sections.__PRELUDE__ = "";
+    return sections;
+  }
+  const lines = promptText.split(/\r?\n/);
+  let currentName = "__PRELUDE__";
+  let currentBody = [];
+  for (const line of lines) {
+    const headerMatch = /^##\s+(.+?)\s*$/.exec(line);
+    if (headerMatch) {
+      sections[currentName] = currentBody.join("\n").trim();
+      currentName = headerMatch[1].trim();
+      currentBody = [];
+    } else {
+      currentBody.push(line);
+    }
+  }
+  sections[currentName] = currentBody.join("\n").trim();
+  return sections;
+}
+__name(parseSystemPrompt, "parseSystemPrompt");
+
+const STAGE_GRAPH = {
+  "HOOK / ENTRY": ["SECTION:STAGE_HOOK_ENTRY", "SECTION:STAGE_GOAL", "SECTION:STAGE_INVITE"],
+  "GOAL":         ["SECTION:STAGE_HOOK_ENTRY", "SECTION:STAGE_GOAL", "SECTION:STAGE_DIAGNOSTIC", "SECTION:STAGE_INVITE"],
+  "DIAGNOSTIC":   ["SECTION:STAGE_GOAL", "SECTION:STAGE_DIAGNOSTIC", "SECTION:STAGE_INSIGHT", "SECTION:STAGE_INVITE"],
+  "INSIGHT":      ["SECTION:STAGE_DIAGNOSTIC", "SECTION:STAGE_INSIGHT", "SECTION:STAGE_PRIORITY", "SECTION:STAGE_INVITE"],
+  "PRIORITY":     ["SECTION:STAGE_INSIGHT", "SECTION:STAGE_PRIORITY", "SECTION:STAGE_DECISION", "SECTION:STAGE_INVITE", "SECTION:STAGE_FOLLOWUP"],
+  "DECISION":     ["SECTION:STAGE_PRIORITY", "SECTION:STAGE_DECISION", "SECTION:STAGE_INVITE"],
+  "INVITE":       ["SECTION:STAGE_DECISION", "SECTION:STAGE_INVITE", "SECTION:STAGE_SCHEDULE"],
+  "SCHEDULE":     ["SECTION:STAGE_INVITE", "SECTION:STAGE_SCHEDULE", "SECTION:STAGE_BOOKED"],
+  "BOOKED":       ["SECTION:STAGE_SCHEDULE", "SECTION:STAGE_BOOKED"],
+  "FOLLOW-UP":    ["SECTION:STAGE_FOLLOWUP", "SECTION:NURTURE_EXIT", "SECTION:STAGE_DIAGNOSTIC", "SECTION:STAGE_INVITE"]
+};
+
+const ALWAYS_ON_SECTIONS = [
+  "PERSONA",
+  "VOICE",
+  "ICP",
+  "INTENT_CLASSIFICATION",
+  "GUARDRAILS"
+];
+
+function decideRequestedSections(parsedSections, priorStage, hasLeadSourceEvent) {
+  const requested = [];
+
+  if (parsedSections.__PRELUDE__ && parsedSections.__PRELUDE__.length > 0) {
+    requested.push("__PRELUDE__");
+  }
+
+  for (const name of ALWAYS_ON_SECTIONS) {
+    if (parsedSections[name]) requested.push(name);
+  }
+
+  const stageKey = priorStage && STAGE_GRAPH[priorStage] ? priorStage : "HOOK / ENTRY";
+  const stageSections = STAGE_GRAPH[stageKey] || STAGE_GRAPH["HOOK / ENTRY"];
+  for (const name of stageSections) {
+    if (parsedSections[name] && !requested.includes(name)) {
+      requested.push(name);
+    }
+  }
+
+  if (hasLeadSourceEvent && parsedSections["SECTION:LEAD_SOURCE_EVENT"]) {
+    if (!requested.includes("SECTION:LEAD_SOURCE_EVENT")) {
+      requested.push("SECTION:LEAD_SOURCE_EVENT");
+    }
+  }
+
+  if (stageKey === "FOLLOW-UP" && parsedSections["SECTION:NURTURE_EXIT"]) {
+    if (!requested.includes("SECTION:NURTURE_EXIT")) {
+      requested.push("SECTION:NURTURE_EXIT");
+    }
+  }
+
+  return requested;
+}
+__name(decideRequestedSections, "decideRequestedSections");
 
 __name(callClaude, "callClaude");
 
