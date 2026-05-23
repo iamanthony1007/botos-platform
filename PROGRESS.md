@@ -805,3 +805,103 @@ No em dashes anywhere. ctx.waitUntil for Supabase writes. Staging before product
 *Last updated: 2026-05-22 / 2026-05-23 (Phase F section-marker lazy loading shipped to production, ~27% per-call token reduction measured. /feedback embedding bug found mid-session and fixed same session. 26 orphan learnings backfilled. Coach Shaun bot fully functional with setter corrections firing. Branch feat-phase-f-systemprompt-redesign has 3 commits ready to PR. Production Worker version ec34452c-e711-4ace-a35a-5e90b180182b.)*
 
 ---
+
+## 2026-05-23 - Run 3 regression test + cost analysis + flywheel distinction
+
+After Phase F shipment, a third regression test was run using truly fresh leads (no Run 1 or Run 2 overlap) to get a clean apples-to-apples measurement of the bugfix + backfill impact.
+
+### Run 3 methodology (corrected from Run 2)
+
+Run 2 had been contaminated: re-seeding the same 10 leads from Run 1 caused the bot to retrieve learnings that included prior turns of those exact conversations, producing "your message came through twice" hallucinations on tests 1 and 2.
+
+Run 3 fixed this by selecting 10 reviews from 2026-05-12 through 2026-05-14 (pre-embedding-cutover, never touched as testers in this session). 9 unique usernames, no overlap with Run 1's bradentuckian / jdusich / dannydigog / jadiews / reezy6 / iamacockeral / noname pool.
+
+### Run 3 results (clean baseline)
+
+10 tests, all succeeded, no hallucinations:
+- Exact or near-verbatim match to Nella's edit: 4/10 (tests 2, 4, 9, 10)
+- Strong improvement / matches Nella's pattern: 2/10 (tests 5, 7)
+- Different but valid approach: 3/10 (tests 3, 6, 8)
+- Regression: 1/10 (test 1, opt-out handling)
+
+Token usage: 6,803-7,652 input tokens, avg 7,261. 24% reduction vs pre-Phase-F baseline of 9,548.
+
+### New regression discovered: opt-out handling
+
+Test 1 (lattrellwalt, GOAL stage): lead said "Sorry, Shaun, I do not want to continue this thread. Thank you for your consideration!"
+
+Pre-Phase F bot reply: "No worries hope your recovery goes well." (graceful exit)
+Nella's edit: "No worries if you need anything just reach out, cheers mate" (graceful exit)
+Post-Phase F bot reply: pushed back with sales pitch including "I share a lot of free content that might help when you're ready to dive deeper. What's the #1 thing you'd most want to see improve..."
+
+The bot ignored an explicit opt-out signal and asked a GOAL-stage qualifying question instead. This is a behavior regression introduced by Phase F (the pre-Phase-F bot handled this correctly).
+
+This is NOT a learning gap. It's a prompt instruction priority issue: the nurture script outranks the "respect explicit disengagement" signal. Fix needs to go in the GUARDRAILS or VOICE section of the system prompt, not in the learnings pipeline.
+
+### Cost reduction analysis (honest, real-measured)
+
+Per-call input cost progression (production, measured from [cache] log lines):
+
+| Phase | Avg tokens | $/call | vs baseline |
+|-------|-----------|--------|-------------|
+| Pre-Phase D (caching @ 27.6% hit rate) | ~10,500 | $0.02938 | baseline |
+| Post-Phase D (semantic retrieval + caching) | 7,399 prefix | $0.02070 | -30% |
+| Post-Phase G1 (caching removed) | 9,548 | $0.02864 | -2.5% |
+| Post-Phase F (lazy loading, no cache) | 7,261 | $0.02178 | -26% |
+
+Phase G1 was a strategy change, not an additive savings: caching had become wrong for the traffic pattern (low hit rate, expired TTLs, cache_create surcharge). Removing it eliminated operational risk (cost spikes from cache_create misses) but increased per-call billed tokens. The real measurable savings live in Phase D's prefix reduction and Phase F's lazy loading.
+
+Honest input cost reduction: ~26% from pre-Phase-D baseline. Annual savings at Coach Shaun's traffic volume (~3,000 calls/month): roughly $279/year. Below the original "ambitious 50%+" target but in the right direction.
+
+Hitting 50%+ would require either Phase E (model routing - Haiku for simple turns) or further system prompt trimming. Both deferred pending sufficient real-traffic data to make decisions safely.
+
+Non-cost-savings wins from this stack:
+- Predictable billing (no cache_create spike risk)
+- Setter correction loop actually works (was silently broken for 7 days)
+- Faster bot replies (smaller prompts mean faster Claude responses)
+- White-label ready (Phase F section markers are the foundation for per-tenant prompt customization)
+
+### The learnings flywheel vs prompt rules distinction
+
+A question came up during analysis: will Nella's continued corrections gradually fix all bot quality issues over time?
+
+Honest answer: yes for SOME issues, no for others. The system has two distinct mechanisms with different scope:
+
+**Learnings (semantic retrieval)** are pattern-matching. Each correction nudges cosine similarity in the right direction. As Nella corrects more replies:
+- Voice and phrasing refine
+- Stage-specific habits emerge
+- Edge cases get covered
+- Late-stage performance improves (currently learnings cluster in HOOK / ENTRY and DIAGNOSTIC)
+
+This is the flywheel. The more corrections, the better the bot at scenarios similar to those corrections.
+
+**Prompt rules (GUARDRAILS, VOICE, PERSONA sections)** are hard rules. They override pattern-matching. Things that need to be prompt rules, not learnings:
+
+- Opt-out detection (Test 1 of Run 3)
+- "Read what the lead just said first" enforcement
+- Structural length matching (when no similar learning exists)
+- One-question-at-a-time enforcement
+
+No amount of learning corrections will fix these structural behaviors because they require the bot to do something other than pattern-match. They need explicit instruction priority in the prompt.
+
+Implication for future work: two parallel workstreams.
+
+**Workstream 1 (Nella's day-to-day):** Continue inbox corrections. The flywheel is now turning since tonight's bugfix. Every correction improves the bot incrementally for similar future scenarios.
+
+**Workstream 2 (Phase F+1 prompt iteration):** Add structural rules to the system prompt that no learning can teach. Targets:
+- Opt-out detection rule (highest priority - Test 1 regression)
+- Acknowledge-before-pivot enforcement
+- Length-matching as a structural voice rule
+- One-question-at-a-time enforcement
+
+Phase F+1 is a separate session, planned after 7 days of real production data showing which prompt rules need updating.
+
+### Open follow-ups added this session
+
+- **Opt-out detection rule in prompt.** Test 1 of Run 3 showed the bot ignores explicit disengagement signals. Needs GUARDRAILS-level rule in next prompt iteration.
+- **The learnings vs prompt-rules distinction** documented above. Helps future sessions plan correctly.
+
+### Run 3 test data cleanup
+
+10 tester_run3_* conversations and any associated reviews deleted from production. Verified 0 remaining.
+
