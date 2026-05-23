@@ -1888,15 +1888,37 @@ var index_default = {
 
         await sendFeedbackToSlack(env, feedbackData);
 
-        ctx.waitUntil(supabaseInsert(env, "learnings", {
-          bot_id: BOT_ID, customer_id: String(customer_id), review_id,
-          conversation_stage: conversation_stage || "UNKNOWN",
-          situation_context: situation_context || "",
-          original_reply: original_reply || "",
-          corrected_reply: edited_reply, reason,
-          tags: tags || [], source: "inbox",
-          created_at: new Date().toISOString()
-        }));
+        // Phase F-bugfix (2026-05-22): generate embedding for the learning row
+        // so semantic retrieval can find it later. Pre-this-fix learnings had
+        // embedding=NULL and were invisible to match_learnings RPC.
+        // Embed text strategy: combine original_reply + corrected_reply + reason
+        // so the embedding captures the FULL correction pattern (what was wrong,
+        // what was right, why) rather than just one field in isolation.
+        // The whole embed+insert sequence runs inside ctx.waitUntil so the
+        // /feedback response returns quickly to the dashboard.
+        ctx.waitUntil((async () => {
+          const learningEmbedText = [
+            (original_reply || "").trim(),
+            (edited_reply || "").trim() ? "Corrected to: " + (edited_reply || "").trim() : "",
+            (reason || "").trim() ? "Reason: " + (reason || "").trim() : ""
+          ].filter(s => s.length > 0).join("\n\n");
+          const learningEmbedding = await embedQueryText(env, learningEmbedText);
+          if (!learningEmbedding) {
+            console.warn(`[feedback] embedding generation failed for review_id=${review_id}, learning will be stored without embedding and won't be semantically retrievable`);
+          } else {
+            console.log(`[feedback] embedding generated for review_id=${review_id}, dim=${learningEmbedding.length}`);
+          }
+          await supabaseInsert(env, "learnings", {
+            bot_id: BOT_ID, customer_id: String(customer_id), review_id,
+            conversation_stage: conversation_stage || "UNKNOWN",
+            situation_context: situation_context || "",
+            original_reply: original_reply || "",
+            corrected_reply: edited_reply, reason,
+            tags: tags || [], source: "inbox",
+            embedding: learningEmbedding,
+            created_at: new Date().toISOString()
+          });
+        })());
 
         ctx.waitUntil(fetch(`${getSupabaseUrl(env)}/rest/v1/reviews?id=eq.${review_id}`, {
           method: "PATCH",
