@@ -905,3 +905,125 @@ Phase F+1 is a separate session, planned after 7 days of real production data sh
 
 10 tester_run3_* conversations and any associated reviews deleted from production. Verified 0 remaining.
 
+
+## 2026-05-25 - Bugfix-2 shipped + cron verification + backlog discovery
+
+Sunday session triggered by Nella's complaint "the bot didn't learn anything I input from last week." Investigation revealed a second instance of the /feedback embedding bug, this one on the Dashboard side. Same root cause area as Phase F bugfix-1 (commit 63c12bc on May 22) but a separate code path that the original fix didn't cover.
+
+### What was discovered
+
+Bugfix-1 from May 22 added embedding generation to the Worker's POST /feedback endpoint. Synthetic curl POSTs to that endpoint correctly emit [feedback] embedding generated, dim=1024 log lines. Looked verified at the time.
+
+Today, while preparing for a customer call, ran a SQL check on production learnings created today:
+
+- 9 (then 11) rows from today's date all had embedding IS NULL
+- None of them were synthetic test data
+- They were real Nella corrections from this morning AND our own test edit
+
+The /feedback fix was working for synthetic tests but bypassed by the live Dashboard Save flow.
+
+### Root cause
+
+dashboard/src/pages/Inbox.jsx saveTraining() handler (lines 467-534) writes directly to Supabase via supabase.from('learnings').insert(...) at line 476. Never calls the Worker. The Voyage API key lives in Worker secrets, so embedding can only be generated server-side. Every Save-with-edit was producing an orphan.
+
+The previous synthetic verification was therefore inadequate. Voyage embedding worked when called from a curl POST that hit /feedback, but the real production path never went through /feedback at all.
+
+### Fix shipped (Option B)
+
+Two options were considered (analysis by Claude Code):
+
+Option A: Point Dashboard at existing /feedback endpoint. Smaller diff, ~10 lines on Dashboard side only. Caveat: /feedback hardcodes bot_id: BOT_ID = Coach Shaun. Multi-tenant landmine for white-label handover.
+
+Option B (chosen): New POST /learnings Worker endpoint accepts bot_id from request body. Multi-tenant safe. Preserves /feedback byte-identical as canonical path.
+
+Implementation:
+
+- sales-bot/src/index.js: +70/-0 (new POST /learnings endpoint, inserted before existing GET /learnings handler, distinguished by request.method)
+- dashboard/src/pages/Inbox.jsx: +40/-6 (saveTraining redirected to Worker, env-aware WORKER_URL constant)
+
+Production Worker version after fix: 70e69912-ad59-4e03-9265-b2acf63f3b2d
+Production Dashboard deploy: 0e7be4d3 (aliased to botos-platform-3ar.pages.dev)
+
+### Verification methodology (corrected from May 22)
+
+Last weekend's verification only used synthetic curl POSTs. This time three layers:
+
+1. Worker smoke test (synthetic curl POST to /learnings): status 200, tail showed [learnings] embedding generated dim=1024.
+2. Preview Dashboard test (real Save click on Cloudflare Pages preview URL hitting production Worker + Supabase): real review_id created, tail showed dim=1024, Supabase row confirmed has_embedding=true.
+3. Production Dashboard test (real Save click on botos-platform-3ar.pages.dev): real review_id, dim=1024, Supabase row confirmed.
+
+All three layers passed cleanly. The bug pattern from earlier today (orphan rows from real Saves) no longer reproduces.
+
+### Backfill
+
+11 orphan rows from earlier today (12:40 to 13:35 UTC, all before production fix deployed at 14:25 UTC) were backfilled with embeddings. Same backfill_inline.ps1 script as the 26-row backfill from May 22. All 11 succeeded on first run, no smart-quote issues this time. Final state: 0 orphans remaining, 335 total learnings on Coach Shaun's bot (322 from Saturday + 11 backfilled + 2 verification test rows that we did NOT delete since they're real test edits from your IG account).
+
+### Cron verification (parked, mostly OK)
+
+Tried to confirm the May 18 follow-up cron fix is working end-to-end. Findings:
+
+- Supabase shows 4 rows with last_followup_source='auto' since May 18 (brandongmcs May 20, iamacockeral May 22, beastr1959 May 23, zellie_short May 23). Cron IS firing at the Worker level.
+- All 4 show followed_up=false because append_conversation_turn RPC resets it when the lead replies. This is expected behavior and indicates successful end-to-end cycles (cron flagged, follow-up presumably sent, lead replied).
+- Make Scenario 2 execution history was hard to navigate. Anthony couldn't easily distinguish cron-originated runs from normal webhook runs.
+- Decision: park the Make-side verification for now. The Worker side is provably working. Direct ground-truth check via Coach Shaun's Instagram inbox (asking Nella to verify the 4 follow-up DMs arrived) is the cleanest verification path but requires Nella's involvement.
+
+Status: cron fix is shipped and firing correctly at the Worker level. End-to-end Make delivery confirmation still pending but no evidence of failure.
+
+### Backlog finding (the bigger issue)
+
+While investigating cron, surfaced the actual operational problem: production has 60 pending reviews that Nella hasn't touched since approximately Friday May 22 morning Cayman time. 69 hours of inbox backlog as of investigation. The "bot isn't learning" complaint is partially the embedding bug we just fixed, partially the fact that there hasn't been much volume of corrections to learn from in the past few days.
+
+Implication: auto-send is not just a nice-to-have, it's a real operational need. Nella's bandwidth is the bottleneck. The per-stage approval tracker work (her stated criterion: 30 approvals at a pattern triggers auto-send for that pattern) is the highest-leverage thing to scope and build next.
+
+### Known fast-follow
+
+dashboard/src/pages/Tester.jsx has the same direct-insert orphan-creating bug at lines 234 and 467 (identified by Claude Code during this fix). Lower volume than Inbox saves (testers use this page much less frequently). Deferred to next session.
+
+### Files added/modified this session
+
+Modified:
+- sales-bot/src/index.js
+- dashboard/src/pages/Inbox.jsx
+
+Used (not modified):
+- backfill_inline.ps1 (existing from May 22, ran for the 11-row backfill)
+- BUGFIX-2-CLAUDE-CODE-BRIEFING.md, BUGFIX-2-GO-AHEAD-CLAUDE-CODE-BRIEFING.md (chat artifacts, not committed)
+
+### Worker version IDs
+
+Before today: ec34452c-e711-4ace-a35a-5e90b180182b (Phase F + bugfix-1)
+After today: 70e69912-ad59-4e03-9265-b2acf63f3b2d (added POST /learnings endpoint)
+
+Rollback target if needed: ec34452c
+
+### Security action
+
+Voyage API key (pa-6WTAj0u74K-...) was inadvertently pasted in chat during the Saturday session. Treated as compromised. Today: generated new key, updated Worker secret on production and staging, revoked old key at Voyage. New key working confirmed via post-rotation smoke test. Local env vars wiped.
+
+### Open follow-ups (carried forward + new)
+
+Carried from earlier:
+- Phase F+1 prompt iteration (opt-out detection rule, acknowledge-before-pivot, length-matching, one-question-at-a-time enforcement)
+- Inbound visibility Phase 1 (gated on Nella replying to 3 Meta API prerequisite questions)
+- Lead-source-event re-fire bug (2-3h Worker work)
+- 73 legacy tester_ rows in production conversations from prior sessions
+- sales-bot/node_modules/.cache/wrangler/wrangler-account.json still tracked in git
+
+New from today:
+- Tester.jsx fast-follow (same orphan-minting bug at lines 234 and 467)
+- Auto-send approval tracker (build per-stage/per-pattern approval counter in Dashboard). Nella's criterion: 30 approvals at a pattern triggers auto-send for that pattern. Feature does NOT currently exist. Needs scoping with Nella first (what counts as "same pattern", safety net design, kickoff cadence). 2-3 weeks of build work after scoping. Highest business value remaining item.
+- Cron message to JSONB (currently the cron does not append the follow-up to conversations.messages by design). Worth scoping a fix so the inbox thread is the single source of truth.
+- Customer call with Nella did not happen today. Setup-balance + retainer conversation still pending.
+
+### Lessons this session
+
+- Synthetic verification is not enough for fixes that touch the Dashboard. Must test the LIVE path (real Save click in real Dashboard against real Worker) before declaring a fix verified. Last weekend's miss was testing /feedback directly with curl, never actually clicking Save in the production Dashboard. Today's miss was deploying the Dashboard but to a preview URL (Cloudflare auto-deploys feature branches to preview URLs, NOT to the main production URL) and not catching it before announcing the fix.
+- Cloudflare Pages deploys from a non-main branch go to a preview URL by default. Use --branch=main to force production deployment.
+- Claude Code's investigation pass (analyze and report before changing anything) was useful for catching the multi-tenant landmine in Option A. Worth using this two-pass flow for any bug where the obvious fix might have hidden side effects.
+- The backlog (60 pending reviews) explains why the embedding bug felt urgent: Nella has been queuing up corrections she expects to apply, but the bot couldn't actually use them. Now that the bug is fixed, the next bottleneck is review volume (her time), which auto-send addresses.
+- "Verified" should mean verified on the real production path, not the test path. Project rule going forward: any fix that touches Dashboard or user-facing endpoints requires a real click-through test before declaring done.
+
+### Standing rules reaffirmed (no changes)
+
+No em dashes anywhere. ctx.waitUntil for Supabase writes. Feature branches only, never push directly to main. PROGRESS.md updated at session end. Long commit messages via temp file plus git commit --file=. PowerShell multi-step commands as single blocks. Use absolute paths in [System.IO.File] .NET calls. Schema-first verification before any SQL. Verify against deployed code, not stale index. Never paste secrets in chat.
+
