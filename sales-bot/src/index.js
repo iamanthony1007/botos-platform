@@ -2124,6 +2124,76 @@ var index_default = {
       }
     }
 
+    // /learnings (POST)
+    // Phase F-bugfix-2 (2026-05-25): lean endpoint for the Dashboard setter
+    // inbox to record a learning WITH a server-generated Voyage embedding.
+    // The Dashboard used to insert into learnings directly via supabase-js,
+    // which left embedding=NULL so match_learnings could never retrieve the
+    // row. The Voyage key lives only in the Worker, so the embedding must be
+    // generated here.
+    //
+    // Unlike /feedback this endpoint is multi-tenant safe: bot_id comes from
+    // the request body, not the hardcoded BOT_ID constant. It deliberately
+    // does NOT fire the Slack notification, KV writes, or reviews PATCH that
+    // /feedback does. Those belong to a different lifecycle. This is purely:
+    // validate, embed, insert.
+    if (url.pathname === "/learnings" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        const {
+          bot_id, customer_id, review_id, conversation_stage,
+          situation_context, original_reply, corrected_reply,
+          corrected_messages, reason, tags, source
+        } = body;
+
+        if (!bot_id || !customer_id || !corrected_reply || !reason) {
+          return new Response(JSON.stringify({ error: "Missing required fields: bot_id, customer_id, corrected_reply, reason" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
+          });
+        }
+
+        // Embed text strategy mirrors /feedback: combine original_reply,
+        // corrected_reply, and reason so the vector captures the full
+        // correction pattern (what was wrong, what was right, why).
+        // The whole embed+insert sequence runs inside ctx.waitUntil so the
+        // response returns to the dashboard immediately.
+        ctx.waitUntil((async () => {
+          const learningEmbedText = [
+            (original_reply || "").trim(),
+            (corrected_reply || "").trim() ? "Corrected to: " + (corrected_reply || "").trim() : "",
+            (reason || "").trim() ? "Reason: " + (reason || "").trim() : ""
+          ].filter(s => s.length > 0).join("\n\n");
+          const learningEmbedding = await embedQueryText(env, learningEmbedText);
+          if (!learningEmbedding) {
+            console.warn(`[learnings] embedding generation failed for review_id=${review_id || "null"}, learning will be stored without embedding and won't be semantically retrievable`);
+          } else {
+            console.log(`[learnings] embedding generated for review_id=${review_id || "null"}, dim=${learningEmbedding.length}`);
+          }
+          await supabaseInsert(env, "learnings", {
+            bot_id, customer_id: String(customer_id), review_id: review_id || null,
+            conversation_stage: conversation_stage || "UNKNOWN",
+            situation_context: situation_context || "",
+            original_reply: original_reply || "",
+            corrected_reply,
+            corrected_messages: corrected_messages || [],
+            reason, tags: tags || [], source: source || "inbox",
+            embedding: learningEmbedding,
+            created_at: new Date().toISOString()
+          });
+        })());
+
+        return new Response(JSON.stringify({ success: true, learning_id: review_id || null }), {
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+
+      } catch (error) {
+        console.error("Learnings POST error:", error);
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+      }
+    }
+
     // /learnings
     if (url.pathname === "/learnings" && request.method === "GET") {
       try {
