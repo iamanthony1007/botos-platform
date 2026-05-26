@@ -5,6 +5,18 @@ import { getAssignedBot } from '../lib/botHelper'
 import { useAuth } from '../lib/AuthContext'
 import { useDataCache } from '../lib/DataCache'
 
+// Phase F-bugfix-2 (2026-05-25): the setter "Save" flow (saveTraining) used to
+// write learnings directly via supabase-js, which skipped server-side embedding
+// generation and left every row with embedding=NULL, invisible to the
+// match_learnings semantic retrieval. We now POST to the Worker's /learnings
+// endpoint, which generates the Voyage embedding before inserting. The Voyage
+// key lives only in the Worker, so this cannot happen client-side.
+// Environment-aware: staging dashboard hosts hit the staging Worker, everything
+// else (production pages.dev, custom domains, local dev) hits production.
+const WORKER_URL = (typeof window !== 'undefined' && window.location.hostname.includes('staging'))
+  ? 'https://sales-bot-staging.nellakuate.workers.dev'
+  : 'https://sales-bot.nellakuate.workers.dev'
+
 const FILTERS = ['All', 'Pending', 'Needs Response', 'Follow Ups', 'Escalated', 'For Coach', 'Resolved', 'Test']
 const FOLLOW_UP_HOURS = 21
 // Step 8 (2026-05-03): IG window threshold lowered from 24h to 23h to give
@@ -473,12 +485,34 @@ export default function Inbox() {
     await supabase.from('reviews').update({
       status: 'edited', final_reply: joinedReply, final_messages: validMessages, resolved_at: new Date().toISOString()
     }).eq('id', activeReview.id)
-    await supabase.from('learnings').insert({
-      bot_id: botId, customer_id: activeReview.customer_id, review_id: activeReview.id,
-      conversation_stage: correctedStage || activeReview.conversation_stage,
-      original_reply: originalJoined, corrected_reply: joinedReply, corrected_messages: validMessages,
-      reason: trainReason, source: 'inbox'
-    })
+    // Phase F-bugfix-2 (2026-05-25): route the learning insert through the
+    // Worker's /learnings endpoint so a Voyage embedding is generated before
+    // the row is written. A direct supabase-js insert here produced
+    // embedding=NULL orphans that match_learnings could never retrieve.
+    // The Worker returns immediately; the embed + insert run in its
+    // ctx.waitUntil, so this does not block the reply going out to the lead.
+    // Wrapped in try/catch: a Worker hiccup must not stop the rest of
+    // saveTraining (reviews update, message sync, send-to-Make).
+    try {
+      const learnRes = await fetch(WORKER_URL + '/learnings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bot_id: botId,
+          customer_id: activeReview.customer_id,
+          review_id: activeReview.id,
+          conversation_stage: correctedStage || activeReview.conversation_stage,
+          original_reply: originalJoined,
+          corrected_reply: joinedReply,
+          corrected_messages: validMessages,
+          reason: trainReason,
+          source: 'inbox'
+        })
+      })
+      if (!learnRes.ok) console.error('[saveTraining] /learnings returned', learnRes.status)
+    } catch (err) {
+      console.error('[saveTraining] failed to reach Worker /learnings:', err)
+    }
 
     // Update the matching message in conversations so the thread shows
     // the final edited text instead of the original draft
