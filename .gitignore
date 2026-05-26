@@ -43,3 +43,6 @@ phase-*-diff.txt
 phase-*-bugfix-diff.txt
 # Long commit message temp files (we use [System.IO.File]::WriteAllText for these)
 COMMIT_MSG_*.txt
+# Regression test artifacts (session-specific, regenerated per run)
+phase_f_*.json
+run_phase_f_regression_v*.ps1
