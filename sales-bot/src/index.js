@@ -1796,8 +1796,10 @@ var index_default = {
             const BOT_ID = "00000000-0000-0000-0000-000000000002";
             if (customerId) {
               ctx.waitUntil(supabaseInsert(env, "reviews", {
+                id: `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 bot_id: BOT_ID,
                 customer_id: customerId,
+                action_type: "SEND_TO_INBOX_REVIEW",
                 username: username || null,
                 profile_name: profileName || null,
                 status: "pending",
@@ -1851,6 +1853,102 @@ var index_default = {
             }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
           } catch (fallbackErr) {
             console.error("Overload fallback itself failed:", fallbackErr);
+            // fall through to the generic 500
+          }
+        }
+
+        // Parse-failure safety net (mirrors the overload path above). When
+        // Claude returns text that is not valid JSON (most often a truncated
+        // response when output hits max_tokens), do not 500 and drop the lead.
+        // Create a placeholder review so the lead surfaces in the inbox and
+        // return 200 so Make does not retry and fire a duplicate.
+        if (error?.isParseFailure) {
+          try {
+            let customerId = null, username = null, profileName = null, leadMsg = null;
+            try {
+              const clone = await request.clone().json();
+              customerId = String(clone.customer_id || clone.user_id || "");
+              const rawUsername = clone.ig_username || clone.username || null;
+              const rawProfile = clone.profile_name || clone.name || null;
+              const cleanFallback = (v) => {
+                if (v === null || v === undefined) return null;
+                const s = String(v).trim();
+                if (!s) return null;
+                if (/^{{[^}]+}}$/.test(s)) return null;
+                if (/^(null|undefined|false|none|n\/a)$/i.test(s)) return null;
+                return s;
+              };
+              username = cleanFallback(rawUsername);
+              profileName = cleanFallback(rawProfile);
+              leadMsg = clone.last_input_text || clone.message || clone.text || null;
+            } catch (_) { /* request already consumed, best-effort */ }
+
+            const BOT_ID = "00000000-0000-0000-0000-000000000002";
+            if (customerId) {
+              ctx.waitUntil(supabaseInsert(env, "reviews", {
+                id: `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                bot_id: BOT_ID,
+                customer_id: customerId,
+                action_type: "SEND_TO_INBOX_REVIEW",
+                username: username || null,
+                profile_name: profileName || null,
+                status: "pending",
+                original_reply: "",
+                bot_messages: [],
+                typing_delays: [],
+                conversation_stage: "UNKNOWN",
+                confidence: 0,
+                lead_intent: "UNKNOWN",
+                internal_notes: `[System: Claude response failed to parse as JSON (stop_reason=${error.stopReason || "null"}, output_tokens=${error.outputTokens || 0}), likely truncation. Lead message: "${(leadMsg || "(unknown)").slice(0, 300)}". Please reply manually. Raw (truncated): ${String(error.rawContent || "").slice(0, 500)}]`,
+                created_at: new Date().toISOString()
+              }));
+
+              // Also bump conversations.updated_at so the lead surfaces in the inbox
+              ctx.waitUntil(supabaseUpsert(env, "conversations", {
+                bot_id: BOT_ID,
+                customer_id: customerId,
+                username: username || null,
+                profile_name: profileName || null,
+                followed_up: false,
+                followup_count: 0,
+                updated_at: new Date().toISOString()
+              }, "bot_id,customer_id"));
+            }
+
+            // Fire-and-forget Slack alert
+            if (env.SLACK_WEBHOOK_URL) {
+              ctx.waitUntil(fetch(env.SLACK_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  text: "[WARNING] Claude response failed to parse - lead routed to inbox for manual reply",
+                  blocks: [
+                    { type: "header", text: { type: "plain_text", text: "[WARNING] Claude Parse Failure" } },
+                    { type: "section", fields: [
+                      { type: "mrkdwn", text: `*Customer:*\n${customerId || "unknown"}` },
+                      { type: "mrkdwn", text: `*Username:*\n${username || "unknown"}` }
+                    ]},
+                    { type: "section", fields: [
+                      { type: "mrkdwn", text: `*stop_reason:*\n${error.stopReason || "null"}` },
+                      { type: "mrkdwn", text: `*output_tokens:*\n${error.outputTokens || 0}` }
+                    ]},
+                    { type: "section", text: { type: "mrkdwn", text: `*Lead message:*\n${(leadMsg || "(unknown)").slice(0, 400)}` } },
+                    { type: "section", text: { type: "mrkdwn", text: `*What happened:*\nClaude returned text that was not valid JSON (likely truncated at max_tokens). A placeholder review has been created in the inbox. Please reply to this lead manually.` } }
+                  ]
+                })
+              }).catch(() => {}));
+            }
+
+            // Tell Make the request succeeded with an empty reply so the
+            // downstream Send DM module skips, and Make does not retry.
+            return new Response(JSON.stringify({
+              bot_reply: "",
+              next_action: "SEND_TO_INBOX_REVIEW",
+              status: "parse_failure_fallback",
+              message: "Claude response could not be parsed. Lead saved to inbox for manual reply."
+            }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          } catch (fallbackErr) {
+            console.error("Parse-failure fallback itself failed:", fallbackErr);
             // fall through to the generic 500
           }
         }
@@ -2594,7 +2692,7 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     },
     body: JSON.stringify({
       model: model,
-      max_tokens: 768,
+      max_tokens: 2048,
       system: systemBlocks,
       messages: [
         { role: "user", content: buildDeveloperPrompt(memory, lastMessages) }
@@ -2608,6 +2706,13 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     throw new Error(`Claude API error: ${error}`);
   }
   const data = await response.json();
+
+  // Anthropic telemetry: log stop_reason and output_tokens on every call,
+  // before the parse, so a truncation (stop_reason="max_tokens") is visible
+  // in Cloudflare tail even when JSON.parse later fails.
+  try {
+    console.log(`[anthropic] model=${model} stop_reason=${data.stop_reason || "null"} output_tokens=${(data.usage && data.usage.output_tokens) || 0}`);
+  } catch (_) { /* non-fatal */ }
 
   // Prompt caching observability: log the usage block so we can verify cache
   // hits in Cloudflare Worker logs. On a fresh cache: cache_creation_input_tokens > 0
@@ -2623,7 +2728,14 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
   const cleanContent = rawContent.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
   let parsed;
   try { parsed = JSON.parse(cleanContent); }
-  catch (e) { throw new Error(`Failed to parse Claude response as JSON: ${rawContent}`); }
+  catch (e) {
+    const parseErr = new Error(`Failed to parse Claude response as JSON: ${rawContent}`);
+    parseErr.isParseFailure = true;
+    parseErr.rawContent = rawContent;
+    parseErr.stopReason = data.stop_reason || null;
+    parseErr.outputTokens = (data.usage && data.usage.output_tokens) || null;
+    throw parseErr;
+  }
 
   // Support both old (reply only) and new (messages array) response formats
   if (!parsed.messages && !parsed.reply) {
