@@ -1,3 +1,68 @@
+## 2026-05-26 — Phase F+1 opt-out rule + Worker parse-failure fix (both shipped to production)
+
+Two production shipments this session. Staging-first workflow used for both.
+
+### Shipment 1: Phase F+1 opt-out rule
+
+**Problem:** lattrellwalt regression. Lead said "Sorry, Shaun, I do not want to continue this thread. Thank you for your consideration!" Bot replied with a sales pivot ("What's the #1 thing you'd most want to see improve?"). Pre-Phase-F bot handled this correctly (graceful exit). Post-Phase-F bot lost the behavior because nurture-exit language only loads at FOLLOW-UP stage, not at HOOK/GOAL/PRIORITY where most opt-outs actually happen.
+
+**Originally scoped:** 4 structural rules (opt-out, acknowledge-before-pivot, length matching, one-question-per-reply). Scoped down to 1 (opt-out only) after reviewing the actual current prompt — items 2-4 already exist in the prompt and the bot is ignoring them, which is a different problem than "missing rule." Items 2-4 deferred for separate investigation.
+
+**Solution:** new "Opt-out handling" block added to `## GUARDRAILS` section (always-on, loads every turn). Defines STRONG opt-out signals (explicit refusal language) vs soft hesitation (timing, "not now"). On STRONG: short polite acknowledgement only, no question, no nurture, no pivot. On soft hesitation: continue normally. Defers to setter corrections via the existing ABSOLUTE PRIORITY RULE.
+
+**Staging verification:** 6/6 PASS on regression suite (HOOK BOMBER, GOAL, PRIORITY x opt-out, soft-hesitation). Wrangler tail confirmed GUARDRAILS in `sectionsInjected` on every call.
+
+**Production deploy:** Dashboard PromptEditor at ~22:16 UTC. Production prompt now at MD5 `d83e41bf8bf26032b4fce82d04b2b069` (matches staging exactly). Backup row preserved at `prompt_versions` version 23, label "Pre-Phase-F1 opt-out rule (production)", id `d98ffc85-a90e-42df-9e31-8069b3db51ad`.
+
+**PR:** `feat/phase-f1-opt-out-rule` (commit `680d08c`, scripts only — prompt edit applied via Dashboard).
+
+### Shipment 2: Worker parse-failure fix (incident response)
+
+**Problem:** discovered mid-session via Make execution history. Some `/webhook` calls failing with HTTP 500, error `Failed to parse Claude response as JSON: { ...truncated JSON... }`. Earlier-this-week-onset, getting more common. Real failing case captured: customer `894431997` (Kaiser/sciatica conversation, 15 messages of history, rich profile_facts).
+
+**Root cause:** `max_tokens: 768` in `callClaude` was too small for the structured JSON output (15+ fields including freeform `internal_notes` and a growing `running_summary`). On rich conversations Anthropic API truncated mid-JSON, `JSON.parse()` threw, Worker returned 500, Make logged HandledError, lead silently dropped.
+
+**Latent secondary bug found:** existing overload-error safety net was inserting placeholder review rows missing `id` and `action_type` (both NOT NULL per schema). The inserts ran under `ctx.waitUntil` (fire-and-forget) so failures were never observable. Means the "overload safety net" hadn't actually been working — leads were silently dropped during Anthropic overloads too, undiagnosed until now.
+
+**Solution (3 changes in commit `cb9b482`):**
+1. `max_tokens: 768` → `2048` in `callClaude`. 985 tokens observed on the worst-case real production case → 48% utilization of new budget.
+2. Parse-failure safety net: when JSON parse fails, create inbox-review placeholder (with correct `id` and `action_type`), fire Slack alert, return 200 to Make with empty `bot_reply` so downstream Send DM skips. Lead surfaces in inbox for setter to handle manually.
+3. Patch the overload-error path's NOT NULL bug at the same time.
+4. Bonus telemetry: `[anthropic] model=... stop_reason=... output_tokens=...` logged on every API call for instant diagnosis.
+
+**Verification:**
+- 6/6 PASS on Phase F+1 regression suite (against the new Worker code) — opt-out rule unaffected.
+- Real-traffic reproducer: replayed exact production failure case (`894431997`) against staging via `phase_f1_replay_894431997.ps1`. HTTP 200, `output_tokens=985`, clean structured response. The case that was 100% failing in production now succeeds.
+- Production confirmation: same customer succeeded post-deploy with `output_tokens=920`.
+
+**Production deploy:** Worker version `6f311745-fec1-4eff-9ad3-098a128dd38c` at ~23:30 UTC. Prior version preserved for rollback via `wrangler rollback`.
+
+**PR:** `fix/parse-failure-and-max-tokens` (commit `cb9b482`).
+
+### Infrastructure side-effects (also shipped)
+
+- **Staging Dashboard access restored.** Anthony's auth user (`thony@gmail.com`) had no `profiles` row in staging, blocking Dashboard access. Inserted `superadmin` profile row with organization_id matching staging Coach Shaun bot's org. Full staging Dashboard now usable for prompt editing.
+- **Schema drift catalogued:** staging `profiles.permissions` is `text[]`, production is `jsonb`. Documented for follow-up reconciliation.
+- **Wrangler dual-account quirk documented:** Anthony's wrangler OAuth login has access to two Cloudflare accounts. `--namespace-id` flag defaults to wrong account; must use `--binding MEMORY_STORE --env staging` for KV operations. The Phase F+1 cleanup script prints stale `--namespace-id` invocations — flagged for follow-up patch.
+- **Reusable test scripts:** `phase_f1_cleanup.ps1`, `phase_f1_seed.ps1`, `phase_f1_runner.ps1`, `phase_f1_replay_894431997.ps1` all committed and reusable for future prompt or Worker changes.
+
+### Production state at session close
+
+- Worker: `6f311745-fec1-4eff-9ad3-098a128dd38c` (Phase F structural + Phase F+1 prompt + parse-failure fix)
+- Prompt: MD5 `d83e41bf8bf26032b4fce82d04b2b069`, 16,906 chars, 17 sections (Phase F+1 applied)
+- Dashboard production: `0e7be4d3` at `botos-platform-3ar.pages.dev` (no Dashboard changes today)
+- Two open PRs awaiting merge (Phase F+1, parse-failure fix)
+- main HEAD: `f1991fc` (unchanged from session start)
+
+### Key learnings captured this session
+
+- **Real-traffic reproducers beat synthetic.** The parse-failure fix verification used the EXACT production failing case (customer `894431997`). Synthetic regression suite passed before and after; the real reproducer was the convincing signal.
+- **Latent bugs surface when adjacent code is reviewed.** The overload-error NOT NULL bug had been silently failing for who-knows-how-long. We only found it because we were reviewing similar code for the parse-failure handler.
+- **Inline em-dash injection.** New pattern for handling non-ASCII test data: `$EM = [char]0x2014` and inject at runtime. Keeps `.ps1` files pure ASCII (no mojibake risk) while preserving real unicode in DB writes.
+- **KV cache precedence over Supabase rows.** Phase F+1 staging tests would have given false results without clearing KV memory before each run. The Worker reads `memory:<customer_id>` from KV first; only falls back to Supabase row if KV is empty. Future testers must clear KV.
+- **Wrangler `--namespace-id` is account-context-blind.** For dual-account logins, must use `--binding ... --env <name>` instead.
+
+
 # BotOS / Mu - Progress
 
 This is the single source of truth for what is done, what is in progress, and what is next on the BotOS / Mu platform. Read this at the start of every session. Update it at the end of every session.
