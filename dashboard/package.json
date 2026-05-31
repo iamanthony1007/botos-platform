@@ -5,8 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
     "build:staging": "vite build --mode staging",
+    "build:production": "vite build --mode production",
+    "prebuild:staging": "node scripts/verify-env.mjs staging",
+    "prebuild:production": "node scripts/verify-env.mjs production",
+    "predeploy:staging": "npm run build:staging",
+    "predeploy:production": "npm run build:production",
+    "deploy:staging": "wrangler pages deploy dist --project-name=botos-platform-staging --branch=main --commit-dirty=false",
+    "deploy:production": "wrangler pages deploy dist --project-name=botos-platform --branch=main --commit-dirty=false",
+    "postdeploy:staging": "node scripts/verify-deploy.mjs staging",
+    "postdeploy:production": "node scripts/verify-deploy.mjs production",
     "lint": "eslint .",
     "preview": "vite preview"
   },
