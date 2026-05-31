@@ -417,6 +417,29 @@ export default function Inbox() {
       ...(finalIntent ? { lead_intent: finalIntent } : {})
     }).eq('id', activeReview.id)
 
+    // Fix B (2026-05-27): clear sibling pending reviews on the same lead.
+    // Worker batch-window race during rapid lead-message bursts can spawn
+    // multiple pending reviews on one customer_id. approve() above only
+    // resolved activeReview.id, so siblings kept the lead in the Pending
+    // tab even after the setter answered. We mark every OTHER pending row
+    // on this customer as discarded with a traceable internal_notes tag.
+    // Scope is .neq('id', activeReview.id) so we never touch the row we
+    // just approved. Error is logged but not thrown: the reply has already
+    // gone out via sendToMake, and the lead must not see a failure path.
+    try {
+      await supabase.from('reviews').update({
+        status: 'discarded',
+        resolved_at: new Date().toISOString(),
+        internal_notes: '[System: Auto-discarded sibling of approved review ' + activeReview.id + ']'
+      })
+        .eq('bot_id', botId)
+        .eq('customer_id', activeReview.customer_id)
+        .eq('status', 'pending')
+        .neq('id', activeReview.id)
+    } catch (err) {
+      console.error('[approve] failed to clear sibling pending reviews:', err)
+    }
+
     // Update the matching message in conversations so the thread shows
     // the final sent text instead of the original draft
     if (conversation) {
@@ -485,6 +508,26 @@ export default function Inbox() {
     await supabase.from('reviews').update({
       status: 'edited', final_reply: joinedReply, final_messages: validMessages, resolved_at: new Date().toISOString()
     }).eq('id', activeReview.id)
+
+    // Fix B (2026-05-27): clear sibling pending reviews. Same reasoning as
+    // approve(). Train+Save also counts as "the setter answered this lead",
+    // so siblings on the same customer_id must be discarded too. Error is
+    // logged but not thrown: the reply has already been sent and the
+    // /learnings call must still run regardless.
+    try {
+      await supabase.from('reviews').update({
+        status: 'discarded',
+        resolved_at: new Date().toISOString(),
+        internal_notes: '[System: Auto-discarded sibling of edited review ' + activeReview.id + ']'
+      })
+        .eq('bot_id', botId)
+        .eq('customer_id', activeReview.customer_id)
+        .eq('status', 'pending')
+        .neq('id', activeReview.id)
+    } catch (err) {
+      console.error('[saveTraining] failed to clear sibling pending reviews:', err)
+    }
+
     // Phase F-bugfix-2 (2026-05-25): route the learning insert through the
     // Worker's /learnings endpoint so a Voyage embedding is generated before
     // the row is written. A direct supabase-js insert here produced
