@@ -71,6 +71,17 @@ export default function Settings() {
   const [aiBehavior, setAiBehavior] = useState(cached?.data?.aiBehavior || DEFAULT_AI_BEHAVIOR)
   const [stageReadiness, setStageReadiness] = useState(cached?.data?.stageReadiness || null)
   const [readinessError, setReadinessError] = useState(null)
+  // Raw bots.stage_automation map (the persisted unlock decisions). Kept
+  // separate from stageReadiness so toggleStageEnabled can write the new
+  // shape to Supabase and then re-derive readiness without refetching.
+  const [stageAutomation, setStageAutomation] = useState(cached?.data?.stageAutomation || {})
+  // Cached reviews payload from the last load(). We re-derive readiness
+  // from this on every toggle so we do not need a round-trip after enable
+  // or disable.
+  const [reviewsData, setReviewsData] = useState(cached?.data?.reviewsData || null)
+  // Per-stage toggle in-flight flag. Disables the button while the write
+  // is outstanding so the operator cannot double-click.
+  const [togglingStage, setTogglingStage] = useState(null)
 
   useEffect(() => { load() }, [profile])
 
@@ -99,12 +110,15 @@ export default function Settings() {
           .order('created_at', { ascending: false })
           .limit(READINESS_FETCH_LIMIT)
         if (revErr) throw revErr
-        // Absence of the stage_automation column (pre-migration-007) means an
-        // empty unlock map. No stage can be RUNNING until step 3 ships.
-        const stageAutomation = (data.stage_automation && typeof data.stage_automation === 'object')
+        // Absence of the stage_automation column (pre-migration-007) means
+        // an empty unlock map. No stage can be RUNNING until the column
+        // exists AND a human has flipped a stage on.
+        const loadedAutomation = (data.stage_automation && typeof data.stage_automation === 'object')
           ? data.stage_automation
           : {}
-        const readiness = computeStageReadiness(reviews || [], { stageAutomation })
+        setStageAutomation(loadedAutomation)
+        setReviewsData(reviews || [])
+        const readiness = computeStageReadiness(reviews || [], { stageAutomation: loadedAutomation })
         setStageReadiness(readiness)
         setReadinessError(null)
       } catch (e) {
@@ -118,8 +132,63 @@ export default function Settings() {
       targetAvatar: data?.target_avatar || '',
       aiBehavior: data?.ai_behavior_settings || DEFAULT_AI_BEHAVIOR,
       stageReadiness,
+      stageAutomation,
+      reviewsData,
     })
     setLoading(false)
+  }
+
+  // Toggle a single stage's enabled flag in bots.stage_automation.
+  //
+  // Enabling writes { enabled: true, enabled_at: <ISO>, enabled_by: <id> }
+  // into the map under the stage key. Disabling deletes the key entirely
+  // so absence-means-TRAINING stays the canonical convention; this avoids
+  // storing { enabled: false, ... } stubs that mean the same thing.
+  //
+  // Reads, mutates, and writes the WHOLE jsonb (not a path operation)
+  // because PostgREST does not expose a path-level patch through the
+  // anon-key supabase-js client we use here. The map is small (10 keys
+  // maximum), so this is cheap.
+  //
+  // On success: optimistically update local stageAutomation, then
+  // re-derive stageReadiness against the cached reviews payload from the
+  // last load(). The Worker does not yet read this column (that lands in
+  // step 5), so no bot behavior changes until then.
+  async function toggleStageEnabled(stage, nextEnabled) {
+    if (!bot || !bot.id) return
+    if (togglingStage) return
+    setTogglingStage(stage)
+    const prev = stageAutomation
+    const next = { ...prev }
+    if (nextEnabled) {
+      next[stage] = {
+        enabled: true,
+        enabled_at: new Date().toISOString(),
+        enabled_by: (profile && (profile.email || profile.id)) || 'unknown',
+      }
+    } else {
+      delete next[stage]
+    }
+    const { error } = await supabase
+      .from('bots')
+      .update({ stage_automation: next, updated_at: new Date().toISOString() })
+      .eq('id', bot.id)
+    if (error) {
+      console.error('[Settings] toggleStageEnabled failed:', error)
+      showToast('Could not save: ' + (error.message || 'unknown error'))
+      setTogglingStage(null)
+      return
+    }
+    setStageAutomation(next)
+    setBot(prevBot => prevBot ? { ...prevBot, stage_automation: next } : prevBot)
+    if (reviewsData) {
+      const readiness = computeStageReadiness(reviewsData, { stageAutomation: next })
+      setStageReadiness(readiness)
+    }
+    showToast(nextEnabled
+      ? stage + ': stage automation TURNED ON'
+      : stage + ': stage automation turned off')
+    setTogglingStage(null)
   }
 
   function setBehavior(key, val) {
@@ -236,6 +305,9 @@ export default function Settings() {
             const sampleLabel = sampleSize >= SAMPLE_WINDOW
               ? 'over last ' + SAMPLE_WINDOW + ' actioned'
               : 'over last ' + sampleSize + ' actioned (need ' + SAMPLE_WINDOW + ')'
+            const isRunning = state === STAGE_STATE.RUNNING
+            const isEligible = state === STAGE_STATE.ELIGIBLE
+            const inFlight = togglingStage === stage
             return (
               <div key={stage} style={{
                 display: 'flex', alignItems: 'center', gap: '12px',
@@ -260,9 +332,42 @@ export default function Settings() {
                   )}
                 </div>
                 {entry && entry.enabled && entry.enabledBy && (
-                  <div style={{ fontSize: '.68rem', color: 'var(--tx3)' }}>
+                  <div style={{ fontSize: '.68rem', color: 'var(--tx3)', whiteSpace: 'nowrap' }}>
                     on by {entry.enabledBy}
                   </div>
+                )}
+                {isRunning ? (
+                  <button
+                    onClick={() => toggleStageEnabled(stage, false)}
+                    disabled={inFlight}
+                    title="Turn this stage off. Drafts at this stage will go back to the inbox for human review."
+                    style={{
+                      padding: '5px 12px', borderRadius: '8px', cursor: inFlight ? 'wait' : 'pointer',
+                      fontSize: '.74rem', fontWeight: 600,
+                      background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca',
+                      opacity: inFlight ? 0.6 : 1, flexShrink: 0, fontFamily: 'var(--fn)',
+                    }}
+                  >
+                    {inFlight ? 'Saving...' : 'Turn off'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => toggleStageEnabled(stage, true)}
+                    disabled={inFlight}
+                    title={isEligible
+                      ? 'Turn this stage on. Drafts at this stage will auto-send when the master switch is on and per-message guards pass.'
+                      : 'This stage has not reached the recommended threshold yet. You can still turn it on, but the AI is more likely to make mistakes.'}
+                    style={{
+                      padding: '5px 12px', borderRadius: '8px', cursor: inFlight ? 'wait' : 'pointer',
+                      fontSize: '.74rem', fontWeight: 600,
+                      background: isEligible ? '#f0fdf4' : 'var(--surf)',
+                      color: isEligible ? '#15803d' : 'var(--tx3)',
+                      border: '1px solid ' + (isEligible ? '#bbf7d0' : 'var(--bdr2)'),
+                      opacity: inFlight ? 0.6 : 1, flexShrink: 0, fontFamily: 'var(--fn)',
+                    }}
+                  >
+                    {inFlight ? 'Saving...' : (isEligible ? 'Turn on' : 'Turn on (override)')}
+                  </button>
                 )}
               </div>
             )
@@ -270,7 +375,7 @@ export default function Settings() {
         </div>
 
         <div style={{ marginTop: '14px', fontSize: '.72rem', color: 'var(--tx3)', lineHeight: 1.5 }}>
-          Eligible means the data says this stage performs well enough to consider. It does NOT auto-send. A stage only auto-sends when explicitly turned on by a human (control ships in a follow-up) AND the master switch above is ON AND each draft also passes the per-message safety guards.
+          Turning a stage on persists immediately to the bot config. Stages can be turned off again at any time. Even when a stage is on, the master switch above must also be on for any draft to auto-send, and each draft still has to pass the per-message safety guards.
         </div>
       </div>
 
