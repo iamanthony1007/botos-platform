@@ -1092,3 +1092,114 @@ New from today:
 
 No em dashes anywhere. ctx.waitUntil for Supabase writes. Feature branches only, never push directly to main. PROGRESS.md updated at session end. Long commit messages via temp file plus git commit --file=. PowerShell multi-step commands as single blocks. Use absolute paths in [System.IO.File] .NET calls. Schema-first verification before any SQL. Verify against deployed code, not stale index. Never paste secrets in chat.
 
+
+## 2026-05-31 - Fix B shipped + deploy safety overhaul + 2026-05-29 incident
+
+Three things tonight, in order: investigation of the 2026-05-29 production auth outage (resolved by Anthony rolling back via Cloudflare Pages before this session opened), a deploy-safety overhaul that makes that incident class structurally impossible (PR #9, merge `6f653dc`), and Fix B for the inbox sibling-pending bug shipped end-to-end to staging then production via the new safety chain (PR #10, merge `370adbb`). Production healthy at session close. Fix B live. Deploy story no longer "ad hoc wrangler with a stale dist".
+
+### 2026-05-29 production auth outage (investigation only this session)
+
+Earlier in the week Anthony attempted a production deploy of Fix B. The deploy that landed pointed `botos-platform-3ar.pages.dev` at staging Supabase (`hlpucysbaqerhwahfolg`) instead of production (`rydkwsjwlgnivlwlvqku`). Real users (Nella, setters) were locked out because their production accounts do not exist in staging. Anthony rolled back via the Pages dashboard before this session. Investigation tonight was read-only.
+
+Root cause: failure path C with a twist. Anthony deployed yesterday's stale `dashboard/dist/` (built 2026-05-28 at 17:35 BST during the staging-Dashboard auth-fix session under `vite build --mode staging`) directly to the production Pages project without rebuilding.
+
+Evidence trail:
+- `dashboard/dist/assets/index-zeH4aPhH.js` on disk had mtime 2026-05-28 17:35:45 +0100. Exact match to the staging build from the auth-fix session.
+- No git commits in the prior 24 hours. No branch switches in reflog.
+- That bundle had the staging `createClient` URL baked in: `hs(\`https://hlpucysbaqerhwahfolg.supabase.co\`, ...)`. Plus the 5 hardcoded production logo asset URLs.
+- The deployment was uploaded ad hoc to the `botos-platform` (prod) Pages project via wrangler.
+- Twist: because the source tree's Fix B working-tree change was not yet committed and therefore not in the staging-mode build either, the broken deploy also did not contain Fix B. Anthony lost both ways.
+
+Independent landmine found during investigation: `dashboard/.env.staging` was edited that day to swap the URL to production while leaving the staging anon key in place. Frankenstein state (production URL, staging anon key) was a separate hazard, reverted in Part 1 of the deploy-safety work.
+
+Live prod bundle at investigation time confirmed healthy after the rollback: `index-qWoFL2zw.js`, 0 occurrences of staging ref, 6 occurrences of production ref (1 auth + 5 logos).
+
+### Deploy-safety overhaul (PR #9, merged `6f653dc`)
+
+Branch `fix/deploy-safety`, branched off `main` at `8133756`. Five commits. Merged to `main` without code review since it is the structural fix to prevent recurrence.
+
+Commits on the branch:
+- `515febc` chore(dashboard): add .env.production and mark .env as legacy fallback
+- `df6c248` feat(dashboard): add verify-env pre-build guard
+- `6ed840d` feat(dashboard): add verify-deploy post-deploy bundle check
+- `9e54d76` refactor(dashboard): replace bare build with explicit deploy chains
+- `eadf2ee` docs(dashboard): add DEPLOY.md operational guide
+
+Mechanics:
+- `npm run build` removed entirely. No ambient default-mode script exists. The only build scripts are `build:staging` and `build:production`, each with `--mode` baked in.
+- Two env files. `dashboard/.env.production` mirrors `.env` content for explicit production-mode reads. `.env` annotated as legacy fallback so Vite default mode (if accidentally invoked) still works.
+- `dashboard/scripts/verify-env.mjs` runs as `prebuild:staging` and `prebuild:production`. Asserts the matching env file's `VITE_SUPABASE_URL` and the JWT `ref` and `role` claims in `VITE_SUPABASE_ANON_KEY` all match the intended target. Catches the 2026-05-29 mismatch state. Node builtins only.
+- `dashboard/scripts/verify-deploy.mjs` runs as `postdeploy:staging` and `postdeploy:production`. Fetches the live Pages URL, locates the bundle, regex-checks the `createClient` Supabase URL against the expected project. Pattern requires the hostname to be followed by a string terminator (backtick or double quote), so the 5 hardcoded logo URLs (followed by `/storage/`) do not cause false positives. Exits 1 with a "ROLL BACK NOW" message on mismatch.
+- `dashboard/package.json` deploy chain: `npm run deploy:staging` triggers `predeploy:staging` then `deploy:staging` then `postdeploy:staging` automatically. `predeploy:staging` runs `npm run build:staging`, which auto-triggers `prebuild:staging` (verify-env) before the Vite build. `deploy:staging` is `wrangler pages deploy dist --project-name=botos-platform-staging --branch=main --commit-dirty=false`. Same shape for production.
+- `dashboard/DEPLOY.md` is the operator's one-page guide. Two canonical commands, what each safety check catches, rollback procedure.
+
+Verification before merge:
+- `npm run prebuild:staging` and `npm run prebuild:production` both exit 0 against the existing env files.
+- Negative test: injected the exact 2026-05-29 mismatch (URL flipped to prod ref, staging anon key untouched) into `.env.staging`, ran `npm run prebuild:staging`, exit 1 with a file-specific message naming the expected ref. Reverted clean.
+- `verify-deploy.mjs production` against live `botos-platform-3ar.pages.dev`: expected ref 1 match, wrong ref 0 matches, exit 0.
+- `verify-deploy.mjs staging` against live `botos-platform-staging.pages.dev`: expected ref 1 match, wrong ref 0 matches, exit 0.
+
+### Fix B shipped end-to-end (PR #10, merged `370adbb`)
+
+Branch `fix/inbox-sibling-pending`, single commit `e785034`, merged to `main` via PR #10. Then deployed through the new safety chain to staging then production.
+
+Fix B targets the inbox sibling-pending bug diagnosed last session: when a lead sends a rapid burst of messages, the Worker batch-window check at 60s runs BEFORE the parallel webhooks finish inserting their reviews, so multiple pending reviews get created for one lead. The dashboard's `approve()` and `saveTraining()` handlers only resolved `activeReview.id`, so siblings stayed pending forever until the lead sent another message (which would trigger the Worker's auto-discard). Symptom Nella saw: "messages she already answered stay in the pending inbox".
+
+Code change in `dashboard/src/pages/Inbox.jsx`: `approve()` and `saveTraining()` now PATCH all other `status=pending` reviews on the same `(bot_id, customer_id)` to `status=discarded` immediately after the active review's own status flip. The discarded siblings carry `internal_notes` ending with `[System: Auto-discarded sibling of approved review <activeReview.id>]` so the auto-clean is auditable in the database.
+
+Staging deploy:
+- `npm run deploy:staging` ran the full chain end-to-end.
+- Bundle `index-zeH4aPhH.js` produced and uploaded. Cloudflare deploy hash `936dd63b`.
+- `verify-deploy.mjs staging` exit 0, 1 expected ref match, 0 wrong ref matches.
+
+Staging end-to-end verification through the real Approve button:
+- Seeded synthetic customer `tester_fixb_1779986967` via two `/webhook` POSTs 300ms apart to simulate a rapid burst.
+- Worker created two pending reviews on that customer as expected.
+- Anthony opened the staging Dashboard Inbox and clicked Approve on the visible draft `review_1779986979851_fgmjd9c2m`.
+- Post-approve database snapshot for that customer: approved=1, discarded=1, pending=0.
+- The discarded sibling's `internal_notes` ended with the exact `[System: Auto-discarded sibling of approved review review_1779986979851_fgmjd9c2m]` marker. That marker only exists in this patch's source, so the fix is provably what ran.
+
+Production deploy:
+- `npm run deploy:production` ran the full chain.
+- Bundle `index-DgaCbrqm.js` produced and uploaded. Cloudflare deploy hash `77eb9bd4`.
+- `verify-deploy.mjs production` exit 0, 1 expected ref match (`rydkwsjwlgnivlwlvqku`), 0 wrong ref matches.
+- Anthony confirmed manual login to `botos-platform-3ar.pages.dev` from his account succeeded immediately after deploy. No lockout this time.
+
+### Production state at session close
+
+- Worker: unchanged. Version `5889c5dc-6104-46e0-ae9a-a1b9926ddf2c` at commit `85b69d9` from the 2026-05-18 session.
+- Dashboard production: commit `370adbb`, bundle `index-DgaCbrqm.js`, Cloudflare deploy hash `77eb9bd4`. Fix B present. `createClient` points at production Supabase. Verified by `verify-deploy.mjs` and Anthony's manual login.
+- Dashboard staging: commit `370adbb`, bundle `index-zeH4aPhH.js`, Cloudflare deploy hash `936dd63b`. Fix B present. `createClient` points at staging Supabase.
+- `main` HEAD: `370adbb`.
+- Two PRs merged to `main` today: #9 (deploy safety) and #10 (Fix B).
+
+### Operational findings worth filing
+
+- Both `botos-platform` and `botos-platform-staging` Cloudflare Pages projects are Direct Upload only. Neither is git-connected. Every deploy is a manual `wrangler pages deploy`. PROGRESS noted this for staging on 2026-05-28; tonight confirmed it also holds for production.
+- wrangler OAuth login defaults to the operator's primary Cloudflare account. Anthony's wrangler defaults to `iamanthony1007@gmail.com`'s account, but the Pages projects (prod and staging) live under `Nellakuate@gmail.com`'s account (`444afb7987a4f1e657e0bad22a528a42`). Without `CLOUDFLARE_ACCOUNT_ID=444afb...` set in the shell, wrangler returns API error code 10000 on the deployment-list endpoint and silently picks the wrong account for `wrangler pages deploy`.
+- The current wrangler OAuth scope set does not include `user_details:read`. Explicit `CLOUDFLARE_ACCOUNT_ID` dodges the issue until OAuth is upgraded or auth moves to a scoped Cloudflare API token.
+- `wrangler pages deploy --commit-dirty=false` behaves as "warn and proceed" rather than "refuse and halt". Adequate for now since the operator sees the warning in console output, but worth a future review.
+- Five logo image URLs in `Layout.jsx`, `Landing.jsx`, `Login.jsx`, and `AcceptInvite.jsx` are hardcoded to production Supabase storage (`rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo...`). They bake into every dashboard bundle regardless of build mode. Public PNG fetches, not data access, so functionally harmless. `verify-deploy.mjs` distinguishes them from the auth client URL via the regex pattern (hostname followed by string terminator vs hostname followed by `/storage/`). ARCHITECTURE.md already flagged this as a deferred cleanup.
+
+### Open items deferred to next session
+
+- Fix A (Worker race fix at the batch check). The Worker still creates duplicate pending reviews on rapid lead-message bursts. Fix B masks the symptom on the Dashboard side; Fix A would prevent the duplicates from being inserted in the first place. Three valid designs in play: KV-based mutex on `(bot_id, customer_id)`, Cloudflare Durable Object as a single point of serialization, Postgres partial unique index on pending reviews. Each has tradeoffs around latency, cost, and operational complexity. Needs design review with Anthony before committing. Estimated 3-4 hour session.
+- `.wrangler/cache/wrangler-account.json` (repo root) and `sales-bot/node_modules/.cache/wrangler/wrangler-account.json` tracked-state hygiene. Tonight's pre-flight on the repo-root file confirmed 83 bytes, only an `account` field, no JWTs, no token-named fields. NOT an active credential leak. Outstanding hygiene work: untrack via `git rm --cached`, audit history for any previously committed OAuth secrets, ensure `.gitignore` patterns actively exclude these paths.
+- Switch wrangler authentication from OAuth (with the dual-account quirk) to a scoped Cloudflare API token. Cleaner story for handover to Nella. Logged for the next operations session.
+
+### Lessons this session
+
+- "Verified" is not "deployed". Fix B was patched on disk and committed locally earlier in the week, but the end-to-end Approve test against the real Dashboard was never run (the auth lockout interrupted the flow) before the 2026-05-29 prod deploy attempt. When a session is interrupted by a side quest, the resume checkpoint must explicitly state which verifications were done and which were skipped. Otherwise the operator treats "code in main" as proxy for "tested through the real path", which on 2026-05-29 it was not.
+- Multi-step PowerShell guard patterns like `if (!$env:KEY) { return }` do not halt subsequent pasted statements at the interactive prompt. The `return` only exits the immediate scope, not the pasted block. Use explicit `if/else` wrapping the subsequent code, or run the guard as one block and the body as a second block.
+- Bundle hash collisions are not "essentially impossible" when the patch shape is small enough. Two different sources that produce the same minified output produce the same hash. Trust the content check (string presence and absence) for verification, not the filename. `verify-deploy.mjs` works on content.
+- The wrangler OAuth dual-account quirk has bitten twice this week. Always set `CLOUDFLARE_ACCOUNT_ID=444afb7987a4f1e657e0bad22a528a42` before any wrangler call against Pages or Workers. Codify in DEPLOY.md or a session-init script the next time the operations docs get touched.
+- Default to delegating clearly-scoped investigative or mechanical work to Claude Code in a separate session. Reserve interactive chat for design decisions, review of returned artifacts, and small surgical steps with explicit verification gates. Tonight's pattern (investigation as one chat run, deploy-safety overhaul as a Claude Code branch with 5 commits, Fix B verification by the operator with chat as the review layer) was efficient.
+
+### Standing rules reaffirmed (with two additions)
+
+Existing rules unchanged: No em dashes anywhere. ctx.waitUntil for Supabase writes. Feature branches only, never push directly to main (PROGRESS.md docs-only commits excepted). PROGRESS.md updated at session end. Long commit messages via temp file plus git commit --file=. PowerShell multi-step commands as single blocks. Use absolute paths in [System.IO.File] .NET calls. Schema-first verification before any SQL. Verify against deployed code, not stale index. Never paste secrets in chat.
+
+New as of tonight:
+- Always set `CLOUDFLARE_ACCOUNT_ID=444afb7987a4f1e657e0bad22a528a42` before any wrangler invocation. The dual-account quirk in Anthony's OAuth login otherwise routes to the wrong account.
+- Never invoke `wrangler pages deploy` directly. Always go through `npm run deploy:staging` or `npm run deploy:production` from the `dashboard/` directory. The chain enforces fresh build, env match, and post-deploy URL verification. Bare wrangler invocations bypass all three.
+
