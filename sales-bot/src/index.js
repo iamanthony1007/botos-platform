@@ -379,7 +379,7 @@ __name(supabaseRpc, "supabaseRpc");
 async function getBotSettings(env) {
   try {
     const response = await fetch(
-      `${getSupabaseUrl(env)}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings,welcome_context`,
+      `${getSupabaseUrl(env)}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings,welcome_context,stage_automation`,
       {
         headers: {
           "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
@@ -387,16 +387,29 @@ async function getBotSettings(env) {
         }
       }
     );
-    if (!response.ok) return { auto_send_enabled: false, system_prompt: null };
+    if (!response.ok) return { auto_send_enabled: false, system_prompt: null, stage_automation: {} };
     const data = await response.json();
-    if (!data || data.length === 0) return { auto_send_enabled: false, system_prompt: null };
+    if (!data || data.length === 0) return { auto_send_enabled: false, system_prompt: null, stage_automation: {} };
     return data[0];
   } catch (error) {
     console.error("Error fetching bot settings:", error);
-    return { auto_send_enabled: false, system_prompt: null };
+    return { auto_send_enabled: false, system_prompt: null, stage_automation: {} };
   }
 }
 __name(getBotSettings, "getBotSettings");
+
+// Per-stage human unlock check. A stage auto-sends only when the bot's
+// stage_automation jsonb has `enabled: true` for that stage. Absence of
+// the stage key, a non-object value, or `enabled: false` all mean NOT
+// enabled (the stage stays in setter-review). This is the Layer 1 gate
+// of the two-layer model agreed with Nella. Layer 2 (per-message safety)
+// continues to be enforced by the rest of resolveNextAction.
+function isStageUnlocked(stage, stageAutomation) {
+  if (!stage || !stageAutomation || typeof stageAutomation !== "object") return false;
+  const entry = stageAutomation[stage];
+  return !!(entry && entry.enabled === true);
+}
+__name(isStageUnlocked, "isStageUnlocked");
 
 // Stages that are safe to auto-send for MEDIUM intent leads
 const MEDIUM_INTENT_AUTO_STAGES = [
@@ -422,7 +435,7 @@ function profileFactAlreadyKnown(stage, profileFacts) {
   return value && value !== "" && value !== "Unknown" && value !== "unknown";
 }
 
-function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}, memory = {}) {
+function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}, memory = {}, stageAutomation = {}) {
   const emotionalState = botResponse.emotional_state || "NEUTRAL";
   const intent = botResponse.lead_intent || "LOW";
   const stage = botResponse.conversation_stage || "";
@@ -449,22 +462,36 @@ function resolveNextAction(botResponse, autoSendEnabled, profileFacts = {}, memo
   // 7. Unknown question or link/form/payment mentioned (bot flags this in escalation_reason)
   if (botResponse.escalation_reason && botResponse.escalation_reason.length > 5) return "ESCALATE_TO_HUMAN";
 
-  // Auto-send must be enabled in settings
+  // Master kill switch (global). Stays as the outer gate.
   if (!autoSendEnabled) return "SEND_TO_INBOX_REVIEW";
 
-  // LOW intent — always send to review
+  // LOW intent always reviews regardless of stage state.
   if (intent === "LOW") return "SEND_TO_INBOX_REVIEW";
 
-  // Context check — if the info this message collects is already known, review first
+  // If the info this message collects is already in profile_facts, review first.
   if (profileFactAlreadyKnown(stage, profileFacts)) return "SEND_TO_INBOX_REVIEW";
 
-  // HIGH intent — auto-send if confidence is high
+  // ── Per-stage human unlock gate (Layer 1 of the two-layer model) ──
+  // A draft only auto-sends when its conversation_stage has been explicitly
+  // turned on by a human in bots.stage_automation. This closes the prior
+  // hole where HIGH intent could auto-send at ANY stage on confidence
+  // alone, including closing stages (BOOKED / SCHEDULE / INVITE etc).
+  // Now HIGH intent is treated identically to MEDIUM/everything else with
+  // respect to per-stage human gating: no unlock = no auto-send.
+  if (!isStageUnlocked(stage, stageAutomation)) return "SEND_TO_INBOX_REVIEW";
+
+  // HIGH intent: high confidence required (unchanged thresholds).
   if (intent === "HIGH" && situationClarity >= 0.85 && responseQuality >= 0.90) return "AUTO_SEND";
 
-  // MEDIUM intent — auto-send only safe early stages
+  // MEDIUM intent: confidence + the existing early-stages whitelist.
+  // MEDIUM_INTENT_AUTO_STAGES stays as a defensive guard on top of the
+  // stage_automation unlock. A human can enable any stage, but MEDIUM
+  // intent traffic is still capped to the early-stages whitelist for
+  // robustness. To loosen this for a specific stage, that stage needs
+  // both: the human unlock AND inclusion in MEDIUM_INTENT_AUTO_STAGES.
   if (intent === "MEDIUM" && situationClarity >= 0.80 && responseQuality >= 0.85 && MEDIUM_INTENT_AUTO_STAGES.includes(stage)) return "AUTO_SEND";
 
-  // Everything else — review
+  // Anything else falls back to setter review.
   return "SEND_TO_INBOX_REVIEW";
 }
 __name(resolveNextAction, "resolveNextAction");
@@ -919,6 +946,12 @@ var index_default = {
         ]);
 
         const autoSendEnabled = botSettings.auto_send_enabled === true;
+        // Per-stage human unlock map. Empty object = no stages unlocked,
+        // which matches the existing manual-review default. Always passed
+        // to resolveNextAction so HIGH intent no longer bypasses stage gates.
+        const stageAutomation = (botSettings.stage_automation && typeof botSettings.stage_automation === "object")
+          ? botSettings.stage_automation
+          : {};
         const systemPrompt = botSettings.system_prompt || FALLBACK_SYSTEM_PROMPT;
         const botModel = botSettings.model || 'claude-sonnet-4-6';
         const intentDefs = botSettings.intent_definitions || {
@@ -1347,7 +1380,7 @@ var index_default = {
 
         // ── Memory update ──────────────────────────────────────────────────
         const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts, memory);
+        const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts, memory, stageAutomation);
 
         const assistantEntry = {
           role: "assistant",
