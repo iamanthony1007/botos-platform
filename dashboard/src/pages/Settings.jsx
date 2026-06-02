@@ -82,6 +82,11 @@ export default function Settings() {
   // Per-stage toggle in-flight flag. Disables the button while the write
   // is outstanding so the operator cannot double-click.
   const [togglingStage, setTogglingStage] = useState(null)
+  // Force-on confirmation dialog. null when closed. When a below-threshold
+  // stage's "Turn on (override)" is clicked we stash { stage, cleanRate,
+  // sampleSize } here and render a confirm modal BEFORE writing the enable.
+  // Eligible (>=85%) stages bypass this entirely and enable in one tap.
+  const [overrideModal, setOverrideModal] = useState(null)
 
   useEffect(() => { load() }, [profile])
 
@@ -191,6 +196,15 @@ export default function Settings() {
     setTogglingStage(null)
   }
 
+  // Confirm handler for the force-on dialog. Closes the modal, then runs
+  // the same enable write the eligible path uses. Cancel/backdrop just
+  // clear overrideModal and write nothing.
+  function confirmOverride() {
+    const pending = overrideModal
+    setOverrideModal(null)
+    if (pending && pending.stage) toggleStageEnabled(pending.stage, true)
+  }
+
   function setBehavior(key, val) {
     setAiBehavior(prev => ({ ...prev, [key]: val }))
   }
@@ -229,6 +243,47 @@ export default function Settings() {
   return (
     <div className="page">
       {toast && <div className="toast">{toast}</div>}
+
+      {/* Force-on confirmation dialog. Shown only for a below-threshold
+          (override) enable. Backdrop click and Cancel close it and write
+          nothing; Confirm runs the enable via confirmOverride(). Mirrors
+          the Inbox coach-flag modal pattern (no new dependency). */}
+      {overrideModal && (
+        <div onClick={() => setOverrideModal(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--surf)', border: '1px solid var(--bdr)', borderRadius: '12px', padding: '20px', width: '100%', maxWidth: '460px', boxShadow: '0 20px 50px rgba(0,0,0,.3)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '.95rem', color: 'var(--tx)', marginBottom: '6px' }}>
+                Turn on {overrideModal.stage} below the recommended bar?
+              </div>
+              <div style={{ fontSize: '.8rem', color: 'var(--tx2)', lineHeight: 1.55 }}>
+                This stage is at{' '}
+                <strong>
+                  {overrideModal.cleanRate === null
+                    ? 'no clean-rate data yet'
+                    : (overrideModal.cleanRate * 100).toFixed(0) + '% clean'}
+                </strong>{' '}
+                over {overrideModal.sampleSize} actioned draft{overrideModal.sampleSize === 1 ? '' : 's'}, below the
+                recommended {Math.round(ELIGIBLE_CLEAN_RATE_THRESHOLD * 100)}% bar.
+              </div>
+            </div>
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--rsm)', padding: '10px 14px', fontSize: '.79rem', color: '#b91c1c', lineHeight: 1.5 }}>
+              Turning it on now means the bot may auto-send replies at this stage that a setter would have edited before sending. You can turn it back off at any time.
+            </div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <button onClick={() => setOverrideModal(null)}
+                style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--bdr)', background: 'var(--surf2)', color: 'var(--tx2)', fontSize: '.82rem', fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--fn)' }}>
+                Cancel
+              </button>
+              <button onClick={confirmOverride}
+                style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: '#dc2626', color: '#fff', fontSize: '.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--fn)' }}>
+                Turn on anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="page-header">
         <div>
@@ -352,7 +407,9 @@ export default function Settings() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => toggleStageEnabled(stage, true)}
+                    onClick={() => isEligible
+                      ? toggleStageEnabled(stage, true)
+                      : setOverrideModal({ stage, cleanRate, sampleSize })}
                     disabled={inFlight}
                     title={isEligible
                       ? 'Turn this stage on. Drafts at this stage will auto-send when the master switch is on and per-message guards pass.'
