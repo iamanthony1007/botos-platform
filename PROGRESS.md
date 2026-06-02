@@ -1203,3 +1203,32 @@ New as of tonight:
 - Always set `CLOUDFLARE_ACCOUNT_ID=444afb7987a4f1e657e0bad22a528a42` before any wrangler invocation. The dual-account quirk in Anthony's OAuth login otherwise routes to the wrong account.
 - Never invoke `wrangler pages deploy` directly. Always go through `npm run deploy:staging` or `npm run deploy:production` from the `dashboard/` directory. The chain enforces fresh build, env match, and post-deploy URL verification. Bare wrangler invocations bypass all three.
 
+## 2026-06-02 - Per-stage gradual automation shipped to production (behavior unchanged)
+
+The per-stage gradual auto-send feature (built and verified on staging in prior sessions) was deployed to production this session in the gated order: merge, migration plus verify, Worker plus verify, dashboard plus verify. Every verification gate passed. No behavior change at ship time: `auto_send_enabled` stays false and no stage is enabled, so the bot continues routing every draft to setter review exactly as before. Turning the master switch on or unlocking any stage is a separate Nella decision, deliberately not part of this deploy.
+
+### What shipped
+
+- **Worker enforcement** (`sales-bot/src/index.js`, commit `2351b1d`): `getBotSettings` now selects `stage_automation`; new `isStageUnlocked` helper; `resolveNextAction` takes the `stage_automation` map and gates AUTO_SEND on a per-stage human unlock (Layer 1), on top of the existing per-message safety guards (Layer 2). Closes the prior HIGH-intent bypass where HIGH intent could auto-send at any stage on confidence alone, including closing stages.
+- **Dashboard** (`Settings.jsx` plus `stageReadiness.js`): per-stage readiness view and unlock controls. Force-on of a below-threshold stage now opens a confirmation dialog stating the stage's current clean rate and sample size, that it is below the 85% bar, and the plain-language risk; cancel writes nothing (commit `6df9278`). OFF stays frictionless and deletes the stage key, so a re-qualifying stage can resurface as eligible (no sticky hold).
+- **DB migration 007**: adds `bots.stage_automation jsonb NOT NULL DEFAULT '{}'`. Idempotent (`ADD COLUMN IF NOT EXISTS`).
+
+### Deploy record
+
+- **Merge to main:** no-ff merge commit `e92cc33` (merged branch tip `6df9278`), pushed `4017df6..e92cc33`.
+- **Migration on prod** (`rydkwsjwlgnivlwlvqku`): run by Anthony in the prod SQL editor ("Success. No rows returned"). Verified read-only: column present, BOT_ID row reads `stage_automation = {}`. DDL cannot go through the PostgREST service-role key and no Management API PAT was available here, hence the manual SQL-editor step.
+- **Worker to prod:** `npx wrangler deploy` (top-level production config), version id `ca98e334-18cd-40b1-91ba-321f2d2836ef`. Smoke webhook (tester_ id, browser UA): HTTP 200, real Claude reply, resolved to `SEND_TO_INBOX_REVIEW` (master off), `review_insert.success=true`. Proves the new `stage_automation` SELECT works against prod and the live path is intact. Two tester rows created by the smoke (reviews plus conversations) deleted afterward; `tester_ship_prod*` confirmed 0 remaining.
+- **Dashboard to prod:** `npm run deploy:production`. Bundle hash `index-BgkxXnMX.js` (1,118,078 bytes), deployment `7505f38d.botos-platform-3ar.pages.dev`. `verify-deploy [production]` confirms the live bundle calls `createClient` against `rydkwsjwlgnivlwlvqku` (prod), staging ref `hlpucysbaqerhwahfolg` matches 0.
+
+### Production state at session close
+
+- Worker: `ca98e334-18cd-40b1-91ba-321f2d2836ef` (per-stage unlock gate live, HIGH-intent bypass closed).
+- Dashboard production: bundle `index-BgkxXnMX.js` at `botos-platform-3ar.pages.dev`.
+- Bot config: `auto_send_enabled = false`, `stage_automation = {}` (nothing enabled, nothing eligible). Behavior identical to pre-deploy.
+- main HEAD: merge commit `e92cc33` plus this PROGRESS.md docs commit.
+
+### Flags
+
+- A broad `tester_*` sweep on prod shows 222 reviews and 73 conversations of pre-existing historical test data from earlier sessions (e.g. `tester_step5_probe`). These predate this deploy and were left untouched; only this session's two smoke rows were cleaned. Candidate for a separate housekeeping pass.
+- Column type, NOT NULL, and default for `stage_automation` are asserted from the migration DDL plus Anthony's success confirmation; PostgREST does not expose `information_schema` over the service-role key, so the row-level `{}` read is the available behavioral proof.
+
