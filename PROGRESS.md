@@ -1272,3 +1272,24 @@ Deferred work (revisit AFTER the prompt rebuild ships; OWN item, NOT part of the
   3. (Later/optional) Conflict flagging on save.
 
 Also still open (logged, not scheduled): capture-successful-approvals as a learning signal; fail-open-empty retrieval alerting (Voyage failure -> silent no-corrections); prod tester-data cleanup (222 reviews/73 conversations); dead intent_definitions decision (never wired, never editable); cost-per-message analysis (parked, needs daily message counts).
+
+## 2026-06-03 (later) - Keyword_longevity / Keyword_power intent recognition shipped to production
+
+Nella is adding two ManyChat tags (set as lead_source): `Keyword_longevity` and `Keyword_power`. The Worker did not recognize them, so their intent went unclassified. This small Worker-only change makes the Worker classify them. Merge commit `dd198e3` on main (branch `feat/keyword-longevity-power-intent`). Production Worker version `2dee7da4-9964-4ef2-9c9f-5e910233e599`. Prior version for rollback: `d7cfe230-d576-4f26-b957-89f59d4cf56a` (wrangler rollback is the operational path; the deployments-list call errors on the dual-account quirk).
+
+### What changed (+2/-1 in classifyIntentFromLeadMessage)
+
+- **Keyword_longevity = HIGH**, mirroring bomber exactly: added `/longevity/i` to the highSignals regex list. Intent is assigned by regex against lastUserMessage, and for keyword-only events the Worker sets message = lead_source, so the tag string flows through the same path. bomber's HIGH comes solely from its `/bomber/i` message regex; there is no separate lead_source-to-intent path, so this is the faithful mirror. The first-message safety net does not reset it because detectedIntent is HIGH.
+- **Keyword_power = LOW** (lead magnet): added the literal token `keyword_power` to the magnet low-signal regex (`/hipflow|15min|speedandpower|keyword_power/i`). Deliberately used the exact tag token rather than a bare `/power/` so that legitimate "more power / distance" goal messages are NOT misclassified as LOW magnet leads.
+- Prompt untouched (how the bot talks to these leads is the separate prompt rebuild). No new Supabase write, ctx.waitUntil untouched, token-neutral.
+
+### Production smoke (version 2dee7da4)
+
+- lead_source=Keyword_longevity (keyword-only) -> lead_intent HIGH.
+- lead_source=Keyword_power (keyword-only) -> lead_intent LOW.
+- control lead, neither token -> unchanged (LOW, coherent reply; the new regexes do not match it).
+All HTTP 200. Tester rows deleted, zero remain.
+
+### Known limitation
+
+Classification fires for keyword-only events (where message = lead_source). If a longevity or power lead instead sends a real free-text message alongside the tag, the tag's intent signal is not captured, the same limitation bomber already has, because there is no separate lead_source-to-intent path. Building that path would be a larger, separate change.
