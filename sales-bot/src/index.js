@@ -1174,11 +1174,16 @@ var index_default = {
           ? `${retrievalBotMessage}\n\nUser response: ${retrievalUserMessage}`
           : retrievalUserMessage;
         const queryEmbedding = await embedQueryText(env, queryText);
-        const [learnings, documents] = await Promise.all([
-          fetchRelevantLearningsSemantic(env, queryEmbedding),
+        // Phase 2 retrieval fix (2026-06-03): fetch a larger candidate pool,
+        // then trim Worker-side to a stage-aware, deduped, reduced set once the
+        // lead's prior stage is known (selectStageAwareLearnings, below the
+        // priorStage read). The trim runs before the prompt is built, so the
+        // extra pool rows cost Supabase bandwidth only, never Claude tokens.
+        const [learningsPool, documents] = await Promise.all([
+          fetchRelevantLearningsSemantic(env, queryEmbedding, { count: LEARNING_POOL_COUNT }),
           fetchRelevantDocumentsSemantic(env, queryEmbedding)
         ]);
-        console.log(`[retrieval] learnings=${learnings.length} docs=${documents.length} embed_dim=${queryEmbedding?.length || 0} similarity_top=${learnings[0]?.similarity?.toFixed(3) || "n/a"}`);
+        console.log(`[retrieval] pool=${learningsPool.length} docs=${documents.length} embed_dim=${queryEmbedding?.length || 0} similarity_top=${learningsPool[0]?.similarity?.toFixed(3) || "n/a"}`);
 
         // Bug 7: Read prior conversation state BEFORE calling Claude.
         // We need to know if the lead was previously followed up and what stage
@@ -1202,6 +1207,13 @@ var index_default = {
             }
           }
         } catch (_) { /* non-fatal */ }
+
+        // Phase 2 retrieval fix (2026-06-03): stage-aware, deduped, reduced
+        // selection over the candidate pool now that priorStage is known. This
+        // is a read-path-only transform (no Supabase writes, ctx.waitUntil
+        // untouched). Fail-open preserved: an empty pool yields an empty set.
+        const learnings = selectStageAwareLearnings(learningsPool, priorStage);
+        console.log(`[retrieval-select] priorStage=${priorStage || "null"} normalized=${normalizeStage(priorStage) || "null"} pool=${learningsPool.length} selected=${learnings.length}`);
 
         // Pass re-engagement context to memory so Claude can see it in the prompt
         if (wasFollowedUp && priorPreFollowupStage && priorPreFollowupStage !== 'FOLLOW-UP') {
@@ -2869,6 +2881,104 @@ function parseSystemPrompt(promptText) {
   return sections;
 }
 __name(parseSystemPrompt, "parseSystemPrompt");
+
+// Phase 2 retrieval fix (2026-06-03): stage-aware, deduped, reduced-count
+// selection over the match_learnings candidate pool. Runs Worker-side after
+// the pool is fetched, so it adds zero Claude tokens (the pool is trimmed
+// before the prompt is built) and needs no RPC signature change.
+const LEARNING_POOL_COUNT = 15;       // candidate rows fetched from match_learnings
+const LEARNING_FINAL_COUNT = 5;       // rows actually injected into the prompt
+const LEARNING_DEDUP_THRESHOLD = 0.9; // normalized-text similarity above which a row is a duplicate
+
+// Legacy / variant conversation_stage values mapped to canonical STAGE_GRAPH
+// keys. Source-controlled and easy to extend. Confirmed against prod data in
+// the Phase 1 retrieval-fix investigation (all variant rows were legacy, from
+// an older prompt taxonomy). A null/empty stage is left as-is (untargeted).
+const STAGE_NORMALIZATION = {
+  "ENTRY & CONTEXT": "HOOK / ENTRY",
+  "GOAL IDENTIFICATION": "GOAL",
+  "DEPTH & EFFORT CHECK": "DIAGNOSTIC",
+  "REALITY CHECK": "DIAGNOSTIC",
+  "BOOKING DISCIPLINE": "SCHEDULE",
+  "NURTURE & EXIT": "FOLLOW-UP",
+  "READINESS FILTER": "INVITE"
+};
+function normalizeStage(stage) {
+  if (!stage) return stage;
+  return STAGE_NORMALIZATION[stage] || stage;
+}
+__name(normalizeStage, "normalizeStage");
+
+function normalizeReplyText(s) {
+  return (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+__name(normalizeReplyText, "normalizeReplyText");
+
+// Dice coefficient over character bigrams of two normalized strings (0..1).
+// Robust for near-identical replies (e.g. the same correction with a one-word
+// prefix added). Cheap, no embeddings needed - the RPC does not return vectors.
+function textSimilarityRatio(a, b) {
+  const x = normalizeReplyText(a);
+  const y = normalizeReplyText(b);
+  if (!x.length && !y.length) return 1;
+  if (!x.length || !y.length) return 0;
+  if (x === y) return 1;
+  if (x.length < 2 || y.length < 2) return x === y ? 1 : 0;
+  const bigrams = (s) => {
+    const m = new Map();
+    for (let i = 0; i < s.length - 1; i++) {
+      const g = s.slice(i, i + 2);
+      m.set(g, (m.get(g) || 0) + 1);
+    }
+    return m;
+  };
+  const bx = bigrams(x);
+  const by = bigrams(y);
+  let inter = 0, totalX = 0, totalY = 0;
+  for (const v of bx.values()) totalX += v;
+  for (const v of by.values()) totalY += v;
+  for (const [g, c] of bx) {
+    if (by.has(g)) inter += Math.min(c, by.get(g));
+  }
+  return (2 * inter) / (totalX + totalY);
+}
+__name(textSimilarityRatio, "textSimilarityRatio");
+
+// Stage-aware, deduped, reduced-count selection over the candidate pool.
+// 1. prefer rows whose normalized stage matches the lead normalized stage,
+// 2. fill remaining slots from the rest of the pool in similarity order,
+// 3. dedup by normalized corrected_reply (edited_reply) text similarity,
+// 4. trim to LEARNING_FINAL_COUNT.
+// The pool arrives already ordered by similarity desc from match_learnings.
+function selectStageAwareLearnings(pool, priorStage) {
+  if (!Array.isArray(pool) || pool.length === 0) return [];
+  const targetStage = normalizeStage(priorStage);
+  const isDuplicate = (cand, picked) => {
+    for (const p of picked) {
+      if (textSimilarityRatio(cand.edited_reply, p.edited_reply) > LEARNING_DEDUP_THRESHOLD) return true;
+    }
+    return false;
+  };
+  const selected = [];
+  // Pass 1: same normalized stage (only when the target stage is known).
+  if (targetStage) {
+    for (const cand of pool) {
+      if (selected.length >= LEARNING_FINAL_COUNT) break;
+      if (normalizeStage(cand.conversation_stage) !== targetStage) continue;
+      if (isDuplicate(cand, selected)) continue;
+      selected.push(cand);
+    }
+  }
+  // Pass 2: fill from the rest of the pool by similarity order.
+  for (const cand of pool) {
+    if (selected.length >= LEARNING_FINAL_COUNT) break;
+    if (selected.includes(cand)) continue;
+    if (isDuplicate(cand, selected)) continue;
+    selected.push(cand);
+  }
+  return selected;
+}
+__name(selectStageAwareLearnings, "selectStageAwareLearnings");
 
 const STAGE_GRAPH = {
   "HOOK / ENTRY": ["SECTION:STAGE_HOOK_ENTRY", "SECTION:STAGE_GOAL", "SECTION:STAGE_INVITE"],
