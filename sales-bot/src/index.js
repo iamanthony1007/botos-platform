@@ -1366,6 +1366,7 @@ var index_default = {
           // HIGH intent signals — lead's own words showing urgency or commitment
           const highSignals = [
             /bomber/i,
+            /longevity/i,
             /back pain|knee pain|hip pain|shoulder pain/i,
             /struggling.*(month|year|week)/i,
             /affects my sleep/i,
@@ -1381,7 +1382,7 @@ var index_default = {
             /just curious|just browsing|just looking/i,
             /maybe later|sometime this year|eventually/i,
             /start with free|free content first|what do you suggest first/i,
-            /hipflow|15min|speedandpower/i,
+            /hipflow|15min|speedandpower|keyword_power/i,
             /saw your post/i,
             /not sure yet|just exploring/i
           ];
