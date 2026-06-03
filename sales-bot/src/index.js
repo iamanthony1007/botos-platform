@@ -244,6 +244,58 @@ CRITICAL RULES:
 Focus on: What do they want. What have they tried. Is it working. Is this a priority now. What have they tried. Is it working. Is this a priority now.`;
 }, "buildDeveloperPrompt");
 
+// Memory fix Option B (2026-06-03): reconcile recent assistant turns in KV
+// memory against the authoritative sent text in conversations.messages, so the
+// bot sees what the lead actually received (approved/edited drafts AND manual
+// replies) instead of its own original draft. Read + in-memory only: the
+// reconciled memory is persisted by the EXISTING MEMORY_STORE.put later in the
+// turn, so this adds NO new write. Bounded to the recent tail (the window the
+// prompt consumes) to hold cost. Never throws: on any error the turn falls back
+// to current KV behavior.
+function reconcileMemoryWithSentText(memory, dbMessages) {
+  const stats = { swapped: 0, merged: 0 };
+  try {
+    if (!memory || !Array.isArray(memory.messages) || memory.messages.length === 0) return stats;
+    if (!Array.isArray(dbMessages) || dbMessages.length === 0) return stats;
+    const TAIL = 10;
+    const dbTail = dbMessages.slice(-TAIL);
+
+    // 1. Replace KV assistant content with the sent text, matched by review_id
+    //    (covers approved and edited drafts). Self-heals stale drafts too.
+    const sentByReviewId = new Map();
+    for (const dm of dbTail) {
+      if (dm && dm.role === "assistant" && dm.review_id) sentByReviewId.set(dm.review_id, dm);
+    }
+    const start = Math.max(0, memory.messages.length - TAIL);
+    for (let i = start; i < memory.messages.length; i++) {
+      const km = memory.messages[i];
+      if (!km || km.role !== "assistant" || !km.review_id) continue;
+      const dm = sentByReviewId.get(km.review_id);
+      if (dm && typeof dm.content === "string" && dm.content.length > 0 && dm.content !== km.content) {
+        km.content = dm.content;
+        if (Array.isArray(dm.bot_messages)) km.bot_messages = dm.bot_messages;
+        km.reconciled = true;
+        stats.swapped++;
+      }
+    }
+
+    // 2. Merge manual replies (manual:true, no review_id) that KV never captured,
+    //    in timestamp order so the human reply sits correctly in the history.
+    const known = new Set(memory.messages.map(m => m && m.timestamp).filter(Boolean));
+    const manualToAdd = dbTail.filter(dm =>
+      dm && dm.role === "assistant" && dm.manual === true && !dm.review_id &&
+      dm.timestamp && !known.has(dm.timestamp)
+    );
+    if (manualToAdd.length > 0) {
+      memory.messages.push(...manualToAdd);
+      memory.messages.sort((a, b) => ((a && a.timestamp) || 0) - ((b && b.timestamp) || 0));
+      stats.merged = manualToAdd.length;
+    }
+  } catch (_) { /* fail-safe: never throw the turn */ }
+  return stats;
+}
+__name(reconcileMemoryWithSentText, "reconcileMemoryWithSentText");
+
 // Supabase helpers
 
 async function supabaseInsert(env, table, data) {
@@ -1189,7 +1241,7 @@ var index_default = {
         let priorPreFollowupStage = null;
         try {
           const priorResp = await fetch(
-            `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=followup_count,re_engaged,conversation_stage,pre_followup_stage&limit=1`,
+            `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(customer_id))}&select=followup_count,re_engaged,conversation_stage,pre_followup_stage,messages&limit=1`,
             { headers: { "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "apikey": env.SUPABASE_SERVICE_KEY } }
           );
           if (priorResp.ok) {
@@ -1199,6 +1251,11 @@ var index_default = {
               if (priorData[0].re_engaged === true) wasFollowedUp = true;
               priorStage = priorData[0].conversation_stage || null;
               priorPreFollowupStage = priorData[0].pre_followup_stage || null;
+              // Memory fix Option B: reconcile KV assistant turns against the
+              // authoritative sent text now that we have the conversation row.
+              const recStats = reconcileMemoryWithSentText(memory, priorData[0].messages);
+              const dbMsgCount = Array.isArray(priorData[0].messages) ? priorData[0].messages.length : 0;
+              console.log(`[memory-reconcile] swapped=${recStats.swapped} mergedManual=${recStats.merged} dbMsgs=${dbMsgCount}`);
             }
           }
         } catch (_) { /* non-fatal */ }
