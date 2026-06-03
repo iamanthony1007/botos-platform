@@ -1232,3 +1232,43 @@ The per-stage gradual auto-send feature (built and verified on staging in prior 
 - A broad `tester_*` sweep on prod shows 222 reviews and 73 conversations of pre-existing historical test data from earlier sessions (e.g. `tester_step5_probe`). These predate this deploy and were left untouched; only this session's two smoke rows were cleaned. Candidate for a separate housekeeping pass.
 - Column type, NOT NULL, and default for `stage_automation` are asserted from the migration DDL plus Anthony's success confirmation; PostgREST does not expose `information_schema` over the service-role key, so the row-level `{}` read is the available behavioral proof.
 
+
+## 2026-06-03 - Learning-loop repair: retrieval fix + memory fix shipped to production
+
+Two Worker-only, read-path fixes from the learning-loop diagnosis shipped to production tonight, each through its own gated deploy with a prod smoke verification. Both are read-path changes with NO new Supabase writes. The bot's normal behavior is intact: a real lead still gets one coherent reply routed to one inbox review (auto_send stays off).
+
+### Deploy 1: stage-aware, deduped, reduced-count retrieval
+
+Merge commit `2f11593` on main (branch `feat/retrieval-stage-aware-dedup`). Production Worker version `5718ce4d-3194-4e5c-b6e1-b1c7696f50c9`.
+
+`fetchRelevantLearningsSemantic` now pulls a candidate pool (`match_learnings` threshold 0.3, count 15) and trims Worker-side once the lead's prior stage is known: normalize off-taxonomy stage names through a source-controlled `STAGE_NORMALIZATION` map, stage-prefer fill (same normalized stage first by similarity, then fill from the rest of the pool), near-duplicate dedup on corrected_reply text (threshold 0.9), trim to 5. No RPC signature change. The live `match_learnings` DDL is now captured under `db/functions/match_learnings.sql` for version control (function unchanged). Extra pool rows cost Supabase bandwidth only, never Claude tokens.
+
+Staging A/B (carried from the build session): per-message learnings-block tokens down about 34 percent; stage-match up from about 55 percent to about 75 percent. Fewer, better-targeted lessons at lower per-message cost. Prod smoke: HTTP 200, real reply, tail showed `[retrieval] pool=15` then `[retrieval-select] pool=15 selected=5`.
+
+### Deploy 2: reconcile KV memory with the actually-sent text
+
+Merge commit `ba56692` on main (branch `feat/memory-reconcile-sent-text`), merged on top of the retrieval merge. The `sales-bot/src/index.js` overlap auto-merged cleanly (no conflict markers); post-merge `node --check` passed and both features were confirmed present (retrieval `STAGE_NORMALIZATION` / `selectStageAwareLearnings` AND the memory `reconcileMemoryWithSentText` helper, the read-fold, and the call site). Production Worker version `d7cfe230-d576-4f26-b957-89f59d4cf56a`.
+
+The Worker reads KV memory as the per-turn history and never reconciled it against the conversations DB, so the bot read back its own original draft instead of what the lead actually received. Now, each turn, the recent assistant turns (bounded to the last 10) are reconciled against `conversations.messages`: edited/approved drafts are swapped in by `review_id` (this also self-heals stale drafts on the next turn), and manual replies (`manual:true`, no `review_id`) are merged in timestamp order so the bot sees the human reply. The `messages` read is folded into the existing priorStage fetch (no extra round trip); the reconciled memory persists via the pre-existing `MEMORY_STORE.put`. No new write, tokens neutral. Prod smoke: turn 1 HTTP 200; turn 2 HTTP 200 with `[memory-reconcile] swapped=0 mergedManual=0 dbMsgs=1` (read-fold runs cleanly) and `[retrieval-select] priorStage=GOAL normalized=GOAL pool=4 selected=4` (stage-aware select with a real stage).
+
+Rollback reference: prior prod version `ca98e334-18cd-40b1-91ba-321f2d2836ef`. Operational rollback is `wrangler rollback` (immediate previous). All prod smoke tester rows (`tester_prodverify_*`) were deleted; 0 remain.
+
+### IMPORTANT: the prompt rebuild is still pending and is the missing third piece
+
+These two fixes make corrections reach the bot reliably and compound in-thread, but they do NOT resolve the core reason Nella still feels the bot ignores corrections. The 2026-06-03 contradiction investigation found the system prompt hardcodes absolutes that out-argue the injected corrections every turn (the prompt's hard rules are always-on; a correction only competes if it is retrieved that turn). Until the prompt rebuild ships, the bot may still appear to ignore corrections.
+
+The prompt rebuild is blocked on Nella answering three questions:
+1. Longer replies yes/no: should the bot be allowed to send replies longer than the lead's message to add expert insight? The prompt currently forbids this ("never exceed the length of their message", "whoever talks the most loses"), but she corrects toward longer expert-insight replies more often than shorter ones.
+2. LONGEVITY keyword: confirm it is a HIGH-intent keyword and provide the exact standard reply. The prompt does not mention LONGEVITY at all, so she has to re-teach it via corrections every time.
+3. BOMBER opener: confirm the correct opener wording. The prompt hardcodes one BOMBER opener that diverges from the one she repeatedly corrects toward.
+
+### ROADMAP (deferred): Safe prompt editing for Nella
+
+Context: the 2026-06-03 prompt contradiction investigation found the system prompt hardcodes absolutes that fight setter corrections (length law vs taught longer expert replies; LONGEVITY keyword missing; BOMBER opener divergent; internal self-contradictions from 6 prompt versions). Root process cause: Nella edits the raw prompt via the dashboard PromptEditor with ZERO validation; this accumulates contradictions and a renamed header can silently drop a lazy-loaded section (incl GUARDRAILS).
+
+Deferred work (revisit AFTER the prompt rebuild ships; OWN item, NOT part of the learning-fix deploy), sequence smallest-first:
+  1. Editor validation: on save, warn/block if a required section header (ALWAYS_ON_SECTIONS + expected SECTION:STAGE_* markers) is missing or renamed.
+  2. Separate editable content (persona, per-stage scripts, openers) from load-bearing scaffolding (section markers, correction-precedence framing, guardrails).
+  3. (Later/optional) Conflict flagging on save.
+
+Also still open (logged, not scheduled): capture-successful-approvals as a learning signal; fail-open-empty retrieval alerting (Voyage failure -> silent no-corrections); prod tester-data cleanup (222 reviews/73 conversations); dead intent_definitions decision (never wired, never editable); cost-per-message analysis (parked, needs daily message counts).
