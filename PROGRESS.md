@@ -1293,3 +1293,34 @@ All HTTP 200. Tester rows deleted, zero remain.
 ### Known limitation
 
 Classification fires for keyword-only events (where message = lead_source). If a longevity or power lead instead sends a real free-text message alongside the tag, the tag's intent signal is not captured, the same limitation bomber already has, because there is no separate lead_source-to-intent path. Building that path would be a larger, separate change.
+
+## 2026-06-05 - System prompt rebuild deployed to production (DB write, not a Worker deploy)
+
+The rebuilt Coach Shaun system prompt is live on production. This was a write to the production bots row `system_prompt` (BOT_ID ...0002, ref rydkwsjwlgnivlwlvqku), not a Worker code change. It resolves the prompt contradictions that the 2026-06-03 investigation traced as the dominant cause of "the bot ignores my corrections."
+
+### What changed
+- **Three-tier override precedence** stated near the top and reinforced in the corrections framing: Tier 1 FIRM (safety guardrails + the anti-stacking rule, corrections cannot override), Tier 2 deferring defaults (style/approach, setter corrections win), Tier 3 scripts (illustrations, overridable, must obey Tier 1).
+- **ONE THING PER MESSAGE (Tier 1 firm):** one move per turn, the question MAY be a this-or-that two-option choice, but no stacking separate questions or a standalone statement plus a separate question. This fixes the screenshot bug (customer 222742523) while keeping the this-or-that format Nella uses.
+- **This-or-that format kept** throughout (an earlier draft had wrongly de-optioned to single questions; reversed).
+- **Nella's exact openers** baked in: BOMBER, LONGEVITY, GLUTES, POWER (two-message), GOAL three-option opener, PRIORITY now-or-later.
+- **Medical-claims guardrail** added (Tier 1): no medical or diagnostic claims or cure promises; speak to movement, mobility, performance.
+- Length stated once (Tier 2 default, never longer than the lead); opt-out vs nurture scoping fixed; "got it" example fixed; ICP trimmed.
+
+### Token impact (cheaper)
+Total 17,540 -> 16,824 chars (~4,385 -> ~4,206 tok, about -179). Always-on sections (load every message) ~2,575 -> ~2,335 tok (about -240). The ICP trim more than absorbed the new precedence statement and medical guardrail. Net cheaper per message.
+
+### Deploy record
+- Pre-flight: prod prompt md5 confirmed unchanged at `7d7729977af543b3899d27bd09dc6933` before write; backed up to `prod_prompt_backup_2026-06-05.txt` (repo root, rollback source, md5 match confirmed).
+- Extracted deployable prompt md5 `c0fab087ef64eb05110a3e59ff417806`, byte-identical to the staging-validated prompt. Integrity check: 17/17 headers present, names exact.
+- Wrote to prod bots row; re-read md5 confirmed `c0fab087...`. Inserted `prompt_versions` row, label "v27 rebuild 2026-06-05: precedence tiers, anti-stacking, Nella openers, follow-up default".
+
+### Validation (staging earlier, then prod smoke today)
+- Staging: this-or-that kept, no stacking, precedence working (a style correction overrode the default; safety + opt-out + anti-stacking held firm), 17/17 sections loaded.
+- Prod smoke (tester rows, deleted after): (a) all always-on sections load, no failure; (b) this-or-that used (power, glutes); (c) anti-stacking holds, the squats/never-trained DIAGNOSTIC turn returned one message, one question; (d) openers fire, LONGEVITY exact + HIGH, GLUTES exact + LOW, POWER LOW this-or-that, BOMBER HIGH (the bot used the setter-corrected bomber opener, which is precedence working as designed: prod has many bomber corrections that as Tier 2 override the Tier 3 script opener); (e) replies short; (f) cure request refused (medical guardrail held). No rollback needed.
+
+### Known pending item (flagged)
+The FOLLOW-UP line is a DEFAULT awaiting Nella's confirmation: "No worries. When you are ready, what is the main thing you would want to improve, distance, consistency, or playing without the aches?" (free-content offer dropped to respect the opt-out guardrail). When she confirms her wording, a small separate prompt update will swap her version in.
+
+### Notes
+- Production Worker code unchanged (still version 2dee7da4 from the longevity/power deploy). This was prompt-only.
+- Staging bot left on the rebuilt prompt for inspection. Full draft and rationale in `db/prompts/rebuild_proposal_2026-06-03.md`.
