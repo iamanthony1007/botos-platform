@@ -1324,3 +1324,31 @@ The FOLLOW-UP line is a DEFAULT awaiting Nella's confirmation: "No worries. When
 ### Notes
 - Production Worker code unchanged (still version 2dee7da4 from the longevity/power deploy). This was prompt-only.
 - Staging bot left on the rebuilt prompt for inspection. Full draft and rationale in `db/prompts/rebuild_proposal_2026-06-03.md`.
+
+## 2026-06-05 (later) - Bomber opener cleanup + follow-up blocker-probe + recency-preference (prod)
+
+Three approved production changes in one gated pass. Worker code unchanged; this was learnings data plus a prompt update.
+
+### Action 1: deleted 18 bomber opener-competing learnings
+Removed 18 HOOK/ENTRY bomber corrections that taught an opener competing with Nella's mandated BOMBER opener (12 bucket-A greeting/permission variants + 6 bucket-C bare "what are you working on" qualifiers). All 18 backed up first (complete rows incl embeddings) to learnings_bomber_deletion_backup_2026-06-05.json (md5 c26aa708...). Verified: 18 deleted, 0 remain, total bomber-mentioning learnings dropped 33 to 15, bucket-B keepers intact (incl the LONGEVITY row f6a9ecb9). Reversible from the backup file.
+
+### Action 2: follow-up line replaced with a data-grounded blocker-probe
+Old (the default we wrote): "No worries. When you are ready, what is the main thing you would want to improve, distance, consistency, or playing without the aches?"
+New: "No worries mate. Out of curiosity, whats holding you back from working on your game right now, is it more the timing or more that its just not a priority yet?"
+Grounded in her real FOLLOW-UP reviews (the "No worries" + blocker-probe this-or-that pattern). Still flagged as awaiting Nella's final confirm; the "flagged for Nella" status is tracked here, not inside the live prompt (kept clean so the model does not read meta-notes).
+
+### Action 3: recency-preference wording added
+Appended to the precedence statement: "When two of the provided corrections conflict for the same situation, prefer the most recently created one." Worded to govern how the bot weighs the corrections it is given, not to claim access to unseen ones.
+KNOWN LIMITATION (flag for Anthony): the injected learnings section currently lists corrections in similarity order with no dates or recency markers, so the model cannot actually tell which correction is most recent. This instruction is therefore inert until retrieval injects corrections with recency/order info (a future retrieval tweak). Added as approved, but it will not change behavior on its own yet.
+
+### Prompt deploy record
+Pre-edit prod md5 confirmed c0fab087...; backed up to prod_prompt_backup_2026-06-05b.txt (md5 match). Two edits only (line diff confirmed: the precedence line gained the recency sentence; the follow-up line was replaced). 17/17 headers unchanged. New prod prompt md5 dcb152b8f6bed6b4dda32fadd231965d, read-back confirmed. prompt_versions row inserted, label "v28: follow-up blocker-probe, recency-preference, bomber openers cleaned".
+
+### Smoke (prod, tester rows deleted after)
+- BOMBER opener now returns the exact mandated opener "Hey! Thanks for writing me BOMBER on my post. Mind if I ask you a few questions to see if I can help?" (HIGH), not the old "Saw you commented Bomber..." wording. Confirms the deletion took effect.
+- Normal lead (sore back) got a coherent DIAGNOSTIC reply. Non-breakage confirmed.
+
+### Pending / flags
+- FOLLOW-UP blocker-probe still awaiting Nella's confirm (swap her exact wording when given).
+- Recency-preference line is inert until corrections are injected with recency/order (future retrieval change).
+- Production Worker code unchanged (still version 2dee7da4).
