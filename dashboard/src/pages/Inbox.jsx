@@ -1390,6 +1390,11 @@ export default function Inbox() {
                     )
                     const isLead = item.role === 'user' || item.role === 'Lead'
                     const isManual = item.manual === true
+                    // Auto follow-up: cron-sent T+20h nudge. Carries followup:true on the
+                    // message entry (no reviews row, so it cannot use the review-derived
+                    // approved/edited/auto-sent tags). Rendered with its own distinct tag,
+                    // mirroring how isManual keys off a message-entry flag.
+                    const isFollowup = item.followup === true
                     const review = item._review
                     const isPending = review?.status === 'pending'
                     const isActive = activeReview?.id === review?.id
@@ -1481,7 +1486,7 @@ export default function Inbox() {
                           )}
                           {!isLead && !isPending && item.delivery_status !== 'failed' && item.delivery_status !== 'uncertain' && botMessages.map((bubble, bi) => (
                             <div key={bi} onClick={() => null}
-                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isDiscarded ? 'var(--surf2)' : isManual ? '#e8f0fe' : 'var(--acc)', color: isDiscarded ? 'var(--tx3)' : isManual ? '#1a3a8f' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isDiscarded ? '1px dashed var(--bdr)' : isManual ? '1px solid #c7d7fc' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: 'default', transition: 'all .15s', opacity: isDiscarded ? 0.5 : 1, textDecoration: isDiscarded ? 'line-through' : 'none' }}>
+                              style={{ padding: '9px 13px', borderRadius: '16px 2px 16px 16px', fontSize: '.84rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: isDiscarded ? 'var(--surf2)' : isManual ? '#e8f0fe' : isFollowup ? '#eef2ff' : 'var(--acc)', color: isDiscarded ? 'var(--tx3)' : isManual ? '#1a3a8f' : isFollowup ? '#3730a3' : '#e8f7ed', border: isActive ? '2px solid var(--acc)' : isDiscarded ? '1px dashed var(--bdr)' : isManual ? '1px solid #c7d7fc' : isFollowup ? '1px solid #c7d2fe' : 'none', boxShadow: '0 1px 2px rgba(0,0,0,.08)', cursor: 'default', transition: 'all .15s', opacity: isDiscarded ? 0.5 : 1, textDecoration: isDiscarded ? 'line-through' : 'none' }}>
                               {bubble}
                             </div>
                           ))}
@@ -1489,6 +1494,8 @@ export default function Inbox() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px', padding: '0 2px' }}>
                           <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }} title={item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}>{item.timestamp ? fmtMessageTime(item.timestamp) : ''}</span>
                           {!isLead && isManual && <span style={{ fontSize: '.65rem', color: '#1a3a8f', fontWeight: 600, background: '#e8f0fe', border: '1px solid #c7d7fc', padding: '1px 6px', borderRadius: '999px' }}>{'\u270F\uFE0F'} Manual</span>}
+                          {!isLead && isFollowup && <span style={{ fontSize: '.65rem', color: '#4338ca', fontWeight: 600, background: '#eef2ff', border: '1px solid #c7d2fe', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83D\uDCEC'} Auto follow-up</span>}
+                          {!isLead && isFollowup && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'} Sent</span>}
                           {!isLead && !isManual && isSent && review?.status === 'auto_sent' && <span style={{ fontSize: '.65rem', color: '#5b21b6', fontWeight: 600, background: '#ede9fe', border: '1px solid #ddd6fe', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Auto-sent</span>}
                           {!isLead && !isManual && isSent && review?.status === 'edited' && <span style={{ fontSize: '.65rem', color: '#9a3412', fontWeight: 600, background: '#ffedd5', border: '1px solid #fed7aa', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Edited</span>}
                           {!isLead && !isManual && isSent && review?.status === 'approved' && <span style={{ fontSize: '.65rem', color: '#15803d', fontWeight: 600, background: '#dcfce7', border: '1px solid #bbf7d0', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Approved</span>}

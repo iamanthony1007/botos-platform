@@ -1,3 +1,34 @@
+## 2026-06-10 — Auto follow-up: generic line + thread recording + "Auto follow-up" tag (shipped to production)
+
+Branch `feat/followup-generic-line-and-thread-tag` (commit `ff60b65`). Staging-first, then production. Three coordinated changes plus a new migration.
+
+**What changed:**
+1. **Message:** the T+20h auto follow-up no longer sends the lead's first name plus "?" (e.g. "James?"). It now sends a fixed generic line `"Haven't heard back from you?"` (`FOLLOWUP_MESSAGE` const in `runFollowUpCron`, sanitized for em dashes; easy to extend to rotating variants later).
+2. **Recording:** the cron previously sent the nudge but recorded NOTHING in `conversations.messages` (only PATCHed the followed_up flags), so it never appeared in the dashboard thread or the bot's rehydrated memory. Now it records the sent turn AND sets `followed_up=true, followup_count+1, last_followup_source='auto'` in ONE atomic write via a new RPC. Uses `ctx.waitUntil` (never bare await).
+3. **Dashboard tag:** the recorded follow-up renders with a distinct indigo "Auto follow-up" tag (📬) in the thread, separate from approved/edited/manual.
+
+**Migration 008 (`db/migrations/008_append_followup_turn.sql`):** new `append_followup_turn(p_bot_id, p_customer_id, p_new_message, p_source)`. SELECT FOR UPDATE row lock, `(timestamp,role,content)` dedup guard, appends the message and sets the three follow-up columns in one UPDATE. Touches ONLY messages + follow-up columns; never resets `followed_up`. This is the reason it is NOT `append_conversation_turn` (migration 004 hardcodes `followed_up=false`/`followup_count=0` on every call, which from the cron would cause a re-nudge loop and null out profile_facts/running_summary). Idempotent.
+
+**Dashboard tag mechanism (for future reference):** in `Inbox.jsx`, the Manual tag keys off a message-entry boolean (`m.manual === true`); Approved/Edited/Auto-sent are derived from the `reviews` table via `m.review_id`. Auto follow-ups create no reviews row, so they use the manual-style path: the recorded entry carries `followup: true` and the renderer reads `item.followup` directly.
+
+**Staging verification (all passed):** migration applied + catalog-verified; RPC append-then-dedup (`appended:true` then `appended:false`, count stable at 1); row showed `followed_up=true, count=1, source=auto`, recorded content `"Haven't heard back from you?"` with `followup:true`; `/__cron-test` guard pass (examined, sent=0, skips for replied/booking/escalation/tester/no-profile-name); live synthetic send `sent=1` then second run `sent=0` (no re-nudge loop), worker recorded the turn via the RPC; dashboard deployed, verify-deploy confirmed staging ref. The (g) visual tag screenshot was NOT captured (staging dashboard login blocked; tag logic is deterministic and code-verified).
+
+**Production deploy (this session):**
+- Migration 008 applied to prod Supabase (`rydkwsjwlgnivlwlvqku`) via SQL editor; catalog-verified (pronargs=4, jsonb, ACL granted).
+- Worker `sales-bot` version `0ead9f3b-f745-4ca7-937a-9abdb70f8a95`. `/health` 200, `/__cron-test` 404 (prod env guard). Cron schedule `0 * * * *` intact.
+- Dashboard prod Pages deploy `94fd69ec` (`botos-platform-3ar.pages.dev`); verify-deploy confirms live bundle targets prod Supabase, 0 staging refs.
+- First production follow-ups with the new line + recording will appear from the next hourly cron tick.
+
+**Rollback anchors:** Worker `wrangler rollback` (reverts to pre-deploy version). Dashboard Pages roll back to `7505f38d`. Migration: `DROP FUNCTION public.append_followup_turn(uuid,text,jsonb,text)` (additive; safe to leave even after a Worker rollback, since the old Worker does not call it).
+
+**Eligibility unchanged on purpose:** kept the no-profile-name skip as a parity gate so the candidate set did not widen (the generic line no longer needs a name; could be relaxed later for more reach, pending Nella).
+
+**KNOWN GAP (flagged, not fixed): opt-out.** There is NO structured opt-out column on `conversations`. Opt-outs are handled only conversationally (system prompt acknowledges and stops). So a lead who said "stop" still satisfies every cron guard (last message is the bot's acknowledgement) and CAN receive a T+20h nudge. Recommended fix (separate change): add an `opted_out boolean` the Worker sets on strong opt-out detection, and `&opted_out=eq.false` to the cron eligibility query. Do not ship the follow-up at scale long-term without closing this.
+
+**OPERATIONAL NOTE:** `sendToMakeScenario2` posts to a hardcoded Make webhook (not env-gated), so the STAGING Worker's cron send hits the SAME production Make Scenario 2 → ManyChat pipeline. Staging "send" tests therefore poke live Make (synthetic numeric IDs error harmlessly at ManyChat, no real DM). Consider env-gating this webhook for true staging isolation.
+
+---
+
 ## 2026-05-26 — Phase F+1 opt-out rule + Worker parse-failure fix (both shipped to production)
 
 Two production shipments this session. Staging-first workflow used for both.
