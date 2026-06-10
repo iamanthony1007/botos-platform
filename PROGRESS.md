@@ -1,3 +1,17 @@
+## 2026-06-10 — Auto Followed Up inbox tab (shipped to production)
+
+Branch `feat/inbox-auto-followed-up-tab` (commit `24e5849`, merge `5882081`). Dashboard only: no Worker change, no schema change, no new query, token-neutral (pure client-side filter, no Claude/API call).
+
+**What it shows:** a new orange inbox tab "Auto Followed Up" (between Follow Ups and Escalated) listing leads the T+20h cron auto-nudged that have NOT replied since. Filter: `followed_up=true AND last_followup_source='auto'`, with tester/for_coach exclusions mirroring the other operational tabs. No message-walking needed: when a lead replies, `append_conversation_turn` (migration 004) hardcodes `followed_up=false` and sets `re_engaged=true` while `last_followup_source` persists, so the two-flag filter IS exactly the awaiting-response set, and responders drop out mechanically. The message-level `followup:true` marker was deliberately not used (21 of the current 26 were nudged before thread recording shipped and lack it).
+
+**First real result (prod data, 2026-06-10):** 26 leads auto-nudged awaiting response, 7 re-engaged after the nudge, roughly a 21 percent response rate for the auto follow-up.
+
+**Implementation:** `dashboard/src/pages/Inbox.jsx`, the standard tab pattern: FILTERS entry, new `isAutoFollowedUpLead` helper, matchesFilter branch, badge-count branch, `#ea580c` color entries (matches the orange "auto" thread-header badge convention).
+
+**Deploy:** staging first via safety chain (verify-env/verify-deploy both staging ref, bundle inspected for the new filter), then production Pages deployment `59c29222` (https://59c29222.botos-platform-3ar.pages.dev) via `npm run deploy:production`; verify-env and verify-deploy confirmed prod ref `rydkwsjwlgnivlwlvqku` with zero staging refs, and the live prod bundle contains the tab strings and the minified filter condition. Visual check in the browser: pending Anthony opening the inbox (staging login block prevented a logged-in check; staging data would have shown count 0 anyway).
+
+---
+
 ## 2026-06-10 — Soft-close guard for the auto follow-up cron (shipped to production)
 
 Branch `feat/followup-soft-close-guard` (commit `f79aae8`, merge `98758b5`). Staging-first, then production. Worker-only change to the cron path in `sales-bot/src/index.js`.
