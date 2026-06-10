@@ -17,7 +17,7 @@ const WORKER_URL = (typeof window !== 'undefined' && window.location.hostname.in
   ? 'https://sales-bot-staging.nellakuate.workers.dev'
   : 'https://sales-bot.nellakuate.workers.dev'
 
-const FILTERS = ['All', 'Pending', 'Needs Response', 'Follow Ups', 'Escalated', 'For Coach', 'Resolved', 'Test']
+const FILTERS = ['All', 'Pending', 'Needs Response', 'Follow Ups', 'Auto Followed Up', 'Escalated', 'For Coach', 'Resolved', 'Test']
 const FOLLOW_UP_HOURS = 21
 // Step 8 (2026-05-03): IG window threshold lowered from 24h to 23h to give
 // a 1-hour safety buffer. Meta closes the messaging window exactly 24 hours
@@ -1023,6 +1023,14 @@ export default function Inbox() {
   function isNeedsResponseLead(l) {
     return l.user_sent_last && !l.followed_up && !isTesterLead(l) && !isForCoachLead(l) && l.pending_count === 0
   }
+  // 2026-06-10: Auto Followed Up tab. Leads the T+20h cron nudged that have
+  // NOT replied since. No message-walking needed: when a lead replies,
+  // append_conversation_turn resets followed_up to false (and sets
+  // re_engaged), so followed_up=true with source 'auto' IS exactly the
+  // awaiting-response set. Tester/coach exclusions mirror isNeedsResponseLead.
+  function isAutoFollowedUpLead(l) {
+    return l.followed_up === true && l.last_followup_source === 'auto' && !isTesterLead(l) && !isForCoachLead(l)
+  }
 
   const filteredLeads = sortedLeads.filter(l => {
     const matchesSearch = !search || getLeadName(l).toLowerCase().includes(search.toLowerCase()) || String(l.customer_id).includes(search) || (l.username && l.username.toLowerCase().includes(search.toLowerCase().replace('@', ''))) || (l.profile_name && l.profile_name.toLowerCase().includes(search.toLowerCase()))
@@ -1044,6 +1052,7 @@ export default function Inbox() {
       : filter === 'Pending' ? l.pending_count > 0
       : filter === 'Needs Response' ? isNeedsResponseLead(l)
       : filter === 'Follow Ups' ? isFollowUpLead(l)
+      : filter === 'Auto Followed Up' ? isAutoFollowedUpLead(l)
       : filter === 'Escalated' ? l.handoff_count > 0
       : filter === 'Resolved' ? l.pending_count === 0 && l.all_reviews.length > 0
       : true
@@ -1141,6 +1150,7 @@ export default function Inbox() {
                 : f === 'Escalated' ? leads.filter(l => !isTesterLead(l) && !isForCoachLead(l)).reduce((a, l) => a + l.handoff_count, 0)
                 : f === 'Needs Response' ? leads.filter(isNeedsResponseLead).length
                 : f === 'Follow Ups' ? leads.filter(isFollowUpLead).length
+                : f === 'Auto Followed Up' ? leads.filter(isAutoFollowedUpLead).length
                 : f === 'Resolved' ? leads.filter(l => !isTesterLead(l) && !isForCoachLead(l) && l.pending_count === 0 && l.all_reviews.length > 0).length
                 : f === 'Test' ? leads.filter(isTesterLead).length
                 : null
@@ -1148,14 +1158,14 @@ export default function Inbox() {
                 <button key={f} onClick={() => setFilter(f)} style={{
                   flexShrink: 0, padding: '5px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer',
                   fontSize: '.72rem', fontWeight: filter === f ? 600 : 400, whiteSpace: 'nowrap',
-                  background: filter === f ? (f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'For Coach' ? '#db2777' : 'var(--acc)') : 'var(--surf2)',
-                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'For Coach' ? '#db2777' : 'var(--tx2)',
+                  background: filter === f ? (f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'Auto Followed Up' ? '#ea580c' : f === 'For Coach' ? '#db2777' : 'var(--acc)') : 'var(--surf2)',
+                  color: filter === f ? '#fff' : f === 'Test' ? 'var(--tx3)' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'Auto Followed Up' ? '#ea580c' : f === 'For Coach' ? '#db2777' : 'var(--tx2)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all .15s'
                 }}>
                   {f}
                   {count > 0 && (
                     <span style={{
-                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'For Coach' ? '#db2777' : '#e53e3e',
+                      background: filter === f ? 'rgba(255,255,255,.3)' : f === 'Test' ? '#6b7280' : f === 'Needs Response' ? '#7c3aed' : f === 'Follow Ups' ? '#d97706' : f === 'Auto Followed Up' ? '#ea580c' : f === 'For Coach' ? '#db2777' : '#e53e3e',
                       color: '#fff', borderRadius: '999px', fontSize: '.6rem',
                       minWidth: '14px', height: '14px', display: 'inline-flex',
                       alignItems: 'center', justifyContent: 'center', padding: '0 3px'
