@@ -1,3 +1,25 @@
+## 2026-06-10 — Soft-close guard for the auto follow-up cron (shipped to production)
+
+Branch `feat/followup-soft-close-guard` (commit `f79aae8`, merge `98758b5`). Staging-first, then production. Worker-only change to the cron path in `sales-bot/src/index.js`.
+
+**Problem:** the T+20h cron nudged leads who politely PARKED the conversation, not dropped it. Confirmed on prod cust `1020307359`: lead "About to get on a Teams call for work. Have a nice day", bot "No worries, enjoy the call. We'll pick this up another time.", cron next day "Haven't heard back from you?". Structurally identical to a dropped lead (last message from bot, 20h+ old, not booked or escalated), so every existing guard passed. A 60-day production scan found this in roughly 11 percent of fired follow-ups (8 of 73).
+
+**What changed (all inside the cron path):**
+1. `looksLikeSoftClose(lastBotText)`: skips when the bot's own last message is a sign-off acknowledgement (no worries / no rush / no dramas, enjoy the call/day, pick this up another time, whenever you are ready, take your time, talk soon, good luck, take care, have a nice day, free-content-when-ready). CRITICAL question gate: a last bot message ending in "?" is NEVER a soft close, because the bot re-engaged with a question and a silent lead IS a legitimate nudge target. Data: about half of "no worries" acks end in a question; without the gate the guard would have wrongly suppressed roughly 36 legitimate nudges in the scan window.
+2. `looksLikeLeadPark(lastUserText)`: secondary signal for when the bot re-engaged with a question but the LEAD clearly parked (on a Teams/Zoom/work call, in a meeting, have a nice day, get back to you later/next week, been sick/busy, will continue to follow, not right now, do not want to continue/chat). Bare "later", "thanks", "not now" deliberately excluded as too generic.
+3. `extractLastUserAndBotMessage` now also returns `lastUserText` (did not exist before).
+4. New skip sits right after the escalation_handoff skip, counted as `stats.skipped.soft_close`.
+
+**Invariants:** token-neutral (pure regex, no Claude call), no new Supabase writes, eligibility query unchanged, ctx.waitUntil untouched, timing and once-per-lead logic unchanged.
+
+**Validation:** investigation rule check 8/8 (every fired follow-up the guard would have suppressed in the 60-day scan was a genuinely tone-deaf nudge, zero false suppressions); 27/27 local unit tests against the functions extracted verbatim from the patched file (`test_soft_close_local.mjs`); 4/4 staging matrix via `/__cron-test` on staging Worker `ba01329f-b2dd-4436-90e4-bf8eaf9950c6`: (a) bot sign-off no question SKIPPED, (b) bot ack ending in "?" still NUDGED, (c) lead park with bot question SKIPPED via lead side, (d) normal dropped lead still NUDGED; second run examined=2 sent=0 soft_close=2 (no re-nudge loop). Tester rows cleaned up.
+
+**Production deploy:** Worker `sales-bot` version `8cc53aa7-2afa-43e9-8909-4f0568001aa3`. `/health` 200 (supabase_connected true), cron schedule `0 * * * *` intact, `/__cron-test` 404 (prod env guard). Rollback anchor: previous version `0ead9f3b-f745-4ca7-937a-9abdb70f8a95` via `wrangler rollback`. First live exercise of the guard happens at the next hourly cron tick.
+
+**Still open (unchanged by this):** the structured opt-out gap from the 2026-06-10 entry below. The lead-park list happens to catch "do not want to continue/chat" wording at the cron layer, but there is still no `opted_out` column and no guarantee for other opt-out phrasings; the proper fix remains a separate change.
+
+---
+
 ## 2026-06-10 — Auto follow-up: generic line + thread recording + "Auto follow-up" tag (shipped to production)
 
 Branch `feat/followup-generic-line-and-thread-tag` (commit `ff60b65`). Staging-first, then production. Three coordinated changes plus a new migration.
