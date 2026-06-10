@@ -657,10 +657,22 @@ async function sendDeliveryFailureEmail(env, payload) {
 // ---------------------------------------------------------------------------
 // Priority 3 (2026-05-12): auto follow-up at T+20h after lead's last message.
 // Helpers below are used by the scheduled() handler. See PROGRESS.md for the
-// full design. The cron sends a single-word message ("James?") to leads who
-// went quiet between T+20h and T+21h, then sets followed_up=true and
-// last_followup_source='auto' on the conversation row.
+// full design. The cron sends a fixed generic line ("Haven't heard back from
+// you?") to leads who went quiet between T+20h and T+21h, then records the
+// sent message into conversations.messages AND sets followed_up=true,
+// followup_count+1, last_followup_source='auto' in ONE atomic, race-safe write
+// via the append_followup_turn RPC (migration 008).
+//
+// History: until 2026-06-10 the message was the lead's first name plus "?"
+// (e.g. "James?") and the cron wrote only the followed_up flags via a separate
+// PATCH, so the follow-up never appeared in the dashboard thread. Nella asked
+// for a generic line; recording the turn was added at the same time.
 // ---------------------------------------------------------------------------
+
+// Fixed follow-up line. Single source of truth; swap here (or extend to a
+// rotating array) if the wording changes. sanitizeBotMessage strips em dashes
+// on the way out, so any future variant stays compliant automatically.
+const FOLLOWUP_MESSAGE = "Haven't heard back from you?";
 
 const TESTER_CUSTOMER_IDS = new Set([]);
 function isTesterLeadForCron(conv) {
@@ -827,10 +839,14 @@ async function runFollowUpCron(env, ctx, now) {
     if (containsBookingLink(lastBotText)) { stats.skipped.booking_link++; continue; }
     if (looksLikeEscalationHandoff(lastBotText)) { stats.skipped.escalation_handoff++; continue; }
 
-    const name = resolveFollowUpName(c);
-    if (!name) { stats.skipped.no_profile_name++; continue; }
+    // Eligibility parity: keep skipping leads with no usable profile_name even
+    // though the generic line no longer uses the name. This preserves the EXACT
+    // candidate set from the name-based version so this change does not widen
+    // who gets nudged. (Could be relaxed later to reach no-profile-name leads;
+    // flagged for Nella, do not change without sign-off.)
+    if (!resolveFollowUpName(c)) { stats.skipped.no_profile_name++; continue; }
 
-    const sanitized = sanitizeBotMessage(`${name}?`);
+    const sanitized = sanitizeBotMessage(FOLLOWUP_MESSAGE);
     // Cron sends plain strings to match Scenario 2 webhook interface contract.
     // The webhook expects messages: [string], not messages: [{text, typing_delay_ms}].
     // Sending objects causes Make BasicFeeder to emit empty 90.value which fails
@@ -847,31 +863,39 @@ async function runFollowUpCron(env, ctx, now) {
       continue;
     }
 
-    const patchUrl = `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&customer_id=eq.${encodeURIComponent(String(c.customer_id))}`;
-    const patchBody = JSON.stringify({
-      followed_up: true,
-      followup_count: 1,
-      last_followup_source: "auto"
-    });
+    // Record the sent follow-up into conversations.messages AND set the
+    // follow-up flags (followed_up=true, followup_count+1, last_followup_source)
+    // in ONE atomic, race-safe write via append_followup_turn (migration 008).
+    // This replaces the old separate PATCH so there is no PATCH-vs-append race
+    // and the message shows in the dashboard thread + the bot's rehydrated
+    // memory. The entry carries followup:true, which the dashboard reads to
+    // render the distinct "Auto follow-up" tag (it creates no reviews row).
+    // CRITICAL: ctx.waitUntil, never bare await (the multi-hour-outage rule).
+    const followupEntry = {
+      role: "assistant",
+      content: sanitized,
+      bot_messages: [sanitized],
+      typing_delays: [FOLLOWUP_TYPING_DELAY_MS],
+      timestamp: Date.now(),
+      followup: true,
+      followup_source: "auto",
+      message_count: 1
+    };
     ctx.waitUntil(
-      fetch(patchUrl, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-          "apikey": env.SUPABASE_SERVICE_KEY,
-          "Prefer": "return=minimal"
-        },
-        body: patchBody
+      supabaseRpc(env, "append_followup_turn", {
+        p_bot_id: BOT_ID,
+        p_customer_id: String(c.customer_id),
+        p_new_message: followupEntry,
+        p_source: "auto"
       }).then(r => {
-        if (!r.ok) {
-          return r.text().then(t => console.error(`[cron] PATCH failed for ${c.customer_id}: ${r.status} ${t.slice(0, 300)}`));
+        if (!r || !r.ok || (r.result && r.result.ok === false)) {
+          console.error(`[cron] append_followup_turn failed for ${c.customer_id}: ${JSON.stringify(r && (r.error || r.result) || r)}`);
         }
-      }).catch(e => console.error(`[cron] PATCH threw for ${c.customer_id}: ${e.message}`))
+      }).catch(e => console.error(`[cron] append_followup_turn threw for ${c.customer_id}: ${e.message}`))
     );
 
     stats.sent++;
-    console.log(`[cron] sent follow-up to ${c.customer_id} (${name})`);
+    console.log(`[cron] sent follow-up to ${c.customer_id}`);
 
     await new Promise(r => setTimeout(r, 200));
   }
