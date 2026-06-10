@@ -688,11 +688,12 @@ __name(isTesterLeadForCron, "isTesterLeadForCron");
 
 function extractLastUserAndBotMessage(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
-    return { lastUserAtMs: null, lastBotAtMs: null, lastMsgRole: null, lastBotText: null };
+    return { lastUserAtMs: null, lastBotAtMs: null, lastMsgRole: null, lastBotText: null, lastUserText: null };
   }
   let lastUserAtMs = null;
   let lastBotAtMs = null;
   let lastBotText = null;
+  let lastUserText = null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (!m || typeof m !== "object") continue;
@@ -701,6 +702,7 @@ function extractLastUserAndBotMessage(messages) {
     const tsValid = Number.isFinite(ts) && ts > 0;
     if (role === "user" && lastUserAtMs === null && tsValid) {
       lastUserAtMs = ts;
+      lastUserText = typeof m.content === "string" ? m.content : null;
     }
     if ((role === "bot" || role === "assistant") && lastBotAtMs === null) {
       if (tsValid) lastBotAtMs = ts;
@@ -710,7 +712,7 @@ function extractLastUserAndBotMessage(messages) {
   }
   const last = messages[messages.length - 1];
   const lastMsgRole = last && typeof last === "object" ? String(last.role || "").toLowerCase() : null;
-  return { lastUserAtMs, lastBotAtMs, lastMsgRole, lastBotText };
+  return { lastUserAtMs, lastBotAtMs, lastMsgRole, lastBotText, lastUserText };
 }
 __name(extractLastUserAndBotMessage, "extractLastUserAndBotMessage");
 
@@ -732,6 +734,72 @@ function looksLikeEscalationHandoff(text) {
   return patterns.some(re => re.test(text));
 }
 __name(looksLikeEscalationHandoff, "looksLikeEscalationHandoff");
+
+// ---------------------------------------------------------------------------
+// Soft-close guard (2026-06-10). Skips the T+20h nudge for leads who politely
+// PARKED the conversation rather than going silent. Two signals, both cheap
+// string matching (token-neutral, no Claude call, no extra Supabase reads):
+//   1. looksLikeSoftClose(lastBotText): the bot's own last message is a
+//      sign-off acknowledgement, e.g. "No worries, enjoy the call. We'll pick
+//      this up another time." CRITICAL question gate: a trailing "?" means
+//      the bot re-engaged with a question, so a silent lead IS a legitimate
+//      nudge target and is NOT treated as a soft close. Production data:
+//      about half of "no worries" acks end in a question and must still nudge.
+//   2. looksLikeLeadPark(lastUserText): the lead's last message explicitly
+//      parked ("about to get on a Teams call, have a nice day") even when the
+//      bot re-engaged with a question afterwards.
+// Phrase lists are data-grounded from a 60-day production scan (2026-06-10):
+// the combined rule suppressed 8/8 genuinely tone-deaf nudges with zero false
+// suppressions among fired follow-ups. Deliberately NOT matched because they
+// are too generic: bare "later", bare "thanks" / "appreciate it", bare
+// "not now". Curly apostrophes (\u2019) are matched because Instagram leads
+// often type them.
+// ---------------------------------------------------------------------------
+function looksLikeSoftClose(text) {
+  if (!text || typeof text !== "string") return false;
+  // Question gate: the bot asked something and is awaiting a reply.
+  if (text.trim().endsWith("?")) return false;
+  const patterns = [
+    /\bno (worries|rush|pressure|dramas|problem)\b/i,
+    /\b(all|sounds) good\b/i,
+    /\benjoy (the|your) (call|day|meeting|weekend|rest)\b/i,
+    /\bpick (this|it) (back )?up (another time|later|tomorrow|whenever)\b/i,
+    /\banother time\b/i,
+    /\bwhen(ever)? you(['\u2019]re| are)? ready\b/i,
+    /\bwhen the time(['\u2019]s| is) right\b/i,
+    /\b(take your|in your own) time\b/i,
+    /\b(talk|speak|chat|catch up) (soon|later)\b/i,
+    /\breach out (any ?time|whenever)\b/i,
+    /\bi['\u2019]?m here (if|when|whenever) you\b/i,
+    /\bgood luck\b/i,
+    /\ball the best\b/i,
+    /\btake care\b/i,
+    /\bhave a (nice|good|great) (day|weekend|one|evening)\b/i,
+    /free content[\s\S]{0,80}when you(['\u2019]re| are) ready/i
+  ];
+  return patterns.some(re => re.test(text));
+}
+__name(looksLikeSoftClose, "looksLikeSoftClose");
+
+function looksLikeLeadPark(text) {
+  if (!text || typeof text !== "string") return false;
+  const patterns = [
+    /\bhave a (nice|good|great) (day|weekend|evening)\b/i,
+    /\bon a (teams|zoom|work) call\b/i,
+    /\bin a meeting\b/i,
+    /\b(get|circle|reach) back to you (later|tomorrow|next week|soon)\b/i,
+    /\bpick (this|it) (back )?up (another time|later)\b/i,
+    /\b(talk|speak) (soon|later)\b/i,
+    /\bbeen (sick|busy|away)\b/i,
+    /\bnot (doing much|much) (right now|at the moment)\b/i,
+    /\bwill (continue to )?follow\b/i,
+    /\bkeep following\b/i,
+    /\bnot (right now|at the moment)\b/i,
+    /\b(do not|don['\u2019]?t) want to (continue|chat)\b/i
+  ];
+  return patterns.some(re => re.test(text));
+}
+__name(looksLikeLeadPark, "looksLikeLeadPark");
 
 function resolveFollowUpName(conv) {
   const pn = String(conv.profile_name || "").trim();
@@ -783,6 +851,7 @@ async function runFollowUpCron(env, ctx, now) {
       user_message_outside_window: 0,
       booking_link: 0,
       escalation_handoff: 0,
+      soft_close: 0,
       tester: 0,
       no_profile_name: 0,
       make_send_failed: 0
@@ -825,7 +894,7 @@ async function runFollowUpCron(env, ctx, now) {
     const msgs = c.messages;
     if (!Array.isArray(msgs) || msgs.length === 0) { stats.skipped.no_messages++; continue; }
 
-    const { lastUserAtMs, lastBotAtMs, lastMsgRole, lastBotText } =
+    const { lastUserAtMs, lastBotAtMs, lastMsgRole, lastBotText, lastUserText } =
       extractLastUserAndBotMessage(msgs);
 
     if (!lastUserAtMs) { stats.skipped.no_user_message++; continue; }
@@ -838,6 +907,12 @@ async function runFollowUpCron(env, ctx, now) {
     }
     if (containsBookingLink(lastBotText)) { stats.skipped.booking_link++; continue; }
     if (looksLikeEscalationHandoff(lastBotText)) { stats.skipped.escalation_handoff++; continue; }
+
+    // Soft-close guard: the lead politely parked, or the bot signed off
+    // without a question. A nudge here is tone-deaf. See looksLikeSoftClose.
+    if (looksLikeSoftClose(lastBotText) || looksLikeLeadPark(lastUserText)) {
+      stats.skipped.soft_close++; continue;
+    }
 
     // Eligibility parity: keep skipping leads with no usable profile_name even
     // though the generic line no longer uses the name. This preserves the EXACT
