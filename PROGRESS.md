@@ -1,3 +1,23 @@
+## 2026-06-25: Privacy policy static page (shipped to production)
+
+Branch `feat/privacy-static-page` (commit `71d5871`, merge `373b4b9`). Dashboard-only, static-file-only: no Worker, no schema, no Supabase change, no React/router/auth change, token-neutral.
+
+**What shipped:** a standalone static HTML privacy policy at `dashboard/public/privacy.html`. Vite copies `public/*` verbatim into `dist/`, so Cloudflare Pages serves it directly at `/privacy` (and `/privacy.html`, which 308-redirects to `/privacy`). Static files take precedence over the SPA catch-all, so the page is publicly reachable WITHOUT the dashboard login. This was the deliberate choice over a React route: a route in `App.jsx` would couple the must-be-public policy to the auth-gated bundle and could slip behind the login on a future routing change; the static file cannot, because the React app and AuthContext never load for it.
+
+**Why:** Meta app-review prep. Meta's reviewer needs a publicly reachable privacy policy URL; a login wall fails review. The URL to give Meta is `https://getmu.co/privacy`.
+
+**Content:** palette-matched to the dashboard (gold/champagne `#D4AF37`, Inter + Playfair Display), logo at `/Logo horizontal.png` with a wordmark text fallback, GDPR-oriented policy naming the actual subprocessors (Anthropic, Supabase, Cloudflare, Make, ManyChat, Meta). Operator: Ornella Kuate Konga trading as Mu AI (SIREN 837 927 961), contact `privacy@getmu.co`.
+
+**Domain:** `getmu.co` attached to the `botos-platform` Pages project via Custom domains (Active, SSL) in the Nellakuate Cloudflare account, zone `b196f8ec4b3e8a0b7c9168a2d4904428`.
+
+**Deploy:** staging first (Pages `b0874b6e`), then production via the `npm run deploy:production` safety chain with `CLOUDFLARE_ACCOUNT_ID=444afb7987a4f1e657e0bad22a528a42`. verify-env [production] ref `rydkwsjwlgnivlwlvqku` (0 staging refs), verify-deploy [production] OK. Prod Pages deployment `326df4fe`.
+
+**Verification (prod):** `botos-platform-3ar.pages.dev/privacy` HTTP 200, title "Privacy Policy | Mu AI", SIREN present, 0 SPA bundle refs. `getmu.co/privacy` HTTP 200, same policy (not the SPA landing). Dashboard root `/` still serves the SPA (title "MU AI"), non-breakage confirmed. The getmu.co response is roughly 495 bytes larger than the pages.dev copy because the getmu.co zone applies Cloudflare email-address obfuscation to the `mailto:` links; content is otherwise identical.
+
+**REMAINING before handing Meta the URL:** set up email forwarding for `privacy@getmu.co` so privacy and data-subject requests actually reach an inbox. The policy lists that address as the contact and rights channel, so it must receive mail before the URL goes to reviewers and users.
+
+---
+
 ## 2026-06-10 — Auto Followed Up inbox tab (shipped to production)
 
 Branch `feat/inbox-auto-followed-up-tab` (commit `24e5849`, merge `5882081`). Dashboard only: no Worker change, no schema change, no new query, token-neutral (pure client-side filter, no Claude/API call).
