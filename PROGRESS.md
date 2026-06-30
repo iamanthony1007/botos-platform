@@ -1,3 +1,26 @@
+## 2026-06-30: Stage 3b done. Signed POST handler on /meta/webhook live.
+
+POST /meta/webhook now verifies Meta's X-Hub-Signature-256 (HMAC-SHA256 over
+the RAW request body, keyed by the new WHATSAPP_APP_SECRET secret) before
+trusting any byte. Reads request.text() BEFORE parse (re-serialization would
+change the hash); constant-time comparison. Missing or wrong signature -> 401;
+valid -> fast 200 ("EVENT_RECEIVED") + log only. No payload parsing or reply
+pipeline yet. GET handshake unchanged. Logic proven in isolation (valid accepted;
+wrong-secret, tampered, malformed-header, re-serialized all rejected) before
+deploy. Verified on production: GET wrong-token 403, POST no-sig 401, POST
+wrong-sig 401, /health healthy. Live ManyChat /webhook untouched. Prod Worker
+version b8735971-0705-4f79-b639-6705b63b6ead.
+
+Secrets now on prod: TOKEN_ENCRYPTION_KEY, WHATSAPP_VERIFY_TOKEN, WHATSAPP_APP_SECRET.
+
+Next: Stage 3c. Subscribe the messages field in Meta, send a real WhatsApp test
+message, confirm a genuine signed event returns 200; then parse the verified
+payload (value.metadata.phone_number_id, contacts[].wa_id, messages[]) and map
+phone_number_id -> bot via connected_accounts. (Verify exact payload field names
+against Meta docs at 3c.)
+
+---
+
 ## 2026-06-30: Stage 3a done. Meta/WhatsApp webhook GET verification live + Meta-verified.
 
 GET /meta/webhook echoes hub.challenge when hub.verify_token matches the new
