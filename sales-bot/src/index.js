@@ -1003,15 +1003,41 @@ var index_default = {
 
     const url = new URL(request.url);
 
-    // Meta/WhatsApp webhook verification (GET): echo hub.challenge when the verify token matches.
-    if (url.pathname === "/meta/webhook" && request.method === "GET") {
-      const mode = url.searchParams.get("hub.mode");
-      const token = url.searchParams.get("hub.verify_token");
-      const challenge = url.searchParams.get("hub.challenge");
-      if (mode === "subscribe" && token && token === env.WHATSAPP_VERIFY_TOKEN) {
-        return new Response(challenge || "", { status: 200, headers: { "Content-Type": "text/plain" } });
+    // Meta/WhatsApp webhook. GET = subscription verification; POST = signed inbound events.
+    if (url.pathname === "/meta/webhook") {
+
+      // GET: verification handshake (echo hub.challenge when verify token matches).
+      if (request.method === "GET") {
+        const mode = url.searchParams.get("hub.mode");
+        const token = url.searchParams.get("hub.verify_token");
+        const challenge = url.searchParams.get("hub.challenge");
+        if (mode === "subscribe" && token && token === env.WHATSAPP_VERIFY_TOKEN) {
+          return new Response(challenge || "", { status: 200, headers: { "Content-Type": "text/plain" } });
+        }
+        return new Response("Forbidden", { status: 403 });
       }
-      return new Response("Forbidden", { status: 403 });
+
+      // POST: verify Meta's signature over the RAW body BEFORE trusting/parsing anything.
+      if (request.method === "POST") {
+        // 1) Read the raw body as text. Do NOT parse yet; the signature is over these exact bytes.
+        const rawBody = await request.text();
+
+        // 2) Verify X-Hub-Signature-256 = sha256=<hmac-sha256(rawBody, WHATSAPP_APP_SECRET)>.
+        const signatureHeader = request.headers.get("x-hub-signature-256");
+        const valid = await verifyMetaSignature(rawBody, signatureHeader, env.WHATSAPP_APP_SECRET);
+        if (!valid) {
+          console.log("Meta webhook: signature verification FAILED, rejecting.");
+          return new Response("Unauthorized", { status: 401 });
+        }
+
+        // 3) Valid request. Return 200 FAST so Meta does not retry/disable the webhook.
+        //    Stage 3c/3d will parse rawBody and drive the reply pipeline. For now, log only.
+        console.log("Meta webhook: valid signed event received (len " + rawBody.length + ").");
+        return new Response("EVENT_RECEIVED", { status: 200 });
+      }
+
+      // Any other method on this path.
+      return new Response("Method Not Allowed", { status: 405 });
     }
 
     // Priority 3 (2026-05-12): staging-only manual cron trigger.
@@ -3312,4 +3338,40 @@ async function decryptToken(blob, env) {
   const ciphertext = packed.slice(12);
   const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
   return new TextDecoder().decode(decrypted);
+}
+
+// ============================================================================
+// Meta webhook signature verification (HMAC X-Hub-Signature-256).
+// Meta signs the RAW request body with HMAC-SHA256 keyed by the App Secret and
+// sends "X-Hub-Signature-256: sha256=<hexdigest>". We recompute and compare in
+// constant time. Verify over request.text() BEFORE JSON.parse, since any
+// re-serialization changes the bytes and breaks the match.
+// ============================================================================
+function metaHexFromBytes(bytes) {
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, "0");
+  return hex;
+}
+
+function metaTimingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
+async function verifyMetaSignature(rawBody, signatureHeader, appSecret) {
+  if (!signatureHeader || !signatureHeader.startsWith("sha256=")) return false;
+  if (!appSecret) return false;
+  const expected = signatureHeader.slice("sha256=".length);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(appSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const macBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
+  const computed = metaHexFromBytes(new Uint8Array(macBuf));
+  return metaTimingSafeEqual(computed, expected);
 }
