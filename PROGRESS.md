@@ -1,3 +1,17 @@
+## 2026-06-30: connected_accounts table applied to production (Meta build Stage 1)
+
+Branch `feat/connected-accounts-migration` (commit `78514fa`, merge `bc0b597`). Migration `db/migrations/009_add_connected_accounts.sql`. This is Stage 1 of the Meta build sequence in the milestone entry below.
+
+**What:** new isolated table `public.connected_accounts` mapping an external messaging account (WhatsApp phone number, Instagram account, etc.) to a bot and storing the per-account access token encrypted at rest. Channel-agnostic: `platform` distinguishes whatsapp / instagram / messenger and `platform_metadata` jsonb holds channel-specific identifiers (e.g. WABA id). UNIQUE `(platform, external_account_id)`, index on `bot_id`. Foundation for replacing the single hardcoded `BOT_ID` in inbound routing.
+
+**RLS:** ENABLED with no policy, on purpose. The table holds access tokens, so only the Worker (service role, BYPASSRLS via `SUPABASE_SERVICE_KEY`) reads it; the dashboard anon key gets zero rows. Enabled explicitly because a table created via raw SQL does not inherit the table-editor's RLS-on-by-default.
+
+**Applied to PRODUCTION** Supabase (ref `rydkwsjwlgnivlwlvqku`, confirmed from `sales-bot/wrangler.toml` [vars]) via the SQL Editor, by Anthony's explicit decision to go direct to prod (no live traffic right now). No staging apply. Verified: 12 columns correct order/types/defaults, unique constraint `connected_accounts_platform_account_key`, indexes `connected_accounts_pkey` / `connected_accounts_platform_account_key` / `idx_connected_accounts_bot_id`, `relrowsecurity = true`.
+
+**Behavior-neutral:** no current code reads the table, the live `/webhook` (ManyChat) path is untouched, and neither the Worker nor the dashboard was deployed. Next stages (encryption helpers, `/meta/webhook`, Graph API send, deauthorize + data-deletion) are unbuilt; see the milestone entry below.
+
+---
+
 ## 2026-06-30: Meta API integration phase mapped and started (milestone)
 
 Privacy + domain + portfolio foundation complete; multi-account Meta build sequence defined. No code shipped this entry beyond the privacy items below; this records phase state and the build plan.
