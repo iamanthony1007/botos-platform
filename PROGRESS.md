@@ -1,3 +1,17 @@
+## 2026-06-30: Privacy page contact email + retention update (shipped to production)
+
+Branch `feat/privacy-contact-retention-update` (commit `51c00d6`, merge `7c0fbf0`). Content-only edit to the live static privacy page `dashboard/public/privacy.html`. No Worker, no schema, no Supabase change, no React/router/auth change, token-neutral.
+
+**What changed (Nella's confirmed details):** two edits, nothing else. (1) Contact email `privacy@getmu.co` to `admin@getmu.co` in all three places (section 1 "Who we are", section 8 "Your rights", section 12 contact block), both the `mailto:` href and the visible text. (2) Data retention "24 months" to "12 months" in section 7. Deliberately unchanged: operator name (Ornella Kuate Konga), address (119 Boulevard Brune, Paris), SIREN 837 927 961, age 16, France/EU framing, and the subprocessor list (no Stripe; billing is not live).
+
+**Deploy:** staging first (Pages `6741cd06`), then production via the `npm run deploy:production` safety chain with `CLOUDFLARE_ACCOUNT_ID=444afb7987a4f1e657e0bad22a528a42`. verify-env [production] ref `rydkwsjwlgnivlwlvqku` (0 staging refs), verify-deploy [production] OK. Prod Pages deployment `9aaff4fa`.
+
+**Verification (prod):** `botos-platform-3ar.pages.dev/privacy` HTTP 200, title "Privacy Policy | Mu AI", `admin@getmu.co` x3, `privacy@getmu.co` 0, "12 months" 1, "24 months" 0, Stripe 0, 0 SPA bundle refs. `getmu.co/privacy` HTTP 200, same updated content (12 months present, 24 months absent); the 3 contact emails render as Cloudflare email-obfuscated `[email&#160;protected]` spans on the proxied zone, and the `data-cfemail` payload decodes to `admin@getmu.co` (so the email is correct, just edge-obfuscated; a browser renders the clickable `mailto:admin@getmu.co`). Dashboard root `/` still serves the SPA (title "MU AI"), non-breakage confirmed.
+
+**Resolves** the open item from the 2026-06-25 entry below: the contact mailbox is now `admin@getmu.co`. Outstanding before relying on it: confirm `admin@getmu.co` actually receives mail (Cloudflare Email Routing on the getmu.co zone) so privacy and data-subject requests land in an inbox.
+
+---
+
 ## 2026-06-25: Privacy policy static page (shipped to production)
 
 Branch `feat/privacy-static-page` (commit `71d5871`, merge `373b4b9`). Dashboard-only, static-file-only: no Worker, no schema, no Supabase change, no React/router/auth change, token-neutral.
