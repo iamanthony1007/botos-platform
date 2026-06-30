@@ -1,3 +1,29 @@
+## 2026-06-30: Meta API integration phase mapped and started (milestone)
+
+Privacy + domain + portfolio foundation complete; multi-account Meta build sequence defined. No code shipped this entry beyond the privacy items below; this records phase state and the build plan.
+
+**DONE this period:**
+- Domain `getmu.co` live on Cloudflare, attached to the `botos-platform` Pages project (Active, SSL). [www.getmu.co](https://www.getmu.co) still verifying (optional).
+- Privacy policy LIVE at `getmu.co/privacy` as a standalone static file (`dashboard/public/privacy.html`, not a React route, publicly reachable, not behind auth). See the two privacy entries below for deploy details.
+- Verified Meta Business Portfolio confirmed: "Ornella Kuate", Portfolio ID `25419132507710693`, Verified Nov 21 2025, details match the SIREN registration. REUSE this; do NOT redo Business Verification.
+- Worker architecture investigation complete: greenfield for Meta (no existing Meta/Graph code). The AI-reply core (`callClaude`, `resolveNextAction`, retrieval, `append_conversation_turn`) is transport-decoupled and reusable. Personal data spans Supabase tables AND Cloudflare KV (`MEMORY_STORE` key `memory:${customer_id}`). The current `/webhook` has no signature check. The send path is a single-tenant hardcoded Make webhook (`sendToMakeScenario2`) with a hardcoded `BOT_ID`.
+
+**PENDING / NEXT:**
+- Privacy page redeploy with Nella's confirmed answers: contact email to `admin@getmu.co`, retention to 12 months, Stripe stays out (not live). DONE, see the 2026-06-30 privacy update entry below. Still to do: set up Cloudflare email forwarding for `admin@getmu.co`.
+- Meta integration build (multi-session, multi-account foundation, encryption-at-rest for per-account tokens, live ManyChat path must stay working throughout):
+  - Stage 1: `connected_accounts` table migration (IG account id, bot mapping, encrypted token, expiry, deauthorized flag).
+  - Stage 2: encryption helpers (Web Crypto, new Worker secret for the key, round-trip tested).
+  - Stage 3: `/meta/webhook` GET (verify-token challenge) + POST (HMAC over raw body with `META_APP_SECRET`), parse payload, map account to bot, reuse the reply core via an extracted behavior-preserving `processInboundMessage` shared function (do NOT refactor `/webhook`).
+  - Stage 4: Graph API send path (per-account decrypted token, kept strictly separate from `sendToMakeScenario2`).
+  - Stage 5: `/auth/deauthorize` + `/auth/data-deletion` (verify `signed_request`; deletion clears Supabase + KV and awaits the delete as a conscious exception to the never-await rule).
+- New Worker secrets to add later: `META_APP_SECRET`, `META_VERIFY_TOKEN`, token-encryption key.
+- Cutover risk: activate exactly one inbound source per account to avoid double delivery (ManyChat + Meta), since the `append_conversation_turn` dedup will not catch cross-pipeline duplicates.
+- After build: create Meta App (Business type, connect verified portfolio, Tech Provider), wire endpoint URLs, reviewer test IG account, screencasts, permission justifications (`instagram_business_basic`, `_manage_messages`, `_manage_comments` + Human Agent; Instagram Login option A), submit App Review.
+
+**ACCESS NOTES:** Anthony does Meta-identity work logged in as Nella/Ornella (she shared FB access). Anthony's own personal Facebook is under Meta review (~20+ days), so keep it OUT of the Business Portfolio. Portfolio 2FA was tied to the stolen phone; she has a new phone now.
+
+---
+
 ## 2026-06-30: Privacy page contact email + retention update (shipped to production)
 
 Branch `feat/privacy-contact-retention-update` (commit `51c00d6`, merge `7c0fbf0`). Content-only edit to the live static privacy page `dashboard/public/privacy.html`. No Worker, no schema, no Supabase change, no React/router/auth change, token-neutral.
