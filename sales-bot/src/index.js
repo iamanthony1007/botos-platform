@@ -1003,23 +1003,6 @@ var index_default = {
 
     const url = new URL(request.url);
 
-    // TEMP (Stage 2 verification only, removed in Step 2.3): crypto round-trip self-test.
-    if (url.pathname === "/meta/crypto-selftest" && request.method === "GET") {
-      const keyConfigured = typeof env.TOKEN_ENCRYPTION_KEY === "string" && env.TOKEN_ENCRYPTION_KEY.length > 0;
-      let ok = false;
-      try {
-        const sample = "selftest-roundtrip-" + Date.now();
-        const blob = await encryptToken(sample, env);
-        const back = await decryptToken(blob, env);
-        ok = back === sample;
-      } catch (e) {
-        ok = false;
-      }
-      return new Response(JSON.stringify({ ok, keyConfigured }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" }
-      });
-    }
-
     // Priority 3 (2026-05-12): staging-only manual cron trigger.
     if (url.pathname === "/__cron-test" && request.method === "GET") {
       if (env.ENVIRONMENT !== "staging") {
