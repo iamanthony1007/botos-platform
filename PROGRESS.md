@@ -1,3 +1,28 @@
+## 2026-06-30: Stage 2 done. Token encryption helpers live (AES-256-GCM).
+
+Added encryptToken/decryptToken to the Worker (Web Crypto AES-256-GCM, random
+12-byte IV packed in front of ciphertext, base64 self-describing blob). They
+encrypt per-account access tokens before storing in
+connected_accounts.access_token_encrypted and decrypt on read. New Worker
+secret TOKEN_ENCRYPTION_KEY set on production (base64 of 32 random bytes).
+Round-trip verified ON PRODUCTION via a temporary /meta/crypto-selftest route
+({"ok":true,"keyConfigured":true}); route since removed and redeployed (prod
+version 22c300af-7bfa-4ed6-b93f-abac9c250183). Helpers unused until Stage 3. Live ManyChat /webhook
+untouched throughout.
+
+Note: sales-bot/src/index.js is the source of truth (wrangler.toml main =
+src/index.js, no build step). It carries esbuild-style __name() wrappers and a
+sourceMappingURL footer from a past one-time bundling, but is edited directly
+and re-bundled by wrangler on deploy, so hand-edits are safe.
+
+Next: Stage 3, the /meta (WhatsApp) inbound webhook. GET hub.challenge echo +
+POST HMAC X-Hub-Signature-256 verification over the RAW body (read
+request.text() before parse), parse the payload, map the inbound account to a
+bot via connected_accounts, reuse the reply core by extracting
+processInboundMessage. Do NOT refactor the existing /webhook.
+
+---
+
 ## 2026-06-30: connected_accounts table applied to production (Meta build Stage 1)
 
 Branch `feat/connected-accounts-migration` (commit `78514fa`, merge `bc0b597`). Migration `db/migrations/009_add_connected_accounts.sql`. This is Stage 1 of the Meta build sequence in the milestone entry below.
