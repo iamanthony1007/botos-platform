@@ -1,3 +1,26 @@
+## 2026-06-30: Stage 3a done. Meta/WhatsApp webhook GET verification route live.
+
+Added GET /meta/webhook to the Worker: echoes hub.challenge when
+hub.verify_token matches the new WHATSAPP_VERIFY_TOKEN secret (production),
+else 403. Verified on production (correct token echoes challenge, wrong token
+403, /health healthy, live ManyChat /webhook untouched). Prod Worker version
+09b3849a-d02c-4f3d-b3b9-9935193eb6bb.
+
+Stage 3 approach = Plan B: slim WhatsApp orchestration reusing the decoupled
+reply-core functions (callClaude, retrieval, resolveNextAction,
+append_conversation_turn, sendToSlack); /webhook stays single-client by design
+(de-hardcoding it deferred, likely never, as clients move to Meta-direct
+channels). getBotSettings to gain an optional botId param (default BOT_ID) so
+/webhook stays unchanged. WhatsApp path is multi-tenant from day one via
+connected_accounts.
+
+Next: create the Meta app (as Nella, her verified portfolio, WhatsApp use
+case) for the App Secret + test number + WABA, verify the webhook callback
+live, then Stage 3b (POST handler, HMAC X-Hub-Signature-256 over raw body
+using WHATSAPP_APP_SECRET).
+
+---
+
 ## 2026-06-30: Stage 2 done. Token encryption helpers live (AES-256-GCM).
 
 Added encryptToken/decryptToken to the Worker (Web Crypto AES-256-GCM, random
