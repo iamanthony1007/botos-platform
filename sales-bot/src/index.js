@@ -3259,3 +3259,46 @@ __name(sendFeedbackToSlack, "sendFeedbackToSlack");
 
 export { index_default as default };
 //# sourceMappingURL=index.js.map
+
+// ============================================================================
+// Token encryption helpers (AES-256-GCM, Web Crypto).
+// Encrypts per-account access tokens before storing them in
+// connected_accounts.access_token_encrypted, and decrypts on read. Key is the
+// Worker secret TOKEN_ENCRYPTION_KEY (base64 of 32 random bytes). A random
+// 12-byte IV is generated per encryption and packed in front of the ciphertext,
+// so the stored blob is self-describing.
+// ============================================================================
+function encBytesToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function encBase64ToBytes(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function encryptToken(plaintext, env) {
+  const keyBytes = encBase64ToBytes(env.TOKEN_ENCRYPTION_KEY);
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(plaintext);
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  const packed = new Uint8Array(iv.length + ciphertext.byteLength);
+  packed.set(iv, 0);
+  packed.set(new Uint8Array(ciphertext), iv.length);
+  return encBytesToBase64(packed);
+}
+
+async function decryptToken(blob, env) {
+  const keyBytes = encBase64ToBytes(env.TOKEN_ENCRYPTION_KEY);
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["decrypt"]);
+  const packed = encBase64ToBytes(blob);
+  const iv = packed.slice(0, 12);
+  const ciphertext = packed.slice(12);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  return new TextDecoder().decode(decrypted);
+}
