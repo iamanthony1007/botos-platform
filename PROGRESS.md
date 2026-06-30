@@ -1,3 +1,35 @@
+## 2026-07-01: Stage 3c done. Meta/WhatsApp inbound parse + route live and proven.
+
+POST /meta/webhook parses the verified payload, skips value.statuses events,
+reads metadata.phone_number_id / contacts[].wa_id / messages[].text.body,
+resolves bot via connected_accounts (platform=whatsapp), logs routing. Non-text
+logged-and-skipped. try/catch guarantees 200 on any signed event. New helper
+resolveConnectedAccount (service-role lookup, skips deauthorized). No storage,
+no reply yet. Prod Worker version b97bd8e0-3817-4ff5-a69c-86ff79fad872.
+
+Verified end to end on REAL Meta traffic: a WhatsApp reply to the test number
+(Phone Number ID 1190161784184058, WABA 1010810851319371) was received,
+signature-verified, parsed, and routed to bot 00000000-0000-0000-0000-000000000002
+in wrangler tail.
+
+Setup learnings this session:
+- Webhook delivery to an external callback requires the app to be subscribed to
+  the WABA via POST /{WABA_ID}/subscribed_apps. The Meta dashboard's built-in
+  viewer ("WA DevX Webhook Events 1P App") shows payloads even when your app is
+  NOT subscribed, which masks the problem. Subscribing field=messages at the app
+  level is NOT the same as the WABA subscription. Fold the WABA subscribe into
+  the production-number cutover checklist.
+- connected_accounts test row maps test Phone Number ID 1190161784184058 ->
+  bot ...0002 (temporary, repoint to the real WhatsApp client bot at 3d).
+
+Next: Stage 3d. Feed the resolved bot + inbound text into the reply core
+(memory load, retrieval, callClaude, resolveNextAction, race-safe
+append_conversation_turn with the resolved bot_id) and store the draft. Stage 4
+then sends via Graph API POST /{phone_number_id}/messages with the per-account
+token. getBotSettings to gain optional botId param (default BOT_ID).
+
+---
+
 ## 2026-06-30: Stage 3b done. Signed POST handler on /meta/webhook live.
 
 POST /meta/webhook now verifies Meta's X-Hub-Signature-256 (HMAC-SHA256 over
