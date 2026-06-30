@@ -1,23 +1,24 @@
-## 2026-06-30: Stage 3a done. Meta/WhatsApp webhook GET verification route live.
+## 2026-06-30: Stage 3a done. Meta/WhatsApp webhook GET verification live + Meta-verified.
 
-Added GET /meta/webhook to the Worker: echoes hub.challenge when
-hub.verify_token matches the new WHATSAPP_VERIFY_TOKEN secret (production),
-else 403. Verified on production (correct token echoes challenge, wrong token
-403, /health healthy, live ManyChat /webhook untouched). Prod Worker version
-09b3849a-d02c-4f3d-b3b9-9935193eb6bb.
+GET /meta/webhook echoes hub.challenge when hub.verify_token matches the new
+WHATSAPP_VERIFY_TOKEN secret (production), else 403. Verified on production and
+confirmed green via Meta's webhook handshake on the Mu AI app (App ID
+1382503777124965, Nella's verified portfolio, simple/direct path, not Tech
+Provider). Prod Worker version 09b3849a-d02c-4f3d-b3b9-9935193eb6bb.
 
-Stage 3 approach = Plan B: slim WhatsApp orchestration reusing the decoupled
-reply-core functions (callClaude, retrieval, resolveNextAction,
-append_conversation_turn, sendToSlack); /webhook stays single-client by design
-(de-hardcoding it deferred, likely never, as clients move to Meta-direct
-channels). getBotSettings to gain an optional botId param (default BOT_ID) so
-/webhook stays unchanged. WhatsApp path is multi-tenant from day one via
+Meta app assets (test/sandbox): test number +1 555-649-8389, Phone Number ID
+1190161784184058, WABA ID 1010810851319371. messages field deliberately NOT
+yet subscribed (waiting for 3b). App Secret captured separately for 3b.
+
+Stage 3 = Plan B: slim WhatsApp orchestration reusing decoupled reply-core
+functions; /webhook stays single-client by design. getBotSettings to gain an
+optional botId param (default BOT_ID). WhatsApp path multi-tenant via
 connected_accounts.
 
-Next: create the Meta app (as Nella, her verified portfolio, WhatsApp use
-case) for the App Secret + test number + WABA, verify the webhook callback
-live, then Stage 3b (POST handler, HMAC X-Hub-Signature-256 over raw body
-using WHATSAPP_APP_SECRET).
+Next: Stage 3b. POST /meta/webhook with HMAC X-Hub-Signature-256 verification
+over the RAW body (read request.text() before parse) using a new
+WHATSAPP_APP_SECRET secret; return 200 fast, log the verified payload, no
+processing yet.
 
 ---
 
