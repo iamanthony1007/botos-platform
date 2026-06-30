@@ -1033,6 +1033,63 @@ var index_default = {
         // 3) Valid request. Return 200 FAST so Meta does not retry/disable the webhook.
         //    Stage 3c/3d will parse rawBody and drive the reply pipeline. For now, log only.
         console.log("Meta webhook: valid signed event received (len " + rawBody.length + ").");
+
+        // Parse + route. Wrapped so a malformed payload can never throw out of
+        // the handler (we must always 200 a signed event, or Meta will retry).
+        try {
+          const payload = JSON.parse(rawBody);
+          const entries = Array.isArray(payload.entry) ? payload.entry : [];
+          for (const entry of entries) {
+            const changes = Array.isArray(entry.changes) ? entry.changes : [];
+            for (const change of changes) {
+              const value = change && change.value ? change.value : {};
+
+              // Status events (sent/delivered/read/failed) ride the same field.
+              // Acknowledge and skip; they are not inbound messages.
+              if (Array.isArray(value.statuses) && value.statuses.length > 0) {
+                console.log("Meta webhook: status event (" +
+                  value.statuses.map(s => s.status).join(",") + "), skipping.");
+                continue;
+              }
+
+              const messages = Array.isArray(value.messages) ? value.messages : [];
+              if (messages.length === 0) continue;
+
+              const phoneNumberId = value.metadata && value.metadata.phone_number_id;
+              const contact = Array.isArray(value.contacts) ? value.contacts[0] : null;
+              const waId = contact && contact.wa_id ? contact.wa_id :
+                           (messages[0] && messages[0].from) || null;
+              const profileName = contact && contact.profile ? contact.profile.name : null;
+
+              // Resolve which bot owns this WhatsApp number.
+              const botId = await resolveConnectedAccount(env, "whatsapp", phoneNumberId);
+              if (!botId) {
+                console.log("Meta webhook: no connected_accounts mapping for phone_number_id " +
+                  phoneNumberId + ", skipping.");
+                continue;
+              }
+
+              for (const msg of messages) {
+                const wamid = msg.id || "(no-id)";
+                const type = msg.type || "(no-type)";
+                if (type === "text") {
+                  const text = msg.text && msg.text.body ? msg.text.body : "";
+                  console.log("Meta webhook: inbound text from wa_id " + waId +
+                    " (" + (profileName || "unknown") + ") -> bot " + botId +
+                    " | id=" + wamid + " | text=" + JSON.stringify(text));
+                } else {
+                  console.log("Meta webhook: inbound non-text (" + type + ") from wa_id " +
+                    waId + " -> bot " + botId + " | id=" + wamid +
+                    " | (non-text handling deferred to a later stage).");
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.log("Meta webhook: parse/route error (still returning 200): " + (e && e.message));
+        }
+
+        // Always 200 a signed event so Meta does not retry.
         return new Response("EVENT_RECEIVED", { status: 200 });
       }
 
@@ -3374,4 +3431,35 @@ async function verifyMetaSignature(rawBody, signatureHeader, appSecret) {
   const macBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
   const computed = metaHexFromBytes(new Uint8Array(macBuf));
   return metaTimingSafeEqual(computed, expected);
+}
+
+// ============================================================================
+// Resolve which bot owns an external messaging account (connected_accounts).
+// Looks up (platform, external_account_id) and returns bot_id, or null if no
+// active mapping. Skips deauthorized rows. Uses the service-role key (RLS bypass).
+// ============================================================================
+async function resolveConnectedAccount(env, platform, externalAccountId) {
+  if (!externalAccountId) return null;
+  try {
+    const resp = await fetch(
+      `${getSupabaseUrl(env)}/rest/v1/connected_accounts?platform=eq.${encodeURIComponent(platform)}` +
+      `&external_account_id=eq.${encodeURIComponent(externalAccountId)}` +
+      `&deauthorized=eq.false&select=bot_id&limit=1`,
+      {
+        headers: {
+          "apikey": env.SUPABASE_SERVICE_KEY,
+          "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`
+        }
+      }
+    );
+    if (!resp.ok) {
+      console.log("resolveConnectedAccount: lookup failed HTTP " + resp.status);
+      return null;
+    }
+    const rows = await resp.json();
+    return rows && rows[0] && rows[0].bot_id ? rows[0].bot_id : null;
+  } catch (e) {
+    console.log("resolveConnectedAccount: error " + (e && e.message));
+    return null;
+  }
 }
