@@ -428,10 +428,10 @@ async function supabaseRpc(env, functionName, args) {
 }
 __name(supabaseRpc, "supabaseRpc");
 
-async function getBotSettings(env) {
+async function getBotSettings(env, botId = BOT_ID) {
   try {
     const response = await fetch(
-      `${getSupabaseUrl(env)}/rest/v1/bots?id=eq.${BOT_ID}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings,welcome_context,stage_automation`,
+      `${getSupabaseUrl(env)}/rest/v1/bots?id=eq.${botId}&select=auto_send_enabled,system_prompt,model,intent_definitions,lead_type,buyer_type,communication_style,campaign_goal,target_avatar,ai_behavior_settings,welcome_context,stage_automation`,
       {
         headers: {
           "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
@@ -2614,10 +2614,10 @@ var index_default = {
 
 // Helpers
 
-async function fetchRelevantLearningsLegacy(env, memory, limit = 30) {
+async function fetchRelevantLearningsLegacy(env, memory, limit = 30, botId = BOT_ID) {
   try {
     const response = await fetch(
-      `${getSupabaseUrl(env)}/rest/v1/learnings?bot_id=eq.${BOT_ID}&order=created_at.desc&limit=${limit}`,
+      `${getSupabaseUrl(env)}/rest/v1/learnings?bot_id=eq.${botId}&order=created_at.desc&limit=${limit}`,
       {
         headers: {
           "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
@@ -2645,7 +2645,7 @@ async function fetchRelevantLearningsLegacy(env, memory, limit = 30) {
 }
 __name(fetchRelevantLearningsLegacy, "fetchRelevantLearningsLegacy");
 
-async function fetchRelevantLearningsSemantic(env, queryEmbedding, options = {}) {
+async function fetchRelevantLearningsSemantic(env, queryEmbedding, options = {}, botId = BOT_ID) {
   // Semantic retrieval of learnings via pgvector match_learnings RPC.
   // Falls back to empty array if queryEmbedding is null (Voyage failed).
   if (!queryEmbedding) return [];
@@ -2663,7 +2663,7 @@ async function fetchRelevantLearningsSemantic(env, queryEmbedding, options = {})
         },
         body: JSON.stringify({
           query_embedding: queryEmbedding,
-          target_bot_id: BOT_ID,
+          target_bot_id: botId,
           match_threshold: matchThreshold,
           match_count: matchCount
         })
@@ -2690,10 +2690,10 @@ async function fetchRelevantLearningsSemantic(env, queryEmbedding, options = {})
 }
 __name(fetchRelevantLearningsSemantic, "fetchRelevantLearningsSemantic");
 
-async function fetchActiveDocumentsLegacy(env) {
+async function fetchActiveDocumentsLegacy(env, botId = BOT_ID) {
   try {
     const response = await fetch(
-      `${getSupabaseUrl(env)}/rest/v1/bot_documents?bot_id=eq.${BOT_ID}&status=eq.active&select=name,content,usage_count`,
+      `${getSupabaseUrl(env)}/rest/v1/bot_documents?bot_id=eq.${botId}&status=eq.active&select=name,content,usage_count`,
       {
         headers: {
           "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
@@ -2711,7 +2711,7 @@ async function fetchActiveDocumentsLegacy(env) {
 }
 __name(fetchActiveDocumentsLegacy, "fetchActiveDocumentsLegacy");
 
-async function fetchRelevantDocumentsSemantic(env, queryEmbedding, options = {}) {
+async function fetchRelevantDocumentsSemantic(env, queryEmbedding, options = {}, botId = BOT_ID) {
   // Semantic retrieval of documents via pgvector match_documents RPC.
   if (!queryEmbedding) return [];
   const matchThreshold = options.threshold ?? 0.2;
@@ -2728,7 +2728,7 @@ async function fetchRelevantDocumentsSemantic(env, queryEmbedding, options = {})
         },
         body: JSON.stringify({
           query_embedding: queryEmbedding,
-          target_bot_id: BOT_ID,
+          target_bot_id: botId,
           match_threshold: matchThreshold,
           match_count: matchCount
         })
