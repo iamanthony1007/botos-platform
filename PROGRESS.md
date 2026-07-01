@@ -1,3 +1,39 @@
+2026-07-01: SuperYOU onboarded as second tenant + Stage 3d-i (WhatsApp reply generation, log-only) live.
+
+TENANT (Phase B, all direct prod DB changes with no git trail, recorded here):
+- New org "SuperYOU" id c854fd89-7e7e-4b32-aaf8-f5daa1dfb082 (separate from Nella
+  Platform ...0001; one org per client so the dashboard admin resolver's .single()
+  stays valid).
+- New bot "SuperYOU - Laura Phillips" id 45b776e3-ee4f-461d-a526-4249d18757b3,
+  model claude-sonnet-4-6 (NOTE: bots.model column default is 'gpt-4o', wrong for
+  this platform, always set the Claude model explicitly), auto_send_enabled false,
+  campaign_goal Book Call, ai_behavior_settings holding SuperYOU offer/qualifiers,
+  intent_definitions = generic default (not Coach Shaun's golf taxonomy).
+- system_prompt set (3614 bytes): Laura Phillips, Singapore weight-loss coaching,
+  sort-not-sell, book the Calendly discovery call, no price pitching in chat.
+- connected_accounts test-number row (Phone Number ID 1190161784184058) repointed
+  from bot ...0002 to SuperYOU bot 45b776e3. Test number now routes to SuperYOU.
+
+STAGE 3d-i (GENERATE + LOG ONLY, no writes, no send):
+- New helper processWhatsAppReply mirrors the /webhook reply core under the
+  resolved bot id, with bot-namespaced memory key memory:${botId}:${waId} and
+  bot-scoped retrieval (Phase A params). Runs in ctx.waitUntil for a fast 200.
+- Prod version 52fc004b-c4f3-47aa-a2d6-11f313702652.
+- VERIFIED on real Meta traffic up to the Claude call: received, signature-verified,
+  routed to SuperYOU bot, prompt parsed (phase-f __PRELUDE__), retrieval ran. Failed
+  ONLY at callClaude with "credit balance too low" (Anthropic API account out of
+  credits). Billing, not code. Live DRAFT test pending Nella topping up the account.
+
+OPERATIONAL FLAG: the Anthropic API account balance (ANTHROPIC_API_KEY on the
+Worker) is a single point of failure for ALL bots (SuperYOU AND Coach Shaun).
+Recommend auto-reload / low-balance alert in console.anthropic.com.
+
+Next: (1) provision Anthony's SuperYOU dashboard admin login so the prompt is
+editable in the Prompt Editor; (2) Stage 3d-ii (persist the turn under the resolved
+bot + create the inbox draft), buildable now, live-verifiable once credits land;
+(3) confirm prod RLS is ON before SuperYOU's own setters get logins; (4) Stage 4
+send path after 3d-ii + credits.
+
 2026-07-01: Phase A done. Reply-core functions parameterized by botId.
 
 Five shared functions now take botId (default BOT_ID), swapping internal
