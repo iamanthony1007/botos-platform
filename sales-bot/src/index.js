@@ -1077,6 +1077,11 @@ var index_default = {
                   console.log("Meta webhook: inbound text from wa_id " + waId +
                     " (" + (profileName || "unknown") + ") -> bot " + botId +
                     " | id=" + wamid + " | text=" + JSON.stringify(text));
+                  // 3d-i: generate the reply in the background so the webhook
+                  // still returns 200 fast (callClaude takes seconds).
+                  if (text) {
+                    ctx.waitUntil(processWhatsAppReply(env, botId, waId, text, profileName, wamid));
+                  }
                 } else {
                   console.log("Meta webhook: inbound non-text (" + type + ") from wa_id " +
                     waId + " -> bot " + botId + " | id=" + wamid +
@@ -3461,5 +3466,80 @@ async function resolveConnectedAccount(env, platform, externalAccountId) {
   } catch (e) {
     console.log("resolveConnectedAccount: error " + (e && e.message));
     return null;
+  }
+}
+
+// ============================================================================
+// WhatsApp reply generation (Stage 3d-i: GENERATE + LOG ONLY. No memory write,
+// no DB write, no send. Those are 3d-ii and Stage 4.) Mirrors the /webhook reply
+// core but under a resolved bot id, with a bot-namespaced memory key, and with no
+// ManyChat-specific handling. Runs inside ctx.waitUntil so the webhook 200s fast.
+// ============================================================================
+async function processWhatsAppReply(env, botId, waId, text, profileName, wamid) {
+  try {
+    const botSettings = await getBotSettings(env, botId);
+    const autoSendEnabled = botSettings.auto_send_enabled === true;
+    const stageAutomation = (botSettings.stage_automation && typeof botSettings.stage_automation === "object")
+      ? botSettings.stage_automation : {};
+    const systemPrompt = botSettings.system_prompt || FALLBACK_SYSTEM_PROMPT;
+    const botModel = botSettings.model || "claude-sonnet-4-6";
+    const intentDefs = botSettings.intent_definitions || {};
+    const campaignConfig = {
+      leadType: botSettings.lead_type || "Cold",
+      buyerType: botSettings.buyer_type || "Emotional",
+      commStyle: botSettings.communication_style || "Hybrid",
+      goal: botSettings.campaign_goal || "General",
+      avatar: botSettings.target_avatar || "",
+      aiBehavior: botSettings.ai_behavior_settings || {}
+    };
+
+    // Memory, namespaced by bot to avoid cross-tenant collision (audit item 6).
+    const memoryKey = `memory:${botId}:${waId}`;
+    const memoryData = await env.MEMORY_STORE.get(memoryKey, { type: "json" });
+    const memory = memoryData || { messages: [], running_summary: "", profile_facts: {} };
+    if (!Array.isArray(memory.messages)) memory.messages = [];
+    const priorStage = memory.conversation_stage || null;
+
+    if (memory.messages.length <= 3 && botSettings.welcome_context && botSettings.welcome_context.trim().length > 0) {
+      memory.welcome_context = botSettings.welcome_context.trim();
+    }
+
+    // Append the inbound message so callClaude sees it as the latest turn.
+    memory.messages.push({ role: "user", content: text, timestamp: Date.now() });
+
+    // Retrieval, bot-scoped (botId threaded to the Phase-A parameterized functions).
+    const lastAssistant = memory.messages.filter(m => m.role === "assistant").slice(-1)[0]?.content || "";
+    const queryText = lastAssistant ? `${lastAssistant}\n\nUser response: ${text}` : text;
+    const queryEmbedding = await embedQueryText(env, queryText);
+    let learnings = [];
+    let documents = [];
+    if (queryEmbedding) {
+      const [learningsPool, docs] = await Promise.all([
+        fetchRelevantLearningsSemantic(env, queryEmbedding, { count: LEARNING_POOL_COUNT }, botId),
+        fetchRelevantDocumentsSemantic(env, queryEmbedding, {}, botId)
+      ]);
+      documents = docs;
+      learnings = selectStageAwareLearnings(learningsPool, priorStage);
+    }
+
+    const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig, priorStage, false);
+    if (!botResponse || (!botResponse.reply && !botResponse.messages)) {
+      console.log("WhatsApp 3d-i: invalid/empty bot response | bot=" + botId + " wa_id=" + waId);
+      return;
+    }
+
+    const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts || {}, memory, stageAutomation);
+
+    const draftMsgs = Array.isArray(botResponse.messages) ? botResponse.messages : [botResponse.reply || ""];
+    console.log("WhatsApp 3d-i DRAFT | bot=" + botId + " wa_id=" + waId + " name=" + (profileName || "?") +
+      " | stage=" + (botResponse.conversation_stage || "?") +
+      " intent=" + (botResponse.lead_intent || "?") +
+      " emotion=" + (botResponse.emotional_state || "?") +
+      " clarity=" + (botResponse.situation_clarity != null ? botResponse.situation_clarity : "?") +
+      " quality=" + (botResponse.response_quality != null ? botResponse.response_quality : "?") +
+      " action=" + finalAction +
+      " | reply=" + JSON.stringify(draftMsgs));
+  } catch (e) {
+    console.log("WhatsApp 3d-i error | bot=" + botId + " wa_id=" + waId + ": " + (e && e.message));
   }
 }
