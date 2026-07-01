@@ -1,3 +1,32 @@
+2026-07-01: Phase A done. Reply-core functions parameterized by botId.
+
+Five shared functions now take botId (default BOT_ID), swapping internal
+hardcoded BOT_ID for the param: getBotSettings, fetchRelevantLearningsSemantic,
+fetchRelevantDocumentsSemantic, fetchRelevantLearningsLegacy,
+fetchActiveDocumentsLegacy. Behavior-preserving (no call site changed, default
+applies, live /webhook unchanged). Enables the WhatsApp path to run under a
+resolved bot id. Prod Worker version 47235707-f2e4-46e8-9fda-e317fcbaef88.
+
+Isolation audit outcome (this session, read-only): dashboard already multi-tenant
+(scopes by bot_id via getAssignedBot); SQL retrieval bot-scoped (match_learnings
+and match_documents both filter bot_id = target_bot_id, confirmed in prod);
+Worker reply core WAS single-tenant (hardcoded BOT_ID), now fixed by Phase A.
+Still to address before a SECOND client goes live: (1) memory KV key must be
+namespaced by bot (memory:${bot_id}:${customer_id}) since current
+memory:${customer_id} collides across tenants; (2) follow-up cron is
+single-bot + single-channel (IG/Make only), so a second bot gets no follow-ups
+(fine for inbound-only WhatsApp; revisit only if WhatsApp re-engagement wanted,
+which needs paid templates); (3) confirm PROD RLS is ON before a second client's
+setters get dashboard logins (dashboard isolation is currently app-layer only).
+Note: fetchActiveDocumentsLegacy has NO active caller (dead code, candidate for
+future removal).
+
+Next: Phase B. Create SuperYOU (Laura Phillips, Singapore weight-loss coaching,
+Jumpstart offer 3x=$399 / 5x=$599, Calendly discovery-call) as their own
+organization + bot row, then repoint the connected_accounts test-number row from
+...0002 to the new SuperYOU bot. Then Phase C (3d) builds the WhatsApp reply
+orchestration against SuperYOU's bot with the memory key namespaced by bot.
+
 ## 2026-07-01: Stage 3c done. Meta/WhatsApp inbound parse + route live and proven.
 
 POST /meta/webhook parses the verified payload, skips value.statuses events,
