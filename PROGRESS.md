@@ -1,3 +1,31 @@
+2026-07-04: Stage 3d-ii (WhatsApp turn persistence) merged and verified.
+
+persistWhatsAppTurn persists each WhatsApp turn under the resolved bot: KV memory
+(memory:${botId}:${waId}), append_conversation_turn RPC (p_channel 'whatsapp',
+user turn only on the review path), and a pending reviews row (channel 'whatsapp')
+with Slack notification. wamid dedup via wa_seen KV (7-day TTL) prevents Meta
+redelivery double-writes. Reused helpers (supabaseRpc, supabaseInsertWithRetry,
+sendToSlack, sanitizeBotMessage, calcTypingDelay, resolveNextAction). Golf keyword
+classifier intentionally NOT ported; Calendly link promotes BOOKED.
+
+Migration 010 (applied prod): reviews.channel text default 'instagram'. Prevents
+WhatsApp reviews being misrouted as Instagram when Stage 4 sending routes approvals.
+
+VERIFIED without Claude credits via a temporary synthetic self-test route (since
+removed): finalAction SEND_TO_INBOX_REVIEW, rpc_ok true, review_ok true; SQL
+confirmed one conversations row (channel whatsapp, msg_count 1 = user turn only,
+assistant draft held in memory until approval) and one pending reviews row
+(channel whatsapp). Synthetic selftest-3dii rows + KV deleted post-verification.
+
+WHATSAPP_VERIFY_TOKEN was rotated this session (all three copies aligned: Worker
+secret, Meta Configuration field, saved note).
+
+Next: Stage 4 (send path) via Graph API POST /{phone_number_id}/messages using the
+per-account decrypted token, routing approved WhatsApp reviews by channel, strictly
+separate from sendToMakeScenario2. Blocked only on the Anthropic API top-up for the
+single real end-to-end run. Also pending: operator bot-switcher, prod RLS confirm
+before SuperYOU external setters get logins.
+
 2026-07-01: SuperYOU onboarded as second tenant + Stage 3d-i (WhatsApp reply generation, log-only) live.
 
 TENANT (Phase B, all direct prod DB changes with no git trail, recorded here):
