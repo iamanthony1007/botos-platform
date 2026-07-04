@@ -1003,36 +1003,6 @@ var index_default = {
 
     const url = new URL(request.url);
 
-    // TEMP (3d-ii verification only, remove after verifying): persistence self-test
-    // with a SYNTHETIC bot response (no Claude call). POST + token gated.
-    if (url.pathname === "/meta/persist-selftest" && request.method === "POST") {
-      const token = url.searchParams.get("token");
-      if (!token || token !== env.WHATSAPP_VERIFY_TOKEN) {
-        return new Response("Forbidden", { status: 403 });
-      }
-      const stBotId = "45b776e3-ee4f-461d-a526-4249d18757b3";
-      const stWaId = "selftest-3dii";
-      const stMemoryKey = `memory:${stBotId}:${stWaId}`;
-      const stMemory = { messages: [], running_summary: "", profile_facts: {} };
-      const stUserEntry = { role: "user", content: "Selftest: I want to lose 10kg but I travel a lot for work.", timestamp: Date.now() };
-      stMemory.messages.push(stUserEntry);
-      const stSettings = await getBotSettings(env, stBotId);
-      const stSynthetic = {
-        messages: ["Thanks for reaching out! So I can point you in the right direction, are you based in Singapore?"],
-        reply: "",
-        conversation_stage: "HOOK / ENTRY",
-        lead_intent: "MEDIUM",
-        emotional_state: "ENGAGED",
-        situation_clarity: 0.8,
-        response_quality: 0.85,
-        internal_notes: "[3d-ii selftest: synthetic response, no Claude call]",
-        memory_update: { profile_facts: { goal: "lose 10kg" } }
-      };
-      const stOut = await persistWhatsAppTurn(env, stBotId, stWaId, "Selftest", stUserEntry, stMemory, stMemoryKey,
-        stSynthetic, stSettings.auto_send_enabled === true, stSettings.stage_automation || {});
-      return new Response(JSON.stringify(stOut), { headers: { "Content-Type": "application/json" } });
-    }
-
     // Meta/WhatsApp webhook. GET = subscription verification; POST = signed inbound events.
     if (url.pathname === "/meta/webhook") {
 
