@@ -1118,6 +1118,102 @@ var index_default = {
       }
     }
 
+    // POST /meta/send (Stage 4). Send an APPROVED WhatsApp review's reply back to
+    // the lead via the Meta Graph API, using the bot's per-account token decrypted
+    // server-side. Body: { review_id }. Strictly separate from the Instagram Make
+    // path. Detects the 24-hour customer-service-window rejection (131047) so the
+    // dashboard can surface "window closed" rather than failing silently.
+    if (url.pathname === "/meta/send" && request.method === "POST") {
+      try {
+        const body = await request.json().catch(() => ({}));
+        const review_id = body && body.review_id;
+        if (!review_id) {
+          return new Response(JSON.stringify({ error: "Missing review_id" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const rvResp = await fetch(
+          `${getSupabaseUrl(env)}/rest/v1/reviews?id=eq.${encodeURIComponent(review_id)}` +
+          `&select=id,bot_id,customer_id,channel,status,final_messages,final_reply,bot_messages&limit=1`,
+          { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+        );
+        const rvRows = rvResp.ok ? await rvResp.json() : [];
+        const review = rvRows && rvRows[0];
+        if (!review) {
+          return new Response(JSON.stringify({ error: "review not found" }),
+            { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        if (review.channel !== "whatsapp") {
+          return new Response(JSON.stringify({ error: "not a whatsapp review", channel: review.channel }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        if (!["approved", "edited", "auto_sent"].includes(review.status)) {
+          return new Response(JSON.stringify({ error: "review not approved", status: review.status }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        let messages = Array.isArray(review.final_messages) && review.final_messages.length > 0
+          ? review.final_messages
+          : (review.final_reply ? [review.final_reply]
+             : (Array.isArray(review.bot_messages) ? review.bot_messages : []));
+        messages = messages.map(m => (typeof m === "string" ? m : String(m))).filter(m => m && m.trim().length > 0);
+        if (messages.length === 0) {
+          return new Response(JSON.stringify({ error: "no messages to send" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const rawWaId = String(review.customer_id);
+        const toNumber = rawWaId.startsWith("+") ? rawWaId : "+" + rawWaId;
+        const creds = await getWhatsAppSendCreds(env, review.bot_id);
+        if (!creds || !creds.phoneNumberId || !creds.tokenBlob) {
+          return new Response(JSON.stringify({ error: "no whatsapp send credentials for this bot", bot_id: review.bot_id }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        let accessToken;
+        try {
+          accessToken = await decryptToken(creds.tokenBlob, env);
+        } catch (e) {
+          console.error("meta/send: token decrypt failed", e && e.message);
+          return new Response(JSON.stringify({ error: "token decrypt failed" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const results = [];
+        let windowClosed = false;
+        for (const msg of messages) {
+          const sendResp = await fetch(`https://graph.facebook.com/v23.0/${creds.phoneNumberId}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${accessToken}` },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              recipient_type: "individual",
+              to: toNumber,
+              type: "text",
+              text: { body: msg }
+            })
+          });
+          const sendJson = await sendResp.json().catch(() => ({}));
+          if (sendResp.ok && sendJson.messages && sendJson.messages[0] && sendJson.messages[0].id) {
+            results.push({ ok: true, wamid: sendJson.messages[0].id });
+          } else {
+            const errCode = sendJson && sendJson.error && sendJson.error.code;
+            if (errCode === 131047 || errCode === 131026) windowClosed = true;
+            results.push({ ok: false, code: errCode || null, error: (sendJson && sendJson.error && sendJson.error.message) || ("HTTP " + sendResp.status) });
+            break;
+          }
+        }
+        const allOk = results.length === messages.length && results.every(r => r.ok);
+        if (allOk) {
+          console.log("WhatsApp send OK | review=" + review_id + " to=" + toNumber + " msgs=" + messages.length);
+          return new Response(JSON.stringify({ success: true, sent: results.length, results }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        console.log("WhatsApp send FAILED | review=" + review_id + " to=" + toNumber + " windowClosed=" + windowClosed + " results=" + JSON.stringify(results));
+        return new Response(JSON.stringify({ success: false, windowClosed, results }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        console.error("meta/send error:", e);
+        return new Response(JSON.stringify({ error: e && e.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     // /webhook
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
@@ -3690,5 +3786,33 @@ async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, mem
   } catch (e) {
     console.log("WhatsApp 3d-ii persist error | bot=" + botId + " wa_id=" + waId + ": " + (e && e.message));
     return result;
+  }
+}
+
+// ============================================================================
+// Fetch WhatsApp SEND credentials (phone_number_id + encrypted token) for a bot.
+// Returns { phoneNumberId, tokenBlob } or null. Service-role read; skips
+// deauthorized rows. Used by POST /meta/send (Stage 4).
+// ============================================================================
+async function getWhatsAppSendCreds(env, botId) {
+  if (!botId) return null;
+  try {
+    const resp = await fetch(
+      `${getSupabaseUrl(env)}/rest/v1/connected_accounts?platform=eq.whatsapp` +
+      `&bot_id=eq.${encodeURIComponent(botId)}&deauthorized=eq.false` +
+      `&select=external_account_id,access_token_encrypted&limit=1`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+    );
+    if (!resp.ok) {
+      console.log("getWhatsAppSendCreds: lookup failed HTTP " + resp.status);
+      return null;
+    }
+    const rows = await resp.json();
+    const row = rows && rows[0];
+    if (!row || !row.external_account_id || !row.access_token_encrypted) return null;
+    return { phoneNumberId: row.external_account_id, tokenBlob: row.access_token_encrypted };
+  } catch (e) {
+    console.log("getWhatsAppSendCreds: error " + (e && e.message));
+    return null;
   }
 }
