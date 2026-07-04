@@ -3477,6 +3477,16 @@ async function resolveConnectedAccount(env, platform, externalAccountId) {
 // ============================================================================
 async function processWhatsAppReply(env, botId, waId, text, profileName, wamid) {
   try {
+    // Dedup on Meta's message id: Meta re-delivers webhooks (retries up to
+    // 7 days). Without this a redelivery re-runs the pipeline and double-writes.
+    if (wamid && wamid !== "(no-id)") {
+      const seen = await env.MEMORY_STORE.get(`wa_seen:${wamid}`);
+      if (seen) {
+        console.log("WhatsApp 3d-ii: duplicate wamid, skipping | " + wamid);
+        return;
+      }
+      await env.MEMORY_STORE.put(`wa_seen:${wamid}`, "1", { expirationTtl: 604800 });
+    }
     const botSettings = await getBotSettings(env, botId);
     const autoSendEnabled = botSettings.auto_send_enabled === true;
     const stageAutomation = (botSettings.stage_automation && typeof botSettings.stage_automation === "object")
@@ -3505,7 +3515,8 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid) 
     }
 
     // Append the inbound message so callClaude sees it as the latest turn.
-    memory.messages.push({ role: "user", content: text, timestamp: Date.now() });
+    const userEntry = { role: "user", content: text, timestamp: Date.now() };
+    memory.messages.push(userEntry);
 
     // Retrieval, bot-scoped (botId threaded to the Phase-A parameterized functions).
     const lastAssistant = memory.messages.filter(m => m.role === "assistant").slice(-1)[0]?.content || "";
@@ -3528,18 +3539,156 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid) 
       return;
     }
 
-    const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts || {}, memory, stageAutomation);
-
-    const draftMsgs = Array.isArray(botResponse.messages) ? botResponse.messages : [botResponse.reply || ""];
-    console.log("WhatsApp 3d-i DRAFT | bot=" + botId + " wa_id=" + waId + " name=" + (profileName || "?") +
-      " | stage=" + (botResponse.conversation_stage || "?") +
-      " intent=" + (botResponse.lead_intent || "?") +
-      " emotion=" + (botResponse.emotional_state || "?") +
-      " clarity=" + (botResponse.situation_clarity != null ? botResponse.situation_clarity : "?") +
-      " quality=" + (botResponse.response_quality != null ? botResponse.response_quality : "?") +
-      " action=" + finalAction +
-      " | reply=" + JSON.stringify(draftMsgs));
+    // 3d-ii: persist the turn (memory, conversation, inbox review).
+    const persistResult = await persistWhatsAppTurn(env, botId, waId, profileName,
+      userEntry, memory, memoryKey, botResponse, autoSendEnabled, stageAutomation);
+    console.log("WhatsApp 3d-ii PERSISTED | bot=" + botId + " wa_id=" + waId +
+      " | action=" + persistResult.finalAction + " review=" + (persistResult.review_id || "none") +
+      " rpc_ok=" + persistResult.rpc_ok + " review_ok=" + persistResult.review_ok +
+      " | reply=" + JSON.stringify(persistResult.messages));
   } catch (e) {
     console.log("WhatsApp 3d-i error | bot=" + botId + " wa_id=" + waId + ": " + (e && e.message));
+  }
+}
+
+// ============================================================================
+// WhatsApp turn persistence (Stage 3d-ii). Mirrors the /webhook write path under
+// a resolved bot id: derive/sanitize the reply, apply generic stage-depth
+// guardrails (golf keyword classifier intentionally NOT ported), update KV memory
+// (bot-namespaced key), write the conversation via the race-safe
+// append_conversation_turn RPC (user turn only on the review path; the assistant
+// turn reaches the DB when a setter approves), and create the inbox review row
+// (channel 'whatsapp') with a Slack notification. Booking promotion adapted to
+// SuperYOU: a Calendly link in the outgoing reply promotes stage to BOOKED.
+// ============================================================================
+async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, memory, memoryKey, botResponse, autoSendEnabled, stageAutomation) {
+  const result = { finalAction: null, review_id: null, rpc_ok: false, review_ok: false, messages: [] };
+  try {
+    const rawMessages = Array.isArray(botResponse.messages) && botResponse.messages.length > 0
+      ? botResponse.messages
+      : [botResponse.reply];
+    const dedupedRaw = rawMessages.filter((msg, idx, arr) =>
+      arr.findIndex(m => (m || "").trim().toLowerCase() === (msg || "").trim().toLowerCase()) === idx
+    );
+    const dedupedMessages = dedupedRaw.map(m => sanitizeBotMessage(m)).filter(m => m && m.length > 0);
+    const typingDelays = dedupedMessages.map(msg => calcTypingDelay(msg));
+    const joinedReply = dedupedMessages.join(" ");
+    result.messages = dedupedMessages;
+
+    const userMessageCount = memory.messages.filter(m => m.role === "user").length;
+    const EARLY_STAGES = ["HOOK / ENTRY", "GOAL", "DIAGNOSTIC"];
+    const MID_STAGES = ["HOOK / ENTRY", "GOAL", "DIAGNOSTIC", "INSIGHT", "PRIORITY"];
+    const currentStage = botResponse.conversation_stage || "";
+    if (userMessageCount <= 1 && !EARLY_STAGES.includes(currentStage)) {
+      botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Stage downgraded to HOOK / ENTRY - only 1 user message]";
+      botResponse.conversation_stage = "HOOK / ENTRY";
+    } else if (userMessageCount <= 2 && !EARLY_STAGES.includes(currentStage)) {
+      botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Stage downgraded to GOAL - only 2 user messages]";
+      botResponse.conversation_stage = "GOAL";
+    } else if (userMessageCount <= 4 && !MID_STAGES.includes(currentStage)) {
+      botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Stage capped to INSIGHT - shallow conversation]";
+      botResponse.conversation_stage = "INSIGHT";
+    }
+
+    if (/calendly\.com/i.test(joinedReply)) {
+      if (botResponse.conversation_stage !== "BOOKED") {
+        botResponse.internal_notes = (botResponse.internal_notes || "") + " [System: Stage promoted to BOOKED - booking link detected]";
+        botResponse.conversation_stage = "BOOKED";
+      }
+      if (botResponse.lead_intent !== "HIGH") botResponse.lead_intent = "HIGH";
+    }
+
+    const review_id = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const finalAction = resolveNextAction(botResponse, autoSendEnabled, memory.profile_facts || {}, memory, stageAutomation);
+    result.finalAction = finalAction;
+
+    const assistantEntry = {
+      role: "assistant",
+      content: joinedReply,
+      bot_messages: dedupedMessages,
+      typing_delays: typingDelays,
+      timestamp: Date.now(),
+      review_id,
+      message_count: dedupedMessages.length
+    };
+    memory.messages.push(assistantEntry);
+    if (botResponse.memory_update) {
+      if (botResponse.memory_update.profile_facts) {
+        memory.profile_facts = { ...(memory.profile_facts || {}), ...botResponse.memory_update.profile_facts };
+      }
+      if (botResponse.memory_update.running_summary) {
+        memory.running_summary = botResponse.memory_update.running_summary;
+      }
+    }
+    if (botResponse.emotional_state === "OBJECTING") {
+      memory.objection_count = (memory.objection_count || 0) + 1;
+    }
+    memory.conversation_stage = botResponse.conversation_stage || memory.conversation_stage || null;
+    if (memory.messages.length > 15) memory.messages = memory.messages.slice(-15);
+    await env.MEMORY_STORE.put(memoryKey, JSON.stringify(memory));
+
+    const newTurnMessages = [userEntry];
+    if (finalAction === "AUTO_SEND") newTurnMessages.push(assistantEntry);
+    const rpcRes = await supabaseRpc(env, "append_conversation_turn", {
+      p_bot_id: botId,
+      p_customer_id: String(waId),
+      p_channel: "whatsapp",
+      p_new_messages: newTurnMessages,
+      p_status: botResponse.conversation_stage === "BOOKED" ? "booked" : "active",
+      p_lead_intent: botResponse.lead_intent || "LOW",
+      p_contact_type: botResponse.contact_type === "non_prospect" ? "non_prospect" : "prospect",
+      p_primary_goal: botResponse.primary_goal || null,
+      p_conversation_stage: botResponse.conversation_stage || null,
+      p_profile_facts: memory.profile_facts || {},
+      p_running_summary: memory.running_summary || "",
+      p_re_engaged: false,
+      p_pre_followup_stage: null,
+      p_lead_source: null,
+      p_lead_source_updated_at: null,
+      p_username: null,
+      p_profile_name: profileName ? String(profileName) : null
+    });
+    result.rpc_ok = !!(rpcRes && rpcRes.ok);
+
+    if (finalAction === "SEND_TO_INBOX_REVIEW" || finalAction === "ESCALATE_TO_HUMAN") {
+      await sendToSlack(env, {
+        customer_id: waId, action: finalAction,
+        conversation_stage: botResponse.conversation_stage,
+        confidence: botResponse.confidence,
+        last_messages: memory.messages.slice(-5),
+        bot_messages: dedupedMessages,
+        typing_delays: typingDelays,
+        bot_reply: joinedReply,
+        internal_notes: (botResponse.internal_notes || "") + " [channel: whatsapp]",
+        review_id, auto_send_enabled: autoSendEnabled
+      });
+      const insRes = await supabaseInsertWithRetry(env, "reviews", {
+        id: review_id, bot_id: botId,
+        customer_id: String(waId),
+        action_type: finalAction,
+        conversation_stage: botResponse.conversation_stage || null,
+        confidence: (botResponse.situation_clarity * 0.4) + (botResponse.response_quality * 0.6) || botResponse.confidence || null,
+        bot_reply: joinedReply,
+        bot_messages: dedupedMessages,
+        typing_delays: typingDelays,
+        internal_notes: botResponse.internal_notes || null,
+        escalation_reason: botResponse.escalation_reason || null,
+        emotional_state: botResponse.emotional_state || null,
+        last_messages: memory.messages.slice(-5),
+        status: "pending",
+        created_at: new Date().toISOString(),
+        channel: "whatsapp",
+        ...(profileName ? { profile_name: String(profileName) } : {})
+      });
+      result.review_ok = !!(insRes && insRes.success);
+      result.review_id = review_id;
+    } else if (finalAction === "AUTO_SEND") {
+      console.log("WhatsApp 3d-ii: AUTO_SEND resolved but send path is Stage 4; draft stored in memory only | review=" + review_id);
+      result.review_ok = true;
+    }
+    return result;
+  } catch (e) {
+    console.log("WhatsApp 3d-ii persist error | bot=" + botId + " wa_id=" + waId + ": " + (e && e.message));
+    return result;
   }
 }
