@@ -1003,6 +1003,50 @@ var index_default = {
 
     const url = new URL(request.url);
 
+    // ========================================================================
+    // Instagram webhook (Stage 2: verification + signed gate, LOG ONLY).
+    // GET: Meta verification handshake against INSTAGRAM_VERIFY_TOKEN.
+    // POST: X-Hub-Signature-256 gate. Meta may key this signature with the
+    // Instagram app secret (Mu AI-IG) or the parent Meta app secret; the docs
+    // are ambiguous, so we check both and log which matched, then lock it in
+    // Stage 3. No parsing, no routing yet. /webhook and /meta/webhook untouched.
+    // ========================================================================
+    if (url.pathname === "/instagram/webhook") {
+      if (request.method === "GET") {
+        const igMode = url.searchParams.get("hub.mode");
+        const igToken = url.searchParams.get("hub.verify_token");
+        const igChallenge = url.searchParams.get("hub.challenge");
+        if (igMode === "subscribe" && igToken && env.INSTAGRAM_VERIFY_TOKEN && igToken === env.INSTAGRAM_VERIFY_TOKEN) {
+          console.log("Instagram webhook: GET verification passed.");
+          return new Response(igChallenge, { status: 200 });
+        }
+        console.log("Instagram webhook: GET verification FAILED.");
+        return new Response("Forbidden", { status: 403 });
+      }
+      if (request.method === "POST") {
+        try {
+          const igRawBody = await request.text();
+          const igSig = request.headers.get("X-Hub-Signature-256");
+          let igKeyMatched = null;
+          if (env.INSTAGRAM_APP_SECRET && await verifyMetaSignature(igRawBody, igSig, env.INSTAGRAM_APP_SECRET)) {
+            igKeyMatched = "instagram_app_secret";
+          } else if (env.WHATSAPP_APP_SECRET && await verifyMetaSignature(igRawBody, igSig, env.WHATSAPP_APP_SECRET)) {
+            igKeyMatched = "main_app_secret";
+          }
+          if (!igKeyMatched) {
+            console.log("Instagram webhook: signature FAILED (len " + igRawBody.length + ").");
+            return new Response("Unauthorized", { status: 401 });
+          }
+          console.log("Instagram webhook: valid signed event received (len " + igRawBody.length + ", key=" + igKeyMatched + ").");
+          return new Response("EVENT_RECEIVED", { status: 200 });
+        } catch (e) {
+          console.log("Instagram webhook: POST error, rejecting: " + (e && e.message));
+          return new Response("Unauthorized", { status: 401 });
+        }
+      }
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+
     // Meta/WhatsApp webhook. GET = subscription verification; POST = signed inbound events.
     if (url.pathname === "/meta/webhook") {
 
