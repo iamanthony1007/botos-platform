@@ -1,3 +1,32 @@
+2026-07-06: Stage 4 part 1 merged; Instagram channel started (Stage 2 built,
+deploy pending).
+
+/meta/send merged to main (see merge commit): deployed a2c89f04, guards
+verified, real send pending token storage (part 2) + dashboard approve
+routing by channel (part 3).
+
+INSTAGRAM CHANNEL: "Manage messaging & content on Instagram" use case added
+to the Mu AI app. Instagram app identity: "Mu AI-IG", Instagram app ID
+3322663157905914, with its OWN Instagram app secret (separate from the main
+Meta app secret). Required permissions staged: instagram_business_basic,
+instagram_business_manage_comments, instagram_business_manage_messages.
+Decisions: support BOTH login configs (Instagram Login via graph.instagram.com
+and Facebook Login via graph.facebook.com), one inbound route serving both;
+API-based Instagram uses channel value instagram_api (NEVER instagram, which
+means the legacy ManyChat path) so approvals route to Graph API, not Make.
+Messenger slots in later as a branch on object "page" in the same handler.
+
+Stage 2 (this commit's branch feat/instagram-webhook): GET /instagram/webhook
+verification (INSTAGRAM_VERIFY_TOKEN) + signed POST gate. Signature key
+ambiguity (Instagram app secret vs main app secret) resolved empirically: the
+handler checks both and logs which matched; lock to the winner in Stage 3.
+
+BLOCKED TONIGHT by Cloudflare maintenance (CDG) + API 429s: secrets
+INSTAGRAM_VERIFY_TOKEN and INSTAGRAM_APP_SECRET not yet set; branch NOT
+deployed. Morning finish: set both secrets, deploy feat/instagram-webhook,
+curl the GET handshake, then Meta Configure webhooks Verify and save, then
+merge. WhatsApp Stage 4 parts 2-3 unchanged, pending token + Anthropic top-up.
+
 2026-07-04: Stage 3d-ii (WhatsApp turn persistence) merged and verified.
 
 persistWhatsAppTurn persists each WhatsApp turn under the resolved bot: KV memory
