@@ -1,3 +1,16 @@
+2026-07-07: Instagram Stage 2 LIVE. INSTAGRAM_VERIFY_TOKEN and
+INSTAGRAM_APP_SECRET set on the production Worker. feat/instagram-webhook
+deployed (version 62ce48ac) and merged to main. GET handshake verified (curl
+returned the challenge). Meta Configure webhooks Verify and save completed and
+subscribed to the messages field. No events flow yet: no Instagram account is
+connected (Add account is a later step). NEXT Stage 3: parse and route inbound
+events (skip echoes via is_echo, dedup on mid, resolve bot by platform
+instagram using channel value instagram_api, lock the signature key to whichever
+matched in logs). Then Stage 4 generate and persist reusing the WhatsApp core
+with a channel param, Stage 5 send (branch per login type plus 60-day token
+refresh on the hourly cron), Stage 6 connect Nella account as dev-mode tester
+plus App Review.
+
 2026-07-06: Stage 4 part 1 merged; Instagram channel started (Stage 2 built,
 deploy pending).
 
