@@ -1038,6 +1038,11 @@ var index_default = {
             return new Response("Unauthorized", { status: 401 });
           }
           console.log("Instagram webhook: valid signed event received (len " + igRawBody.length + ", key=" + igKeyMatched + ").");
+          // Stage 3: parse + route inbound events in the background so we always
+          // return 200 fast (Meta disables webhooks that respond slowly). Reply
+          // generation and persistence are deferred to Stage 4; here we resolve
+          // the bot, dedup on mid, and log.
+          ctx.waitUntil(routeInstagramEvent(env, igRawBody, igKeyMatched));
           return new Response("EVENT_RECEIVED", { status: 200 });
         } catch (e) {
           console.log("Instagram webhook: POST error, rejecting: " + (e && e.message));
@@ -3610,6 +3615,75 @@ async function resolveConnectedAccount(env, platform, externalAccountId) {
 }
 
 // ============================================================================
+// ============================================================================
+// Instagram inbound routing (Stage 3: PARSE + ROUTE + LOG ONLY. No reply
+// generation, no memory write, no DB write, no send. Those arrive in Stage 4.)
+// Instagram uses the Messenger-style envelope: object "instagram", then
+// entry[].messaging[] with sender.id (customer IGSID), recipient.id (business
+// account), and message.{mid,text,is_echo}. Mirrors the WhatsApp route (dedup on
+// the provider message id, resolve the bot via connected_accounts) but under the
+// "instagram_api" platform so it never collides with the legacy ManyChat path.
+// Runs inside ctx.waitUntil so the webhook 200s fast.
+// ============================================================================
+async function routeInstagramEvent(env, rawBody, keyMatched) {
+  let payload;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch (e) {
+    console.log("Instagram route: JSON parse error, skipping: " + (e && e.message));
+    return;
+  }
+  if (!payload || payload.object !== "instagram") {
+    console.log("Instagram route: unexpected object '" + (payload && payload.object) + "', skipping.");
+    return;
+  }
+  const entries = Array.isArray(payload.entry) ? payload.entry : [];
+  for (const entry of entries) {
+    const events = Array.isArray(entry.messaging) ? entry.messaging : [];
+    for (const ev of events) {
+      try {
+        if (ev.message && ev.message.is_echo) {
+          console.log("Instagram route: echo event, skipping | mid=" + (ev.message.mid || "(none)"));
+          continue;
+        }
+        if (!ev.message || typeof ev.message.text !== "string" || ev.message.text.length === 0) {
+          const kind = ev.read ? "read" : ev.reaction ? "reaction" : ev.postback ? "postback" :
+                       ev.referral ? "referral" : (ev.message ? "non-text-message" : "other");
+          console.log("Instagram route: " + kind + " event, skipping.");
+          continue;
+        }
+        const senderId = ev.sender && ev.sender.id ? ev.sender.id : null;
+        const recipientId = ev.recipient && ev.recipient.id ? ev.recipient.id : null;
+        const mid = ev.message.mid || "(no-id)";
+        const text = ev.message.text;
+
+        if (mid && mid !== "(no-id)") {
+          const seen = await env.MEMORY_STORE.get(`ig_seen:${mid}`);
+          if (seen) {
+            console.log("Instagram route: duplicate mid, skipping | " + mid);
+            continue;
+          }
+          await env.MEMORY_STORE.put(`ig_seen:${mid}`, "1", { expirationTtl: 604800 });
+        }
+
+        const botId = await resolveConnectedAccount(env, "instagram_api", recipientId);
+        if (!botId) {
+          console.log("Instagram route: no connected_accounts mapping for IG account " +
+            recipientId + " (platform instagram_api), skipping | mid=" + mid);
+          continue;
+        }
+
+        console.log("Instagram route: inbound text from IGSID " + senderId +
+          " -> bot " + botId + " | mid=" + mid + " | sigkey=" + keyMatched +
+          " | text=" + JSON.stringify(text));
+        // Stage 4 will generate + persist the reply here (channel "instagram_api").
+      } catch (e) {
+        console.log("Instagram route: event error (continuing): " + (e && e.message));
+      }
+    }
+  }
+}
+
 // WhatsApp reply generation (Stage 3d-i: GENERATE + LOG ONLY. No memory write,
 // no DB write, no send. Those are 3d-ii and Stage 4.) Mirrors the /webhook reply
 // core but under a resolved bot id, with a bot-namespaced memory key, and with no
