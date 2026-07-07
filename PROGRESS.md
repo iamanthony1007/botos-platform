@@ -1,3 +1,14 @@
+2026-07-08: Instagram Stage 3 merged (parse + route, log only). routeInstagramEvent
+runs in ctx.waitUntil: parses entry[].messaging[], skips echoes and non-text,
+dedups on mid (ig_seen KV, 7-day TTL), resolves bot via resolveConnectedAccount
+under platform instagram_api. Verified live that Meta signs Instagram events with
+INSTAGRAM_APP_SECRET (the WHATSAPP_APP_SECRET fallback is never reached and can be
+removed in Stage 4). Parser verified offline against inbound, dedup, echo, read,
+wrong-object and malformed payloads. NEXT Stage 4: generate + persist replies
+reusing the WhatsApp core (processWhatsAppReply / persistWhatsAppTurn) under
+channel instagram_api, then Stage 5 send (branch per login type + 60-day token
+refresh on the hourly cron), Stage 6 connect Nella account + App Review.
+
 2026-07-07: Instagram Stage 2 LIVE. INSTAGRAM_VERIFY_TOKEN and
 INSTAGRAM_APP_SECRET set on the production Worker. feat/instagram-webhook
 deployed (version 62ce48ac) and merged to main. GET handshake verified (curl
