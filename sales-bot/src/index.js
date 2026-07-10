@@ -3657,15 +3657,6 @@ async function routeInstagramEvent(env, rawBody, keyMatched) {
         const mid = ev.message.mid || "(no-id)";
         const text = ev.message.text;
 
-        if (mid && mid !== "(no-id)") {
-          const seen = await env.MEMORY_STORE.get(`ig_seen:${mid}`);
-          if (seen) {
-            console.log("Instagram route: duplicate mid, skipping | " + mid);
-            continue;
-          }
-          await env.MEMORY_STORE.put(`ig_seen:${mid}`, "1", { expirationTtl: 604800 });
-        }
-
         const botId = await resolveConnectedAccount(env, "instagram_api", recipientId);
         if (!botId) {
           console.log("Instagram route: no connected_accounts mapping for IG account " +
@@ -3673,10 +3664,12 @@ async function routeInstagramEvent(env, rawBody, keyMatched) {
           continue;
         }
 
-        console.log("Instagram route: inbound text from IGSID " + senderId +
-          " -> bot " + botId + " | mid=" + mid + " | sigkey=" + keyMatched +
-          " | text=" + JSON.stringify(text));
-        // Stage 4 will generate + persist the reply here (channel "instagram_api").
+        console.log("Instagram route: inbound from IGSID " + senderId + " -> bot " +
+          botId + " | mid=" + mid + " | sigkey=" + keyMatched);
+        // Stage 4: generate + persist via the shared reply core under the
+        // instagram_api channel. Dedup on mid happens inside processWhatsAppReply
+        // (ig_seen key) so it is not duplicated here. Send remains Stage 5.
+        await processWhatsAppReply(env, botId, senderId, text, null, mid, "instagram_api");
       } catch (e) {
         console.log("Instagram route: event error (continuing): " + (e && e.message));
       }
@@ -3689,17 +3682,18 @@ async function routeInstagramEvent(env, rawBody, keyMatched) {
 // core but under a resolved bot id, with a bot-namespaced memory key, and with no
 // ManyChat-specific handling. Runs inside ctx.waitUntil so the webhook 200s fast.
 // ============================================================================
-async function processWhatsAppReply(env, botId, waId, text, profileName, wamid) {
+async function processWhatsAppReply(env, botId, waId, text, profileName, wamid, channel = "whatsapp") {
   try {
     // Dedup on Meta's message id: Meta re-delivers webhooks (retries up to
     // 7 days). Without this a redelivery re-runs the pipeline and double-writes.
+    const seenPrefix = channel === "instagram_api" ? "ig_seen" : "wa_seen";
     if (wamid && wamid !== "(no-id)") {
-      const seen = await env.MEMORY_STORE.get(`wa_seen:${wamid}`);
+      const seen = await env.MEMORY_STORE.get(`${seenPrefix}:${wamid}`);
       if (seen) {
-        console.log("WhatsApp 3d-ii: duplicate wamid, skipping | " + wamid);
+        console.log(channel + " reply: duplicate message id, skipping | " + wamid);
         return;
       }
-      await env.MEMORY_STORE.put(`wa_seen:${wamid}`, "1", { expirationTtl: 604800 });
+      await env.MEMORY_STORE.put(`${seenPrefix}:${wamid}`, "1", { expirationTtl: 604800 });
     }
     const botSettings = await getBotSettings(env, botId);
     const autoSendEnabled = botSettings.auto_send_enabled === true;
@@ -3755,7 +3749,7 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid) 
 
     // 3d-ii: persist the turn (memory, conversation, inbox review).
     const persistResult = await persistWhatsAppTurn(env, botId, waId, profileName,
-      userEntry, memory, memoryKey, botResponse, autoSendEnabled, stageAutomation);
+      userEntry, memory, memoryKey, botResponse, autoSendEnabled, stageAutomation, channel);
     console.log("WhatsApp 3d-ii PERSISTED | bot=" + botId + " wa_id=" + waId +
       " | action=" + persistResult.finalAction + " review=" + (persistResult.review_id || "none") +
       " rpc_ok=" + persistResult.rpc_ok + " review_ok=" + persistResult.review_ok +
@@ -3775,7 +3769,7 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid) 
 // (channel 'whatsapp') with a Slack notification. Booking promotion adapted to
 // SuperYOU: a Calendly link in the outgoing reply promotes stage to BOOKED.
 // ============================================================================
-async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, memory, memoryKey, botResponse, autoSendEnabled, stageAutomation) {
+async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, memory, memoryKey, botResponse, autoSendEnabled, stageAutomation, channel = "whatsapp") {
   const result = { finalAction: null, review_id: null, rpc_ok: false, review_ok: false, messages: [] };
   try {
     const rawMessages = Array.isArray(botResponse.messages) && botResponse.messages.length > 0
@@ -3846,7 +3840,7 @@ async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, mem
     const rpcRes = await supabaseRpc(env, "append_conversation_turn", {
       p_bot_id: botId,
       p_customer_id: String(waId),
-      p_channel: "whatsapp",
+      p_channel: channel,
       p_new_messages: newTurnMessages,
       p_status: botResponse.conversation_stage === "BOOKED" ? "booked" : "active",
       p_lead_intent: botResponse.lead_intent || "LOW",
@@ -3873,7 +3867,7 @@ async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, mem
         bot_messages: dedupedMessages,
         typing_delays: typingDelays,
         bot_reply: joinedReply,
-        internal_notes: (botResponse.internal_notes || "") + " [channel: whatsapp]",
+        internal_notes: (botResponse.internal_notes || "") + " [channel: " + channel + "]",
         review_id, auto_send_enabled: autoSendEnabled
       });
       const insRes = await supabaseInsertWithRetry(env, "reviews", {
@@ -3891,7 +3885,7 @@ async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, mem
         last_messages: memory.messages.slice(-5),
         status: "pending",
         created_at: new Date().toISOString(),
-        channel: "whatsapp",
+        channel: channel,
         ...(profileName ? { profile_name: String(profileName) } : {})
       });
       result.review_ok = !!(insRes && insRes.success);
