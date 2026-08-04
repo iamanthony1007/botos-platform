@@ -1,3 +1,63 @@
+2026-08-04: Forgot-password flow shipped to code (fix/forgot-password, merged to
+main fast-forward as 91bd72f, pushed). Reported by Nella, blocking her demo week.
+
+THREE ROOT CAUSES (all three had to be fixed or the flow stays broken):
+1. dashboard/src/pages/Login.jsx: the "Forgot password?" button was a bare
+   <button type="button"> with no onClick and no handler. Clicking did nothing.
+   Now navigates to /forgot-password.
+2. The feature was never built, only the button. No ForgotPassword.jsx or
+   ResetPassword.jsx existed and Login never called
+   supabase.auth.resetPasswordForEmail. Created both pages. ForgotPassword calls
+   resetPasswordForEmail with redirectTo = window.location.origin + /reset-password
+   (works on getmu.co, the pages.dev preview, and localhost, no rebuild when a
+   domain is retired). Neutral "if an account exists" copy to avoid the email
+   enumeration leak flagged in SYSTEM-AUDIT F-35. ResetPassword calls
+   supabase.auth.updateUser, then signOut, then redirect to /login, and handles
+   four states: checking, expired-or-invalid, form, success.
+3. Supabase URL config was wrong (Site URL was localhost:3000, Redirect allowlist
+   empty). Fixed by Anthony on the PRODUCTION project rydkwsjwlgnivlwlvqku (Site
+   URL getmu.co, allowlist getmu.co/** and botos-platform-3ar.pages.dev/**).
+   Project ref confirmed by Anthony as rydkwsjwlgnivlwlvqku (not the staging
+   project hlpucysbaqerhwahfolg).
+
+ROUTING (dashboard/src/App.jsx): /forgot-password is inside PublicRoute;
+/reset-password is a BARE route with no guard (matches /accept-invite). The
+recovery link establishes a session before render, so guarding /reset-password
+would bounce the user straight to /dashboard and block the reset. This was the
+single highest-risk implementation detail.
+
+VERIFICATION STATUS:
+- npm run build:production passed clean (364 modules, no errors). verify-env
+  confirmed prod ref rydkwsjwlgnivlwlvqku. (package.json has no bare "build"
+  script; build:production is the real pre-deploy build.)
+- Production deploy could NOT be run from the Claude Code session. wrangler in a
+  non-interactive shell refuses the OAuth cache and requires a CLOUDFLARE_API_TOKEN
+  (not set). Deploy handed to Anthony to run in his logged-in terminal via
+  npm run deploy:production.
+- The reset flow was run against production getmu.co by Anthony and reported
+  working end to end (2026-08-04, tested on Anthony's account, not Nella's).
+  Which implies production carries the new build. The 10 gates that define the
+  check: (1) /login "Forgot password?" navigates to /forgot-password;
+  (2) submit email shows confirmation screen; (3) email link points at getmu.co
+  NOT localhost:3000; (4) link lands on /reset-password showing the form, does
+  NOT bounce to /dashboard; (5) sub-8-char password rejected inline; (6)
+  mismatched passwords rejected; (7) valid reset succeeds then redirects to
+  /login; (8) new password signs in; (9) old password fails; (10) second click
+  of the same link shows "Link expired". Plus a sanity check that /login,
+  /dashboard, /inbox still load. Test with Anthony's account, never Nella's.
+
+KNOWN ITEMS (out of scope for this branch, flagged for later):
+- AuthProvider is mounted TWICE, once in main.jsx and again in App.jsx.
+  Pre-existing. Deliberately left untouched so a new auth flow and an auth-context
+  change do not ship together and confuse attribution. Needs a separate cleanup.
+- wrangler is MISSING from dashboard/package.json devDependencies and is not in
+  node_modules or on PATH. deploy:production calls bare "wrangler", so it only
+  works where wrangler is globally installed AND interactively logged in
+  (Anthony's local terminal). In a clean checkout or non-interactive/CI context
+  it fails as written: npx pulls wrangler 4.118.0, which then errors without
+  CLOUDFLARE_API_TOKEN. Fix later: add wrangler to devDependencies and use a
+  scoped API token for non-interactive deploys.
+
 2026-07-08: Instagram Stage 3 merged (parse + route, log only). routeInstagramEvent
 runs in ctx.waitUntil: parses entry[].messaging[], skips echoes and non-text,
 dedups on mid (ig_seen KV, 7-day TTL), resolves bot via resolveConnectedAccount
