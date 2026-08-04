@@ -97,7 +97,7 @@ export default function Login() {
             </button>
 
             <div style={{ textAlign: 'center' }}>
-              <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '.8rem', color: '#A0A090', textDecoration: 'underline' }}>
+              <button type="button" onClick={() => navigate('/forgot-password')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '.8rem', color: '#A0A090', textDecoration: 'underline' }}>
                 Forgot password?
               </button>
             </div>

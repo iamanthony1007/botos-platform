@@ -15,6 +15,8 @@ import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
 import UserManagement from './pages/UserManagement'
 import AcceptInvite from './pages/AcceptInvite'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -54,6 +56,8 @@ function App() {
             {/* Public routes */}
             <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+            <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/accept-invite" element={<AcceptInvite />} />
 
             {/* Protected dashboard routes */}
