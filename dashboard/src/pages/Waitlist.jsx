@@ -91,18 +91,28 @@ export default function Waitlist() {
     document.head.appendChild(s)
   }, [turnstileReady])
 
-  // Render the widget only on step 3. Clean up on leaving so a return visit gets
-  // a fresh widget (tokens are single-use and short-lived).
+  // Render the widget only on step 3. React StrictMode runs effects twice in
+  // dev, so guard against a double render into the same container: a second
+  // turnstile.render() on an occupied container throws and logs error 400020.
+  // Capture the widget ID, remove it on cleanup, and bail if one already exists.
+  // Clean up on leaving so a return visit gets a fresh widget (tokens are
+  // single-use and short-lived).
   useEffect(() => {
-    if (step !== 3 || !turnstileReady || !turnstileRef.current || !window.turnstile) return
-    widgetIdRef.current = window.turnstile.render(turnstileRef.current, {
+    if (step !== 3 || !turnstileReady || !window.turnstile) return
+    const container = turnstileRef.current
+    if (!container) return
+    if (widgetIdRef.current !== null) return       // we already rendered one
+    if (container.childElementCount > 0) return    // a widget already lives here
+
+    widgetIdRef.current = window.turnstile.render(container, {
       sitekey: TURNSTILE_SITE_KEY,
       callback: t => setToken(t),
       'error-callback': () => setToken(''),
       'expired-callback': () => setToken('')
     })
+
     return () => {
-      if (widgetIdRef.current && window.turnstile) {
+      if (widgetIdRef.current !== null && window.turnstile) {
         try { window.turnstile.remove(widgetIdRef.current) } catch { /* already gone */ }
         widgetIdRef.current = null
       }
@@ -111,7 +121,7 @@ export default function Waitlist() {
   }, [step, turnstileReady])
 
   function resetTurnstile() {
-    if (widgetIdRef.current && window.turnstile) {
+    if (widgetIdRef.current !== null && window.turnstile) {
       try { window.turnstile.reset(widgetIdRef.current) } catch { /* not rendered */ }
     }
     setToken('')
