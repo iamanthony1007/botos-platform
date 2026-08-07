@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
+import { usePublicScroll } from '../lib/usePublicScroll'
 
 const LOGO_STACKED = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20horizontal.png'
 const TURNSTILE_SITE_KEY = '0x4AAAAAAEIrdNtHqz3JxYx8'
@@ -45,6 +46,7 @@ function optionRowStyle(selected) {
 }
 
 export default function Waitlist() {
+  usePublicScroll()
   const [step, setStep] = useState(1)
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState('')

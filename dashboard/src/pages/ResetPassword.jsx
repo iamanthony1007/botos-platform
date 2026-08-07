@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { usePublicScroll } from '../lib/usePublicScroll'
 
 const LOGO_STACKED = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20horizontal.png'
 
@@ -15,6 +16,7 @@ const CARD = {
 
 export default function ResetPassword() {
   const navigate = useNavigate()
+  usePublicScroll()
   const [checking, setChecking] = useState(true)
   const [ready, setReady] = useState(false)
   const [password, setPassword] = useState('')
