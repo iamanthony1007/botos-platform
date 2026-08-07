@@ -1,3 +1,112 @@
+2026-08-07: Public waitlist shipped to production (feat/waitlist, merged to main
+fast-forward). Applicants at getmu.co/waitlist write to waitlist_applications via
+a Cloudflare Pages Function. All 12 verification gates pass.
+
+WHAT SHIPPED:
+- db/migrations/010_waitlist_applications.sql: table, CHECK constraints, RLS
+  (anon revoked, no anon policy, authenticated select/update only), indexes,
+  updated_at trigger. Applied to prod by Anthony. Renumbered from 009 (that slot
+  is 009_add_connected_accounts.sql, Instagram work).
+- dashboard/functions/api/waitlist.js: the only server-side code in the
+  dashboard. Holds the Supabase service key. POST validates every field against
+  the DB CHECK constraints, verifies Turnstile server-side, honeypot, SHA-256 IP
+  hash, awaited Supabase insert, fire-and-forget Resend notify (reply_to =
+  applicant). GET returns a presence-and-format-only diagnostics object.
+- dashboard/src/pages/Waitlist.jsx: 3-step form in the Login visual language,
+  parent-held state (Back never loses input), Turnstile on step 3 only with a
+  StrictMode-safe render (capture widget id, remove on cleanup, bail if one
+  already exists), honeypot, per-step validation.
+- App.jsx: bare /waitlist route, no guard. package.json: wrangler added to
+  devDependencies.
+
+DEPLOY RESOLUTION CONFIRMED: Pages picks up dashboard/functions/ when deploying
+dist from dashboard/ (wrangler 4.119). Proven with a throwaway /api/ping before
+building anything.
+
+THE TURNSTILE SAGA (three wrong diagnoses before the real one). Symptom: submit
+403, siteverify success:false, console 400020, widget would not paint at first.
+
+- Wrong diagnosis 1, "sitekey has an extra A": retracted mid-session as a chat
+  transcription error, but the FILE really did carry a 25-char sitekey
+  (0x4AAAAAAAEHaXeaTNpj6BQsE, seven A's) when real Turnstile sitekeys are 24
+  chars. That extra A alone produces 400020 and was likely the original reason
+  the widget did not paint.
+- Wrong diagnosis 2, "the widget is broken, recreate it": a bisect with
+  Cloudflare's dummy sitekey (1x00000000000000000000AA) rendered fine, read as
+  "our code is correct, the widget is broken." The bisect could not tell "widget
+  broken" from "wrong sitekey value in the file," and it was the latter. THE
+  WIDGET NEVER NEEDED RECREATING. Recreating it did hand us a clean 24-char
+  sitekey (0x4AAAAAAEIrdNtHqz3JxYx8) and made the widget paint, but correcting
+  the extra A would have done the same without a recreate.
+- Wrong diagnosis 3, "the sitekey/secret pairing must still be off": after the
+  widget painted and produced a valid token, submit STILL 403'd. We stopped
+  guessing and added a throwaway diagnostic returning Cloudflare's error-codes in
+  the 403 body (Observability Logs are disabled on this account, so the existing
+  console.warn was lost). The code was invalid-input-secret.
+
+REAL ROOT CAUSE: the Production TURNSTILE_SECRET_KEY held the OLD, deleted
+widget's secret. It was 35 chars, 0x4-prefixed, no whitespace, not the sitekey:
+a perfectly well-formed secret that was simply dead. The GET diagnostics had
+reported turnstile_secret_set:true and turnstile_secret_format_ok:true
+throughout and gave false confidence. A PRESENCE-AND-FORMAT CHECK CANNOT CATCH A
+STALE-BUT-WELL-FORMED SECRET. Only a real end-to-end verify, or the external
+service's own error codes, reveals it.
+
+Why the secret would not update: wrangler pages secret put did not land on the
+Production scope (Pages has separate Production and Preview). Setting
+TURNSTILE_SECRET_KEY via the dashboard with Environment explicitly Production,
+then redeploying (Pages secrets bind at deploy time), fixed it. Submit returned
+{"ok":true} and the success screen. Diagnostics were then removed from prod and
+confirmed gone via the GET endpoint.
+
+LESSONS:
+1. Opaque strings (keys, ids) are never diagnosed from a value typed into chat or
+   read visually. Copy button into the file, verify with findstr and a length
+   check, compare against a known-good example. And do not over-trust an assumed
+   length: we anchored on "25 chars, seven A's" from a briefing that was itself
+   wrong; the real sitekey is 24 chars.
+2. A presence-and-format diagnostic cannot catch a stale-but-well-formed secret.
+   For a secret whose validity depends on an external service, the only real
+   check is an end-to-end call, or surfacing that service's own error codes.
+3. Cloudflare returns 400020 ("invalid widget size") for an invalid-sitekey
+   condition (a confirmed docs bug), so 400020 loosely means "sitekey wrong."
+   invalid-input-secret from siteverify means "the secret is wrong or dead."
+4. Pages secrets are per-environment. wrangler pages secret put did not reach
+   Production here; the dashboard with Environment set to Production did. Always
+   confirm the scope, and remember dashboard secret edits bind only on redeploy.
+
+GATE RESULTS, all 12 pass: diagnostics all true; 400/400/403 negative POSTs;
+3-step render plus Back-preserves-input; step validation blocks; real submit end
+to end; row in waitlist_applications (status new, handle @-stripped, bottlenecks
+array); notification email to nellakuate@gmail.com from waitlist@getmu.co with
+reply_to = applicant; anon SELECT denied (verified three ways); all existing
+routes (/login, /dashboard, /inbox, /forgot-password, /reset-password) still
+load.
+
+DEPLOY IDS seen this session: f4a1bd6d and 7ec4e8bb (waitlist iterations),
+f8e75227 (ping proof), d3c187ac (clean pre-waitlist). A final clean deploy after
+diagnostics removal is the current live production.
+
+COMMITS on feat/waitlist (merged to main): 941d60d feat (form + Function +
+migration), 235d02a fix (StrictMode-safe Turnstile render), 8f6a0e7 fix
+(recreated-widget sitekey). Two throwaway commits (dummy-sitekey bisect,
+error-code diagnostic) were created and dropped, never merged.
+
+TEST DATA: one "TEST Ignore" application is live in waitlist_applications and one
+notification reached Nella. The table has no DELETE policy by design; remove the
+row with the service role or set status='rejected'.
+
+FOLLOW-UPS (open):
+- Set the five secrets (SUPABASE_URL, SUPABASE_SERVICE_KEY, TURNSTILE_SECRET_KEY,
+  RESEND_API_KEY, NELLA_NOTIFY_EMAIL) on botos-platform-staging so staging can
+  exercise the Function. Deferred because they live only on Production.
+- Part 2 (landing page buttons rewire + How It Works page) is blocked on a
+  YouTube video ID from Anthony.
+- Confirm admin@getmu.co still receives mail.
+- Part 3: dashboard tab to review applications. Note waitlist_authenticated_select
+  is currently open to every authenticated user including setters; narrow to
+  owner/admin before a second tenant (per the migration TODO).
+
 2026-08-04: Forgot-password flow shipped to code (fix/forgot-password, merged to
 main fast-forward as 91bd72f, pushed). Reported by Nella, blocking her demo week.
 
