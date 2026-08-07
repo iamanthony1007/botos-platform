@@ -24,7 +24,7 @@ export default function PublicHeader() {
         aria-label="MU AI, home"
         style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex' }}
       >
-        <img src={LOGO} alt="MU AI" style={{ height: '44px', width: 'auto', display: 'block' }} />
+        <img src={LOGO} alt="MU AI" style={{ height: 'clamp(52px, 8vw, 64px)', width: 'auto', display: 'block' }} />
       </button>
       <button
         onClick={() => navigate('/login')}

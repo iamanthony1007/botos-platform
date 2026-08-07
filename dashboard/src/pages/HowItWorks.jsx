@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PublicHeader from '../components/PublicHeader'
 import { usePublicScroll } from '../lib/usePublicScroll'
@@ -187,11 +187,28 @@ function DmThread() {
 // before consent, which matches the privacy rationale for youtube-nocookie.
 function VideoEmbed() {
   const [playing, setPlaying] = useState(false)
+  const warmed = useRef(false)
+
+  // Warm the connection to YouTube on pointer/focus intent, so the click to play
+  // does not also pay for DNS + TLS + TCP. Still nothing loads until intent, so
+  // page load stays clean and privacy-respecting.
+  function warm() {
+    if (warmed.current) return
+    warmed.current = true
+    for (const href of ['https://www.youtube-nocookie.com', 'https://www.google.com', 'https://i.ytimg.com']) {
+      const l = document.createElement('link')
+      l.rel = 'preconnect'
+      l.href = href
+      l.crossOrigin = 'anonymous'
+      document.head.appendChild(l)
+    }
+  }
+
   return (
     <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: '12px', overflow: 'hidden', background: '#18160E' }}>
       {playing ? (
         <iframe
-          src="https://www.youtube-nocookie.com/embed/AAkVdHX6gGw?rel=0&modestbranding=1&autoplay=1"
+          src="https://www.youtube-nocookie.com/embed/AAkVdHX6gGw?rel=0&modestbranding=1&autoplay=1&playsinline=1"
           title="How MU AI works"
           style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -200,6 +217,8 @@ function VideoEmbed() {
       ) : (
         <button
           className="hiw-videobtn"
+          onMouseEnter={warm}
+          onFocus={warm}
           onClick={() => setPlaying(true)}
           aria-label="Play video: How MU AI works"
           style={{
@@ -263,6 +282,7 @@ export default function HowItWorks() {
           font-weight: 500; color: rgba(40,35,25,0.6); margin-bottom: 20px; }
         .hiw-lead { font-size: 17px; color: var(--tx2); line-height: 1.7; }
         .hiw-stagegrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+        .hiw-tourgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
         .hiw-learn { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: stretch; }
         @media (max-width: 720px) { .hiw-learn { grid-template-columns: 1fr; } }
         @media (max-width: 560px) {
@@ -354,6 +374,84 @@ export default function HowItWorks() {
                 {String(i + 1).padStart(2, '0')}
               </div>
               <div style={{ fontSize: '12.5px', fontWeight: 700, letterSpacing: '.04em', color: DARK, marginBottom: '6px' }}>{name}</div>
+              <div style={{ fontSize: '13px', color: 'var(--tx2)', lineHeight: 1.5 }}>{line}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Section 5b: Inside the platform, a tour of the real screens */}
+      <div className="hiw-section">
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+          <div className="hiw-eyebrow" style={{ marginBottom: '12px' }}>Inside the platform</div>
+          <h2 className="hiw-h2">The screens your team works in.</h2>
+          <p className="hiw-lead" style={{ maxWidth: '540px', margin: '8px auto 0' }}>
+            MU AI does the drafting. Your setter runs the show from one place.
+          </p>
+        </div>
+
+        <div className="hiw-learn">
+          {/* Closest to Booking, the dashboard's flagship widget */}
+          <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', padding: '22px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: GOLD, marginBottom: '4px' }}>Dashboard</div>
+            <div style={{ fontFamily: "'Playfair Display', 'Georgia', serif", fontSize: '18px', fontWeight: 700, color: INK, marginBottom: '14px' }}>Closest to Booking</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+              {[
+                ['1', '@mike.plays.golf', 'SCHEDULE', 'High'],
+                ['2', '@sarah.golfs', 'INVITE', 'High'],
+                ['3', '@tourbound.tom', 'DECISION', 'Medium']
+              ].map(([n, who, stg, intent]) => (
+                <div key={n} style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '8px 10px', background: n === '1' ? 'var(--accl)' : '#F7F6F1', borderRadius: '9px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--tx3)', width: '12px', flexShrink: 0 }}>{n}</span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: DARK, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{who}</span>
+                  <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '.03em', color: 'var(--tx2)', flexShrink: 0 }}>{stg}</span>
+                  <span style={{ fontSize: '10px', fontWeight: 700, color: intent === 'High' ? '#2E7D46' : '#8A6D1B', background: intent === 'High' ? '#E6F4EA' : '#F3E7C4', borderRadius: '999px', padding: '2px 8px', flexShrink: 0 }}>{intent}</span>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--tx2)', lineHeight: 1.6, margin: '14px 0 0' }}>
+              Every active lead ranked by intent, stage, and recent activity, so your setter always knows who to work next.
+            </p>
+          </div>
+
+          {/* Active Conversations, the review inbox */}
+          <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', padding: '22px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: GOLD, marginBottom: '4px' }}>Active Conversations</div>
+            <div style={{ fontFamily: "'Playfair Display', 'Georgia', serif", fontSize: '18px', fontWeight: 700, color: INK, marginBottom: '14px' }}>Reviewed before it sends</div>
+            <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '8px' }}>
+              <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: '12px', padding: '8px 12px', fontSize: '13px', color: DARK, maxWidth: '82%', lineHeight: 1.45 }}>
+                Do you guarantee results?
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+              <div style={{ background: 'var(--accl)', border: `1.5px dashed ${GOLD}`, borderRadius: '12px', padding: '8px 12px', fontSize: '13px', color: '#3A3A2A', maxWidth: '82%', lineHeight: 1.45 }}>
+                I cannot promise a number, but I can promise a plan built around your swing.
+                <div style={{ marginTop: '6px', fontSize: '10px', fontWeight: 700, letterSpacing: '.03em', color: '#8A6D1B' }}>AI DRAFT</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: DARK, background: GOLD, borderRadius: '8px', padding: '6px 15px' }}>Approve</span>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tx2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '6px 15px' }}>Edit</span>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tx2)', border: '1px solid var(--bdr)', borderRadius: '8px', padding: '6px 15px' }}>Discard</span>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--tx2)', lineHeight: 1.6, margin: '14px 0 0' }}>
+              Every DM arrives with a drafted reply. Your setter approves, edits, or discards it. Nothing reaches a lead without a human.
+            </p>
+          </div>
+        </div>
+
+        {/* The rest of the platform, compact and factual */}
+        <div className="hiw-tourgrid" style={{ marginTop: '14px' }}>
+          {[
+            ['Knowledge Base', 'Upload your PDFs and docs. The AI answers from them in every reply.'],
+            ['AI Learning Log', 'Every correction your setter makes is saved and reused on similar chats.'],
+            ['Analytics', 'A conversion funnel and stage-by-stage drop-off show where leads are won or lost.'],
+            ['AI Behavior', 'Shape how the AI talks in plain English. No prompt engineering.'],
+            ['Conversation Simulator', 'Test the bot safely and replay past conversations before anything goes live.'],
+            ['Team', 'Invite setters and control who can see and do what.']
+          ].map(([name, line]) => (
+            <div key={name} style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: '12px', padding: '16px' }}>
+              <div style={{ fontSize: '13.5px', fontWeight: 700, color: DARK, marginBottom: '6px' }}>{name}</div>
               <div style={{ fontSize: '13px', color: 'var(--tx2)', lineHeight: 1.5 }}>{line}</div>
             </div>
           ))}
