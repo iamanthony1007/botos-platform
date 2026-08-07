@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 
 const LOGO_STACKED = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20horizontal.png'
-const TURNSTILE_SITE_KEY = '0x4AAAAAAAEHaXeaTNpj6BQsE'
+const TURNSTILE_SITE_KEY = '0x4AAAAAAEIrdNtHqz3JxYx8'
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 // Option strings MUST match the ALLOWED lists in functions/api/waitlist.js and
