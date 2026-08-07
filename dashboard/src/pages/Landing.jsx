@@ -52,7 +52,7 @@ export default function Landing() {
           padding: '10px 24px', borderRadius: '8px', fontSize: '14px',
           fontWeight: 700, cursor: 'pointer', fontFamily: "'Inter', sans-serif"
         }}>
-          Get Started
+          Client Login
         </button>
       </div>
 
@@ -88,23 +88,31 @@ export default function Landing() {
         </p>
 
         <div style={{ display: 'flex', gap: '14px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => navigate('/login')} style={{
+          <button onClick={() => navigate('/waitlist')} style={{
             background: '#D4AF37', color: '#1A1A1A', border: 'none',
             padding: '15px 36px', borderRadius: '10px', fontSize: '16px',
             fontWeight: 700, cursor: 'pointer',
             boxShadow: '0 4px 20px rgba(160,110,0,0.25)',
             fontFamily: "'Inter', sans-serif"
           }}>
-            Get Started
+            Join the Waitlist
           </button>
           <button onClick={() => navigate('/login')} style={{
             background: '#1A1A1A', color: '#fff', border: 'none',
             padding: '15px 36px', borderRadius: '10px', fontSize: '16px',
             fontWeight: 600, cursor: 'pointer', fontFamily: "'Inter', sans-serif"
           }}>
-            Learn More
+            Client Login
           </button>
         </div>
+
+        <button onClick={() => navigate('/how-it-works')} style={{
+          marginTop: '22px', background: 'none', border: 'none', padding: '4px',
+          color: 'rgba(30,25,15,0.55)', fontSize: '14px', cursor: 'pointer',
+          textDecoration: 'underline', fontFamily: "'Inter', sans-serif"
+        }}>
+          See how it works
+        </button>
       </div>
 
       {/* Footer */}

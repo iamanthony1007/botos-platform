@@ -18,6 +18,7 @@ import AcceptInvite from './pages/AcceptInvite'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import Waitlist from './pages/Waitlist'
+import HowItWorks from './pages/HowItWorks'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -61,6 +62,7 @@ function App() {
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/accept-invite" element={<AcceptInvite />} />
             <Route path="/waitlist" element={<Waitlist />} />
+            <Route path="/how-it-works" element={<HowItWorks />} />
 
             {/* Protected dashboard routes */}
             <Route path="/dashboard" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
