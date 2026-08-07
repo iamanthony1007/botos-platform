@@ -6,9 +6,9 @@ import { useNavigate } from 'react-router-dom'
 // Landing's hero uses so nothing shifts visually. Do not "fix" the naming here.
 const LOGO = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20horizontal.png'
 
-const GOLD = '#D4AF37'
+const GOLD = 'var(--acc)'
 const INK = '#18160E'
-const DARK = '#1A1A1A'
+const DARK = 'var(--tx)'
 
 // Real conversation stages, taken verbatim from sales-bot/src/index.js
 // (conversation_stage). Do not invent stage names.
@@ -36,7 +36,7 @@ const CAPTIONS = [
 // The longest caption reserves the caption block height so the card does not
 // change height between stages at any viewport width.
 const LONGEST_CAPTION = CAPTIONS.reduce((a, b) => (b.length > a.length ? b : a))
-const CAPTION_STYLE = { fontSize: '13px', color: '#6A6A5A', lineHeight: 1.5, margin: 0 }
+const CAPTION_STYLE = { fontSize: '13px', color: 'var(--tx2)', lineHeight: 1.5, margin: 0 }
 
 // Local rays component. Extracted so the SVG is not copy-pasted twice; kept in
 // this file rather than refactoring Landing.jsx.
@@ -100,8 +100,8 @@ function DmThread() {
       role="group"
       aria-label="Interactive demo: how MU AI handles a DM"
       style={{
-        background: '#fff', border: '1px solid #E8E6DE', borderRadius: '16px',
-        boxShadow: '0 4px 24px rgba(0,0,0,.07)', padding: '18px', maxWidth: '460px',
+        background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)',
+        boxShadow: 'var(--shm)', padding: '18px', maxWidth: '460px',
         margin: '0 auto', width: '100%'
       }}
     >
@@ -114,7 +114,7 @@ function DmThread() {
         }}>MG</div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: '14px', fontWeight: 600, color: DARK }}>@mike.plays.golf</div>
-          <div style={{ fontSize: '12px', color: '#9A9A8A' }}>Instagram DM</div>
+          <div style={{ fontSize: '12px', color: 'var(--tx3)' }}>Instagram DM</div>
         </div>
       </div>
 
@@ -123,10 +123,10 @@ function DmThread() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 2px 4px' }}>
 
         <Bubble side="left" revealed={stage >= 1}>
-          <div style={{ background: '#fff', border: '1px solid #E8E6DE', borderRadius: '14px', padding: '10px 14px', fontSize: '14px', color: DARK, lineHeight: 1.5 }}>
+          <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: '14px', padding: '10px 14px', fontSize: '14px', color: DARK, lineHeight: 1.5 }}>
             Saw your reel on fixing a slice. Do you do 1:1 coaching?
           </div>
-          <div style={{ fontSize: '11px', color: '#9A9A8A', marginTop: '4px' }}>9:14 AM</div>
+          <div style={{ fontSize: '11px', color: 'var(--tx3)', marginTop: '4px' }}>9:14 AM</div>
         </Bubble>
 
         <Bubble side="right" revealed={stage >= 2}>
@@ -145,7 +145,7 @@ function DmThread() {
               </span>
             )}
             {stage >= 4 && (
-              <span style={{ fontSize: '11px', color: '#9A9A8A' }}>Sent, 9:15 AM</span>
+              <span style={{ fontSize: '11px', color: 'var(--tx3)' }}>Sent, 9:15 AM</span>
             )}
           </div>
         </Bubble>
@@ -158,14 +158,14 @@ function DmThread() {
             <span style={{ fontSize: '11px', fontWeight: 600, color: '#7A6A2A', background: '#F3E7C4', borderRadius: '999px', padding: '2px 9px' }}>
               Automatic follow up
             </span>
-            <span style={{ fontSize: '11px', color: '#9A9A8A' }}>Next day, 8:02 AM</span>
+            <span style={{ fontSize: '11px', color: 'var(--tx3)' }}>Next day, 8:02 AM</span>
           </div>
         </Bubble>
       </div>
 
       {/* Controls */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginTop: '10px' }}>
-        <span style={{ fontSize: '12px', color: '#9A9A8A', fontWeight: 500 }}>Step {stage} of 5</span>
+        <span style={{ fontSize: '12px', color: 'var(--tx3)', fontWeight: 500 }}>Step {stage} of 5</span>
         {atEnd ? (
           <button className="hiw-btn-ghost" onClick={() => setStage(1)}>Replay</button>
         ) : (
@@ -188,7 +188,7 @@ export default function HowItWorks() {
   const navigate = useNavigate()
 
   return (
-    <div className="hiw" style={{ background: '#F5F5F0', minHeight: '100vh', fontFamily: "'Inter', sans-serif", overflowX: 'hidden' }}>
+    <div className="hiw" style={{ background: 'var(--bg)', minHeight: '100vh', fontFamily: "'Inter', sans-serif", overflowX: 'hidden' }}>
       <style>{`
         .hiw *, .hiw *::before, .hiw *::after { box-sizing: border-box; }
         .hiw-reveal { transition: opacity .24s ease, transform .24s ease; }
@@ -197,7 +197,7 @@ export default function HowItWorks() {
           outline: 2px solid ${DARK}; outline-offset: 2px; border-radius: 6px;
         }
         .hiw-btn-ghost {
-          background: #fff; border: 1.5px solid #E0DDD2; color: ${DARK};
+          background: #fff; border: 1.5px solid var(--bdr); color: ${DARK};
           font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600;
           padding: 9px 22px; border-radius: 9px; cursor: pointer; transition: border-color .15s ease;
         }
@@ -215,7 +215,7 @@ export default function HowItWorks() {
           font-size: clamp(23px, 5vw, 32px); line-height: 1.2; margin: 0 0 10px; }
         .hiw-eyebrow { font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
           font-weight: 500; color: rgba(40,35,25,0.6); margin-bottom: 20px; }
-        .hiw-lead { font-size: 17px; color: #6A6A5A; line-height: 1.7; }
+        .hiw-lead { font-size: 17px; color: var(--tx2); line-height: 1.7; }
         .hiw-stagegrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
         .hiw-learn { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: stretch; }
         @media (max-width: 720px) { .hiw-learn { grid-template-columns: 1fr; } }
@@ -250,7 +250,7 @@ export default function HowItWorks() {
 
       {/* Section 2: The video */}
       <div className="hiw-section" style={{ maxWidth: '860px' }}>
-        <div style={{ background: '#fff', border: '1px solid #E8E6DE', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,.07)', padding: '18px' }}>
+        <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', boxShadow: 'var(--shm)', padding: '18px' }}>
           <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: '12px', overflow: 'hidden' }}>
             <iframe
               src="https://www.youtube-nocookie.com/embed/AAkVdHX6gGw?rel=0&modestbranding=1"
@@ -282,30 +282,30 @@ export default function HowItWorks() {
           <h2 className="hiw-h2">Correct it once. It remembers.</h2>
         </div>
         <div className="hiw-learn">
-          <div style={{ background: '#fff', border: '1px solid #E8E6DE', borderRadius: '16px', padding: '22px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: '#C0392B', marginBottom: '14px' }}>Got it wrong</div>
-            <div style={{ fontSize: '13px', color: '#9A9A8A', marginBottom: '6px' }}>Lead</div>
+          <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', padding: '22px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--red)', marginBottom: '14px' }}>Got it wrong</div>
+            <div style={{ fontSize: '13px', color: 'var(--tx3)', marginBottom: '6px' }}>Lead</div>
             <div style={{ background: '#F7F6F1', borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: DARK, lineHeight: 1.5, marginBottom: '12px' }}>
               Do you guarantee results?
             </div>
-            <div style={{ fontSize: '13px', color: '#9A9A8A', marginBottom: '6px' }}>Old reply</div>
-            <div style={{ background: '#FDF0EE', border: '1px solid #F5C6C0', borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: '#7A2E28', lineHeight: 1.5 }}>
+            <div style={{ fontSize: '13px', color: 'var(--tx3)', marginBottom: '6px' }}>Old reply</div>
+            <div style={{ background: 'var(--redbg)', border: '1px solid var(--redbd)', borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: '#7A2E28', lineHeight: 1.5 }}>
               Absolutely, you will see results in 30 days, guaranteed.
             </div>
           </div>
-          <div style={{ background: '#fff', border: '1px solid #E8E6DE', borderRadius: '16px', padding: '22px' }}>
+          <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', padding: '22px' }}>
             <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: '#2E7D46', marginBottom: '14px' }}>Answered like the coach</div>
-            <div style={{ fontSize: '13px', color: '#9A9A8A', marginBottom: '6px' }}>Lead</div>
+            <div style={{ fontSize: '13px', color: 'var(--tx3)', marginBottom: '6px' }}>Lead</div>
             <div style={{ background: '#F7F6F1', borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: DARK, lineHeight: 1.5, marginBottom: '12px' }}>
               Do you guarantee results?
             </div>
-            <div style={{ fontSize: '13px', color: '#9A9A8A', marginBottom: '6px' }}>New reply</div>
+            <div style={{ fontSize: '13px', color: 'var(--tx3)', marginBottom: '6px' }}>New reply</div>
             <div style={{ background: DARK, borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: '#fff', lineHeight: 1.5 }}>
               I cannot promise a number, that depends on the work you put in. What I can promise is a plan built around your swing and honest feedback every week.
             </div>
           </div>
         </div>
-        <p style={{ textAlign: 'center', fontSize: '14px', color: '#6A6A5A', lineHeight: 1.6, maxWidth: '620px', margin: '22px auto 0' }}>
+        <p style={{ textAlign: 'center', fontSize: '14px', color: 'var(--tx2)', lineHeight: 1.6, maxWidth: '620px', margin: '22px auto 0' }}>
           A setter corrected this once. MU AI saved the correction and now handles the same question the coach's way on later conversations.
         </p>
       </div>
@@ -318,12 +318,12 @@ export default function HowItWorks() {
         </div>
         <div className="hiw-stagegrid">
           {STAGES.map(([name, line], i) => (
-            <div key={name} style={{ background: '#fff', border: '1px solid #E8E6DE', borderRadius: '12px', padding: '16px' }}>
+            <div key={name} style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: '12px', padding: '16px' }}>
               <div style={{ fontSize: '12px', fontWeight: 700, color: GOLD, marginBottom: '8px' }}>
                 {String(i + 1).padStart(2, '0')}
               </div>
               <div style={{ fontSize: '12.5px', fontWeight: 700, letterSpacing: '.04em', color: DARK, marginBottom: '6px' }}>{name}</div>
-              <div style={{ fontSize: '13px', color: '#6A6A5A', lineHeight: 1.5 }}>{line}</div>
+              <div style={{ fontSize: '13px', color: 'var(--tx2)', lineHeight: 1.5 }}>{line}</div>
             </div>
           ))}
         </div>

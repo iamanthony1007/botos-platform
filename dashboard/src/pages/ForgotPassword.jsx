@@ -27,7 +27,7 @@ export default function ForgotPassword() {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: '#F5F5F0', padding: '20px', fontFamily: "'Inter', sans-serif"
+      background: 'var(--bg)', padding: '20px', fontFamily: "'Inter', sans-serif"
     }}>
       <div style={{ width: '100%', maxWidth: '420px' }}>
 
@@ -35,7 +35,7 @@ export default function ForgotPassword() {
           <img src={LOGO_STACKED} alt="MU AI"
             style={{ width: '200px', height: 'auto', display: 'block', margin: '0 auto 10px' }} />
           <div style={{
-            fontSize: '.78rem', color: '#9A9A8A', letterSpacing: '.12em',
+            fontSize: '.78rem', color: 'var(--tx3)', letterSpacing: '.12em',
             textTransform: 'uppercase', fontWeight: 500
           }}>
             Intelligence in Motion
@@ -43,15 +43,15 @@ export default function ForgotPassword() {
         </div>
 
         <div style={{
-          background: '#fff', borderRadius: '16px', padding: '32px',
-          boxShadow: '0 4px 24px rgba(0,0,0,.07)', border: '1px solid #E8E6DE'
+          background: '#fff', borderRadius: 'var(--rlg)', padding: '32px',
+          boxShadow: 'var(--shm)', border: '1px solid var(--bdr)'
         }}>
           {sent ? (
             <div>
-              <div style={{ fontSize: '1.15rem', fontWeight: 600, color: '#1A1A1A', marginBottom: '8px' }}>
+              <div style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--tx)', marginBottom: '8px' }}>
                 Check your email
               </div>
-              <div style={{ fontSize: '.85rem', color: '#6A6A5A', lineHeight: 1.6, marginBottom: '20px' }}>
+              <div style={{ fontSize: '.85rem', color: 'var(--tx2)', lineHeight: 1.6, marginBottom: '20px' }}>
                 If an account exists for {email}, we've sent a link to reset your password.
                 The link expires in 1 hour.
               </div>
@@ -62,10 +62,10 @@ export default function ForgotPassword() {
           ) : (
             <>
               <div style={{ marginBottom: '22px' }}>
-                <div style={{ fontSize: '1.15rem', fontWeight: 600, color: '#1A1A1A', marginBottom: '4px' }}>
+                <div style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--tx)', marginBottom: '4px' }}>
                   Reset password
                 </div>
-                <div style={{ fontSize: '.82rem', color: '#9A9A8A' }}>
+                <div style={{ fontSize: '.82rem', color: 'var(--tx3)' }}>
                   We'll email you a link to set a new one
                 </div>
               </div>
@@ -80,11 +80,11 @@ export default function ForgotPassword() {
                 </div>
 
                 {error && (
-                  <div style={{ fontSize: '.8rem', color: '#C0392B' }}>{error}</div>
+                  <div style={{ fontSize: '.8rem', color: 'var(--red)' }}>{error}</div>
                 )}
 
                 <button type="submit" disabled={loading} style={{
-                  background: '#D4AF37', color: '#1A1A1A', border: 'none', borderRadius: '8px',
+                  background: 'var(--acc)', color: 'var(--tx)', border: 'none', borderRadius: '8px',
                   padding: '12px', fontSize: '.9rem', fontWeight: 600,
                   cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.7 : 1,
                   boxShadow: '0 2px 10px rgba(212,175,55,.25)', transition: 'all .15s', marginTop: '4px'
