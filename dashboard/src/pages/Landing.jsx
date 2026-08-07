@@ -1,26 +1,29 @@
 import { useNavigate } from 'react-router-dom'
+import PublicHeader from '../components/PublicHeader'
+import { usePublicScroll } from '../lib/usePublicScroll'
 
-const LOGO_HORIZONTAL = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20stacked.png'
+// Hero centred logo (the stacked-look image). Constant names are swapped at
+// source; kept as-is so nothing shifts visually.
 const LOGO_STACKED = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20horizontal.png'
 
 export default function Landing() {
   const navigate = useNavigate()
+  usePublicScroll()
 
   return (
     <div style={{
-      minHeight: '100vh', display: 'flex', flexDirection: 'column',
-      fontFamily: "'Inter', sans-serif", position: 'relative',
-      overflow: 'hidden', background: '#B8B0A0'
+      position: 'relative', minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      fontFamily: "'Inter', sans-serif", background: '#B8B0A0'
     }}>
 
-      {/* Base gradient */}
+      {/* Base gradient, covers the whole page including behind the frosted header */}
       <div style={{
         position: 'absolute', inset: 0,
         background: 'radial-gradient(ellipse at 55% 45%, #DDD8C8 0%, #C8C0A8 35%, #B0A890 60%, #9A9078 85%, #807868 100%)'
       }} />
 
       {/* Rays */}
-      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }} aria-hidden="true">
         <svg width="100%" height="100%" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
           <defs>
             <filter id="s1"><feGaussianBlur stdDeviation="18"/></filter>
@@ -41,29 +44,16 @@ export default function Landing() {
         </svg>
       </div>
 
-      {/* Topbar */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '18px 48px', position: 'relative', zIndex: 2
-      }}>
-        <img src={LOGO_HORIZONTAL} alt="MU AI" style={{ height: '100px', width: 'auto' }} />
-        <button onClick={() => navigate('/login')} style={{
-          background: 'var(--acc)', color: 'var(--tx)', border: 'none',
-          padding: '10px 24px', borderRadius: '8px', fontSize: '14px',
-          fontWeight: 700, cursor: 'pointer', fontFamily: "'Inter', sans-serif"
-        }}>
-          Client Login
-        </button>
-      </div>
+      {/* Sticky header, content rolls under it */}
+      <PublicHeader />
 
       {/* Hero */}
       <div style={{
         flex: 1, display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        textAlign: 'center', padding: '20px 40px 100px',
-        position: 'relative', zIndex: 1
+        alignItems: 'center', justifyContent: 'center', textAlign: 'center',
+        padding: '48px clamp(20px, 5vw, 40px) 90px', position: 'relative', zIndex: 1
       }}>
-        <img src={LOGO_STACKED} alt="MU AI" style={{ width: '220px', height: 'auto', marginBottom: '6px' }} />
+        <img src={LOGO_STACKED} alt="MU AI" style={{ width: 'min(220px, 62vw)', height: 'auto', marginBottom: '6px' }} />
 
         <div style={{
           fontSize: '12px', color: 'rgba(40,35,25,0.6)', letterSpacing: '.16em',
@@ -74,14 +64,14 @@ export default function Landing() {
 
         <h1 style={{
           fontFamily: "'Playfair Display', 'Georgia', serif",
-          fontSize: '48px', fontWeight: 700, color: '#18160E',
+          fontSize: 'clamp(32px, 8vw, 48px)', fontWeight: 700, color: '#18160E',
           margin: '0 0 16px', lineHeight: 1.15, maxWidth: '580px'
         }}>
           Intelligence at speed.
         </h1>
 
         <p style={{
-          fontSize: '17px', color: 'rgba(30,25,15,0.68)',
+          fontSize: 'clamp(15px, 4vw, 17px)', color: 'rgba(30,25,15,0.68)',
           maxWidth: '480px', lineHeight: 1.75, margin: '0 0 44px'
         }}>
           MU AI delivers fast, precise, and adaptive AI systems built for the future.
@@ -97,22 +87,14 @@ export default function Landing() {
           }}>
             Join the Waitlist
           </button>
-          <button onClick={() => navigate('/login')} style={{
+          <button onClick={() => navigate('/how-it-works')} style={{
             background: 'var(--tx)', color: '#fff', border: 'none',
             padding: '15px 36px', borderRadius: '10px', fontSize: '16px',
             fontWeight: 600, cursor: 'pointer', fontFamily: "'Inter', sans-serif"
           }}>
-            Client Login
+            Learn More
           </button>
         </div>
-
-        <button onClick={() => navigate('/how-it-works')} style={{
-          marginTop: '22px', background: 'none', border: 'none', padding: '4px',
-          color: 'rgba(30,25,15,0.55)', fontSize: '14px', cursor: 'pointer',
-          textDecoration: 'underline', fontFamily: "'Inter', sans-serif"
-        }}>
-          See how it works
-        </button>
       </div>
 
       {/* Footer */}
@@ -120,7 +102,7 @@ export default function Landing() {
         textAlign: 'center', padding: '18px', fontSize: '12px',
         color: 'rgba(40,35,25,0.4)', position: 'relative', zIndex: 1
       }}>
-        MU AI © 2026
+        MU AI &copy; 2026
       </div>
     </div>
   )

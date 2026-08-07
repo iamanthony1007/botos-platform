@@ -1,10 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-
-// Reused as-is from Landing.jsx. The constant names there are swapped at source
-// (LOGO_STACKED points at the horizontal file); we intentionally match the value
-// Landing's hero uses so nothing shifts visually. Do not "fix" the naming here.
-const LOGO = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20horizontal.png'
+import PublicHeader from '../components/PublicHeader'
+import { usePublicScroll } from '../lib/usePublicScroll'
 
 const GOLD = 'var(--acc)'
 const INK = '#18160E'
@@ -184,11 +181,60 @@ function DmThread() {
   )
 }
 
+// Click-to-load video facade. Nothing is requested from YouTube until the
+// visitor clicks play: faster first load (the embed pulls a heavy player that
+// would otherwise load below the fold on every visit) and no YouTube contact
+// before consent, which matches the privacy rationale for youtube-nocookie.
+function VideoEmbed() {
+  const [playing, setPlaying] = useState(false)
+  return (
+    <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: '12px', overflow: 'hidden', background: '#18160E' }}>
+      {playing ? (
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/AAkVdHX6gGw?rel=0&modestbranding=1&autoplay=1"
+          title="How MU AI works"
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      ) : (
+        <button
+          className="hiw-videobtn"
+          onClick={() => setPlaying(true)}
+          aria-label="Play video: How MU AI works"
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none',
+            cursor: 'pointer', background: 'linear-gradient(135deg, #2A2620 0%, #18160E 100%)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px'
+          }}
+        >
+          <span aria-hidden="true" style={{
+            width: '64px', height: '64px', borderRadius: '50%', background: 'var(--acc)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 6px 24px rgba(0,0,0,0.4)'
+          }}>
+            <span style={{
+              width: 0, height: 0, borderStyle: 'solid', borderWidth: '11px 0 11px 18px',
+              borderColor: 'transparent transparent transparent #18160E', marginLeft: '4px'
+            }} />
+          </span>
+          <span style={{ color: '#F5F2EC', fontSize: '15px', fontWeight: 600, letterSpacing: '.01em' }}>
+            Watch how MU AI works
+          </span>
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function HowItWorks() {
   const navigate = useNavigate()
+  usePublicScroll()
 
   return (
-    <div className="hiw" style={{ background: 'var(--bg)', minHeight: '100vh', fontFamily: "'Inter', sans-serif", overflowX: 'hidden' }}>
+    <>
+      <PublicHeader />
+      <div className="hiw" style={{ background: 'var(--bg)', minHeight: '100vh', fontFamily: "'Inter', sans-serif", overflowX: 'hidden' }}>
       <style>{`
         .hiw *, .hiw *::before, .hiw *::after { box-sizing: border-box; }
         .hiw-reveal { transition: opacity .24s ease, transform .24s ease; }
@@ -233,13 +279,6 @@ export default function HowItWorks() {
         <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 55% 45%, #DDD8C8 0%, #C8C0A8 35%, #B0A890 60%, #9A9078 85%, #807868 100%)' }} />
         <Rays />
         <div className="hiw-hero" style={{ position: 'relative', zIndex: 1, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <button
-            onClick={() => navigate('/')}
-            aria-label="Back to home"
-            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', marginBottom: '10px' }}
-          >
-            <img src={LOGO} alt="MU AI" style={{ width: 'min(200px, 62vw)', height: 'auto', display: 'block' }} />
-          </button>
           <div className="hiw-eyebrow">How it works</div>
           <h1 className="hiw-h1" style={{ maxWidth: '640px' }}>Your DMs, answered in minutes.</h1>
           <p className="hiw-lead" style={{ maxWidth: '520px', margin: '0 auto' }}>
@@ -251,15 +290,7 @@ export default function HowItWorks() {
       {/* Section 2: The video */}
       <div className="hiw-section" style={{ maxWidth: '860px' }}>
         <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', boxShadow: 'var(--shm)', padding: '18px' }}>
-          <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: '12px', overflow: 'hidden' }}>
-            <iframe
-              src="https://www.youtube-nocookie.com/embed/AAkVdHX6gGw?rel=0&modestbranding=1"
-              title="How MU AI works"
-              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
-          </div>
+          <VideoEmbed />
         </div>
       </div>
 
@@ -340,6 +371,7 @@ export default function HowItWorks() {
       <div style={{ textAlign: 'center', padding: '18px', fontSize: '12px', color: 'rgba(40,35,25,0.4)' }}>
         MU AI &copy; 2026
       </div>
-    </div>
+      </div>
+    </>
   )
 }
