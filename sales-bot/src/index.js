@@ -3861,12 +3861,25 @@ async function insertDeletionRequest(env, row) {
 // Background worker for POST /meta/data-deletion. The 'received' row has ALREADY
 // been inserted (awaited) on the response path, so a confirmation code is never
 // handed out without a resolvable status row. Here we do the slow part off the
-// response path: anonymise the end user's conversations (null username +
-// profile_name, empty messages) and update the request row to completed/failed.
-// Anonymise, not hard-delete: the obligation is to remove personal data, while the
-// rows are kept to preserve lead history and aggregate metrics. Runs under
-// ctx.waitUntil; never throws out of it. error_detail is capped at 1000 chars so a
-// single bad stack trace cannot write a multi-megabyte row.
+// response path, and FIRST resolve who user_id is: the same signed_request user_id
+// could name either the business that authorized the app (its id lives in
+// connected_accounts.external_account_id) or a consumer who sent a DM (their id
+// lives in conversations.customer_id). Getting that wrong means either a silent
+// zero-row "completed" or a tenant-wide wipe, so we resolve before acting:
+//   1. connected_accounts hit -> caller is a business. REFUSE: tenant-wide
+//      deletion semantics are not yet confirmed, so remove nothing and record
+//      status=failed with the bot_id. A whole-tenant wipe on an unverified
+//      assumption is the worst available outcome.
+//   2. conversations hit      -> caller is a consumer. Anonymise those rows
+//      (null username + profile_name, empty messages) and record completed.
+//   3. neither                -> identity unresolvable. Record failed and log the
+//      user_id length + all-digits shape so we can compare it against known IGSID
+//      and connected-account formats on first real contact.
+// Anonymise, not hard-delete: keep the rows for lead history and aggregate
+// metrics. Runs under ctx.waitUntil; never throws out of it. error_detail is
+// capped at 1000 chars. bot_id on the request row is populated from whichever
+// entity resolved. FOLLOW-UP: once case 2 is confirmed the live path, scope the
+// conversations PATCH by the resolved bot_id; customer_id alone spans tenants.
 async function performDataDeletion(env, code, externalUserId, keyMatched) {
   const base = getSupabaseUrl(env);
   const headers = {
@@ -3874,47 +3887,80 @@ async function performDataDeletion(env, code, externalUserId, keyMatched) {
     "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY,
     "Content-Type": "application/json"
   };
+  const finalize = async (fields) => {
+    try {
+      await fetch(base + "/rest/v1/data_deletion_requests?confirmation_code=eq." + encodeURIComponent(code), {
+        method: "PATCH",
+        headers: Object.assign({}, headers, { "Prefer": "return=minimal" }),
+        body: JSON.stringify(Object.assign({ completed_at: new Date().toISOString() }, fields))
+      });
+    } catch (e2) {
+      console.log("meta/data-deletion bg: could not record outcome for code=" + code + ": " + (e2 && e2.message));
+    }
+  };
+
   try {
-    if (!externalUserId) throw new Error("no user_id in payload");
-    const resp = await fetch(
-      base + "/rest/v1/conversations?customer_id=eq." + encodeURIComponent(externalUserId),
+    if (!externalUserId) {
+      await finalize({ status: "failed", rows_affected: 0, error_detail: "identity unresolvable: no user_id in payload" });
+      console.log("meta/data-deletion bg: FAILED code=" + code + " no user_id.");
+      return;
+    }
+
+    // 1) Business? connected_accounts.external_account_id, any platform.
+    const caResp = await fetch(
+      base + "/rest/v1/connected_accounts?external_account_id=eq." + encodeURIComponent(externalUserId) + "&select=bot_id,platform&limit=1",
+      { headers: headers }
+    );
+    if (!caResp.ok) {
+      throw new Error(("connected_accounts lookup HTTP " + caResp.status + ": " + (await caResp.text())).slice(0, 1000));
+    }
+    const caRows = await caResp.json();
+    if (Array.isArray(caRows) && caRows[0]) {
+      const botId = caRows[0].bot_id || null;
+      await finalize({
+        status: "failed",
+        rows_affected: 0,
+        bot_id: botId,
+        error_detail: ("identity resolved to a connected business account (bot_id=" + botId + "); tenant-wide deletion semantics not yet confirmed, no data removed").slice(0, 1000)
+      });
+      console.log("meta/data-deletion bg: REFUSED (business account) code=" + code + " bot_id=" + botId + " user_id=" + externalUserId + ".");
+      return;
+    }
+
+    // 2) Consumer? conversations.customer_id. Anonymise the matched rows.
+    const convResp = await fetch(
+      base + "/rest/v1/conversations?customer_id=eq." + encodeURIComponent(externalUserId) + "&select=bot_id",
       {
         method: "PATCH",
         headers: Object.assign({}, headers, { "Prefer": "return=representation" }),
         body: JSON.stringify({ username: null, profile_name: null, messages: [] })
       }
     );
-    if (!resp.ok) {
-      throw new Error(("conversations PATCH HTTP " + resp.status + ": " + (await resp.text())).slice(0, 1000));
+    if (!convResp.ok) {
+      throw new Error(("conversations PATCH HTTP " + convResp.status + ": " + (await convResp.text())).slice(0, 1000));
     }
-    const rows = await resp.json();
-    const affected = Array.isArray(rows) ? rows.length : 0;
-    await fetch(base + "/rest/v1/data_deletion_requests?confirmation_code=eq." + encodeURIComponent(code), {
-      method: "PATCH",
-      headers: Object.assign({}, headers, { "Prefer": "return=minimal" }),
-      body: JSON.stringify({
-        status: "completed",
-        rows_affected: affected,
-        completed_at: new Date().toISOString()
-      })
+    const convRows = await convResp.json();
+    const affected = Array.isArray(convRows) ? convRows.length : 0;
+    if (affected > 0) {
+      const botId = convRows[0] && convRows[0].bot_id ? convRows[0].bot_id : null;
+      await finalize({ status: "completed", rows_affected: affected, bot_id: botId });
+      console.log("meta/data-deletion bg: COMPLETED (consumer) code=" + code + " user_id=" + externalUserId +
+        " rows_anonymised=" + affected + " bot_id=" + botId + ".");
+      return;
+    }
+
+    // 3) Neither business nor consumer: identity unresolvable.
+    const allDigits = /^[0-9]+$/.test(externalUserId);
+    await finalize({
+      status: "failed",
+      rows_affected: 0,
+      error_detail: ("identity unresolvable: no connected_accounts and no conversations matched; user_id length=" + externalUserId.length + " allDigits=" + allDigits).slice(0, 1000)
     });
-    console.log("meta/data-deletion bg: key=" + keyMatched + " user_id=" + externalUserId +
-      " code=" + code + " rows_anonymised=" + affected + " status=completed.");
+    console.log("meta/data-deletion bg: FAILED (unresolvable identity) code=" + code +
+      " user_id_len=" + externalUserId.length + " allDigits=" + allDigits + ".");
   } catch (e) {
     const errorDetail = String(e && e.message ? e.message : e).slice(0, 1000);
-    try {
-      await fetch(base + "/rest/v1/data_deletion_requests?confirmation_code=eq." + encodeURIComponent(code), {
-        method: "PATCH",
-        headers: Object.assign({}, headers, { "Prefer": "return=minimal" }),
-        body: JSON.stringify({
-          status: "failed",
-          error_detail: errorDetail,
-          completed_at: new Date().toISOString()
-        })
-      });
-    } catch (e2) {
-      console.log("meta/data-deletion bg: could not record failure " + (e2 && e2.message));
-    }
+    await finalize({ status: "failed", error_detail: errorDetail });
     console.log("meta/data-deletion bg: FAILED code=" + code + " detail=" + errorDetail);
   }
 }
