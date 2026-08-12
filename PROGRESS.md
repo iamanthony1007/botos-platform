@@ -1,3 +1,41 @@
+2026-08-12: Security hygiene on main (two chore(security) commits, pushed) plus a
+clean git-history audit. No feature code changed.
+
+WHAT CHANGED:
+- Untracked env and account-state files that must never live in the repo, all kept
+  on disk: dashboard/.env, dashboard/.env.production, dashboard/.env.staging,
+  .wrangler/cache/wrangler-account.json, and
+  sales-bot/node_modules/.cache/wrangler/wrangler-account.json (the long-standing
+  CLAUDE.md deferred item). Added explicit .gitignore entries (BOM preserved) and
+  created dashboard/.env.example as the key-name template. Commits b777a17 and
+  504af3a, pushed to origin/main.
+- Deploy safety confirmed first: both Cloudflare Pages projects (botos-platform,
+  botos-platform-staging) are direct-upload, Git Provider = No, so untracking cannot
+  break a Cloudflare-side build. verify-env.mjs and Vite read the env files from
+  disk, not from git.
+
+EXPOSURE CHECK (prod, read-only, no writes): the public anon key cannot read prod
+data. Unauthenticated (role=anon) SELECT returned zero rows on conversations,
+reviews, profiles, connected_accounts, organizations, bots, and a hard 42501 on
+waitlist_applications. connected_accounts returns 1 row to service_role but 0 to
+anon, proving RLS filters the anon role. No USING(true) policy grants anon read.
+
+HISTORY AUDIT (git log --all over the five files, blob-by-blob, key names and value
+lengths only): CLEAN. Every historical version of the three .env files held only
+VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. The wrangler blobs only ever held
+account.id and account.name, never a token/secret/oauth/refresh. No service-role
+key, Turnstile secret, Anthropic key, or Meta app secret was ever committed. The
+Turnstile secret currently in the working-copy dashboard/.env is uncommitted and
+never entered history.
+
+OPEN SECURITY FOLLOW-UPS (not blocking):
+- pg_policies literal capture: the exposure check covered SELECT only. Capture the
+  full pg_policies output from the Supabase SQL editor when convenient and record it
+  here (pg_policies is not reachable via PostgREST, so this needs the SQL editor).
+- Write-side RLS check outstanding: a FOR ALL USING (true) policy granting anon
+  writes is not ruled out by the SELECT-only test. Do NOT test writes against
+  production; confirm from the pg_policies capture instead.
+
 2026-08-07: Public waitlist shipped to production (feat/waitlist, merged to main
 fast-forward). Applicants at getmu.co/waitlist write to waitlist_applications via
 a Cloudflare Pages Function. All 12 verification gates pass.
