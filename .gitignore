@@ -53,7 +53,11 @@ run_phase_f_regression_v*.ps1
 # the key names lives in dashboard/.env.example.
 dashboard/.env
 dashboard/.env.production
+dashboard/.env.staging
 .wrangler/cache/
+# sales-bot wrangler oauth cache. node_modules is already ignored above; this is
+# explicit intent and stops the recurring tracked-file noise once untracked.
+**/node_modules/.cache/wrangler/
 d i f f - f o r - r e v i e w . t x t 
  
  
