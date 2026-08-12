@@ -1052,6 +1052,123 @@ var index_default = {
       return new Response("Method Not Allowed", { status: 405 });
     }
 
+    // ========================================================================
+    // Meta compliance callbacks (deauthorize + data deletion). Required for Meta
+    // App Review. These use Facebook's signed_request format (see
+    // parseSignedRequest), NOT the X-Hub-Signature-256 webhook signature.
+    //
+    // Invariants:
+    //  - Always return Meta's expected success shape, even when verification or
+    //    parsing fails, because Meta disables callbacks that return non-2xx or a
+    //    malformed body. On failure we log a bounded diagnostic (content-type,
+    //    header names, body length, first 500 bytes) so the first real callback
+    //    reveals the true format, then still answer success-shaped. We never log
+    //    a token or a full/decoded payload.
+    //  - Supabase writes are backgrounded via ctx.waitUntil, with ONE deliberate
+    //    exception (Anthony-approved): the data-deletion 'received' INSERT is
+    //    awaited so a confirmation code is never handed to Meta without a
+    //    resolvable status row behind it.
+    // ========================================================================
+
+    // Deauthorize: user removed the app. Mark the connected account deauthorized
+    // and drop its token. Disconnection, not deletion; lead data is untouched.
+    if (url.pathname === "/meta/deauthorize" && request.method === "POST") {
+      const rawBody = await request.text();
+      const verified = await parseSignedRequestAnySecret(rawBody, env);
+      if (!verified) {
+        console.log(
+          "meta/deauthorize: verification FAILED. ct=" +
+          (request.headers.get("content-type") || "none") +
+          " headers=[" + [...request.headers.keys()].join(",") + "]" +
+          " bodyLen=" + rawBody.length +
+          " bodyHead=" + JSON.stringify(rawBody.slice(0, 500))
+        );
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200, headers: { "Content-Type": "application/json" }
+        });
+      }
+      ctx.waitUntil(deauthorizeConnectedAccount(env, verified.payload.user_id, verified.keyMatched));
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: 200, headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // Data deletion: user requested deletion. Durably log the request (awaited),
+    // then background the anonymisation and return the status URL + code.
+    if (url.pathname === "/meta/data-deletion" && request.method === "POST") {
+      const rawBody = await request.text();
+      const verified = await parseSignedRequestAnySecret(rawBody, env);
+      const code = generateConfirmationCode();
+      const baseUrl = env.PUBLIC_WORKER_URL || "https://sales-bot.nellakuate.workers.dev";
+      const statusUrl = baseUrl + "/meta/data-deletion/status?code=" + code;
+
+      if (!verified) {
+        console.log(
+          "meta/data-deletion: verification FAILED. ct=" +
+          (request.headers.get("content-type") || "none") +
+          " headers=[" + [...request.headers.keys()].join(",") + "]" +
+          " bodyLen=" + rawBody.length +
+          " bodyHead=" + JSON.stringify(rawBody.slice(0, 500))
+        );
+        // Record a RESOLVABLE failed row so the status URL never dead-links, then
+        // still return the success shape Meta expects. Best-effort: if this insert
+        // fails we still 200 (retrying an unverifiable body cannot help, and a
+        // non-2xx risks Meta disabling the callback). A queryable 'failed'/
+        // 'UNVERIFIED' count is also our signal if Instagram Login turns out not
+        // to use signed_request at all.
+        try {
+          await insertDeletionRequest(env, {
+            confirmation_code: code,
+            platform: "unknown",
+            external_user_id: "UNVERIFIED",
+            status: "failed",
+            error_detail: "signature verification failed; signed_request did not validate against either app secret".slice(0, 1000)
+          });
+        } catch (e) {
+          console.log("meta/data-deletion: failed-row insert error " + (e && e.message));
+        }
+        return new Response(JSON.stringify({ url: statusUrl, confirmation_code: code }), {
+          status: 200, headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      // Verified. Durably record the request BEFORE returning the code. If this
+      // INSERT fails, return non-2xx so Meta RETRIES rather than us handing out a
+      // code whose status URL would 404 forever. This awaited INSERT is the single
+      // Anthony-approved exception to the waitUntil rule; nothing else changes.
+      try {
+        await insertDeletionRequest(env, {
+          confirmation_code: code,
+          platform: "instagram_api",
+          external_user_id: verified.payload.user_id,
+          status: "received"
+        });
+      } catch (e) {
+        console.log("meta/data-deletion: 'received' INSERT failed, returning 503 for Meta retry: " + (e && e.message));
+        return new Response(JSON.stringify({ error: "temporary_failure" }), {
+          status: 503, headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      // Slow anonymisation stays backgrounded; it updates the row above to
+      // completed/failed.
+      ctx.waitUntil(performDataDeletion(env, code, verified.payload.user_id, verified.keyMatched));
+      return new Response(JSON.stringify({ url: statusUrl, confirmation_code: code }), {
+        status: 200, headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // Data-deletion status page. Public, no auth, HTML for a human/reviewer.
+    if (url.pathname === "/meta/data-deletion/status" && request.method === "GET") {
+      const code = url.searchParams.get("code");
+      if (!code) {
+        return new Response("Missing code parameter.", {
+          status: 400, headers: { "Content-Type": "text/plain" }
+        });
+      }
+      return await renderDataDeletionStatus(env, code);
+    }
+
     // Meta/WhatsApp webhook. GET = subscription verification; POST = signed inbound events.
     if (url.pathname === "/meta/webhook") {
 
@@ -3581,6 +3698,275 @@ async function verifyMetaSignature(rawBody, signatureHeader, appSecret) {
   const macBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody));
   const computed = metaHexFromBytes(new Uint8Array(macBuf));
   return metaTimingSafeEqual(computed, expected);
+}
+
+// ============================================================================
+// Meta signed_request helpers (deauthorize + data-deletion callbacks).
+// These callbacks use Facebook's signed_request format, which is DIFFERENT from
+// the X-Hub-Signature-256 webhook signature above: the body arrives as
+// application/x-www-form-urlencoded with a single "signed_request" field shaped
+// "<base64url_sig>.<base64url_payload>", the HMAC is over the ENCODED payload
+// string exactly as received, and both parts are base64URL (not standard base64).
+// We deliberately do NOT reuse encBase64ToBytes (standard base64, load-bearing
+// for token decryption) or verifyMetaSignature (hex X-Hub sig) here.
+// ============================================================================
+
+// base64url -> Uint8Array. Handles -/_ substitution and = re-padding.
+function base64UrlToBytes(str) {
+  let b64 = String(str).replace(/-/g, "+").replace(/_/g, "/");
+  while (b64.length % 4 !== 0) b64 += "=";
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// Verify + decode one signed_request against a single app secret. Returns the
+// decoded payload object on success, or null on ANY failure (missing field, no
+// "." separator, HMAC mismatch, bad JSON, wrong algorithm). The HMAC is computed
+// over the ENCODED payload string exactly as received; the payload is only
+// decoded and parsed AFTER the signature check passes.
+async function parseSignedRequest(rawBody, appSecret) {
+  if (!rawBody || !appSecret) return null;
+  let signedRequest;
+  try {
+    signedRequest = new URLSearchParams(rawBody).get("signed_request");
+  } catch (e) {
+    return null;
+  }
+  if (!signedRequest) return null;
+  const dot = signedRequest.indexOf(".");
+  if (dot < 0) return null;
+  const encodedSig = signedRequest.slice(0, dot);
+  const encodedPayload = signedRequest.slice(dot + 1);
+  if (!encodedSig || !encodedPayload) return null;
+
+  let computedHex;
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(appSecret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const macBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(encodedPayload));
+    computedHex = metaHexFromBytes(new Uint8Array(macBuf));
+  } catch (e) {
+    return null;
+  }
+
+  // Constant-time compare; hex-encode both sides so we can reuse metaTimingSafeEqual.
+  let providedHex;
+  try {
+    providedHex = metaHexFromBytes(base64UrlToBytes(encodedSig));
+  } catch (e) {
+    return null;
+  }
+  if (!metaTimingSafeEqual(computedHex, providedHex)) return null;
+
+  let payload;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(base64UrlToBytes(encodedPayload)));
+  } catch (e) {
+    return null;
+  }
+  if (!payload || payload.algorithm !== "HMAC-SHA256") return null;
+  return payload;
+}
+
+// Try the Instagram Login app secret first, then the parent Meta app secret,
+// mirroring the /instagram/webhook dual-secret check. Returns { payload,
+// keyMatched } or null. keyMatched is "instagram_app_secret" | "main_app_secret".
+async function parseSignedRequestAnySecret(rawBody, env) {
+  if (env.INSTAGRAM_APP_SECRET) {
+    const payload = await parseSignedRequest(rawBody, env.INSTAGRAM_APP_SECRET);
+    if (payload) return { payload, keyMatched: "instagram_app_secret" };
+  }
+  if (env.WHATSAPP_APP_SECRET) {
+    const payload = await parseSignedRequest(rawBody, env.WHATSAPP_APP_SECRET);
+    if (payload) return { payload, keyMatched: "main_app_secret" };
+  }
+  return null;
+}
+
+// URL-safe random confirmation code: 32 hex chars (16 random bytes). Public
+// handle for a data-deletion request, embedded in the status URL.
+function generateConfirmationCode() {
+  return metaHexFromBytes(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+// Background worker for POST /meta/deauthorize. Marks the instagram_api connected
+// account deauthorized and nulls its now-revoked token. Disconnection, NOT
+// deletion: lead/conversation data is untouched. Runs under ctx.waitUntil so the
+// callback returns fast; never throws out of waitUntil. Supabase write lives here,
+// off the response path (standing rule: never bare-await a Worker Supabase write).
+async function deauthorizeConnectedAccount(env, userId, keyMatched) {
+  if (!userId) {
+    console.log("meta/deauthorize bg: no user_id in payload, nothing to do (key=" + keyMatched + ").");
+    return;
+  }
+  try {
+    const resp = await fetch(
+      getSupabaseUrl(env) + "/rest/v1/connected_accounts?platform=eq.instagram_api" +
+      "&external_account_id=eq." + encodeURIComponent(userId),
+      {
+        method: "PATCH",
+        headers: {
+          "apikey": env.SUPABASE_SERVICE_KEY,
+          "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY,
+          "Content-Type": "application/json",
+          "Prefer": "return=representation"
+        },
+        body: JSON.stringify({
+          deauthorized: true,
+          access_token_encrypted: null,
+          deauthorized_at: new Date().toISOString()
+        })
+      }
+    );
+    if (!resp.ok) {
+      console.log("meta/deauthorize bg: PATCH failed HTTP " + resp.status + " (key=" + keyMatched + ").");
+      return;
+    }
+    const rows = await resp.json();
+    const n = Array.isArray(rows) ? rows.length : 0;
+    console.log("meta/deauthorize bg: key=" + keyMatched + " user_id=" + userId + " rows_updated=" + n + ".");
+  } catch (e) {
+    console.log("meta/deauthorize bg: error " + (e && e.message));
+  }
+}
+
+// Inserts one data_deletion_requests row. Throws on a non-2xx so the caller can
+// decide whether to signal a retry to Meta. Called on the response path (awaited),
+// so it is small and does exactly one write. error_detail (when present) is capped
+// by the caller before it reaches here.
+async function insertDeletionRequest(env, row) {
+  const resp = await fetch(getSupabaseUrl(env) + "/rest/v1/data_deletion_requests", {
+    method: "POST",
+    headers: {
+      "apikey": env.SUPABASE_SERVICE_KEY,
+      "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY,
+      "Content-Type": "application/json",
+      "Prefer": "return=minimal"
+    },
+    body: JSON.stringify(row)
+  });
+  if (!resp.ok) {
+    const detail = (await resp.text().catch(() => "")).slice(0, 300);
+    throw new Error("insert HTTP " + resp.status + " " + detail);
+  }
+}
+
+// Background worker for POST /meta/data-deletion. The 'received' row has ALREADY
+// been inserted (awaited) on the response path, so a confirmation code is never
+// handed out without a resolvable status row. Here we do the slow part off the
+// response path: anonymise the end user's conversations (null username +
+// profile_name, empty messages) and update the request row to completed/failed.
+// Anonymise, not hard-delete: the obligation is to remove personal data, while the
+// rows are kept to preserve lead history and aggregate metrics. Runs under
+// ctx.waitUntil; never throws out of it. error_detail is capped at 1000 chars so a
+// single bad stack trace cannot write a multi-megabyte row.
+async function performDataDeletion(env, code, externalUserId, keyMatched) {
+  const base = getSupabaseUrl(env);
+  const headers = {
+    "apikey": env.SUPABASE_SERVICE_KEY,
+    "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY,
+    "Content-Type": "application/json"
+  };
+  try {
+    if (!externalUserId) throw new Error("no user_id in payload");
+    const resp = await fetch(
+      base + "/rest/v1/conversations?customer_id=eq." + encodeURIComponent(externalUserId),
+      {
+        method: "PATCH",
+        headers: Object.assign({}, headers, { "Prefer": "return=representation" }),
+        body: JSON.stringify({ username: null, profile_name: null, messages: [] })
+      }
+    );
+    if (!resp.ok) {
+      throw new Error(("conversations PATCH HTTP " + resp.status + ": " + (await resp.text())).slice(0, 1000));
+    }
+    const rows = await resp.json();
+    const affected = Array.isArray(rows) ? rows.length : 0;
+    await fetch(base + "/rest/v1/data_deletion_requests?confirmation_code=eq." + encodeURIComponent(code), {
+      method: "PATCH",
+      headers: Object.assign({}, headers, { "Prefer": "return=minimal" }),
+      body: JSON.stringify({
+        status: "completed",
+        rows_affected: affected,
+        completed_at: new Date().toISOString()
+      })
+    });
+    console.log("meta/data-deletion bg: key=" + keyMatched + " user_id=" + externalUserId +
+      " code=" + code + " rows_anonymised=" + affected + " status=completed.");
+  } catch (e) {
+    const errorDetail = String(e && e.message ? e.message : e).slice(0, 1000);
+    try {
+      await fetch(base + "/rest/v1/data_deletion_requests?confirmation_code=eq." + encodeURIComponent(code), {
+        method: "PATCH",
+        headers: Object.assign({}, headers, { "Prefer": "return=minimal" }),
+        body: JSON.stringify({
+          status: "failed",
+          error_detail: errorDetail,
+          completed_at: new Date().toISOString()
+        })
+      });
+    } catch (e2) {
+      console.log("meta/data-deletion bg: could not record failure " + (e2 && e2.message));
+    }
+    console.log("meta/data-deletion bg: FAILED code=" + code + " detail=" + errorDetail);
+  }
+}
+
+// Renders the public data-deletion status page (HTML). Read-only. A human, and
+// potentially a Meta reviewer, opens this URL in a browser, so it is plain,
+// unauthenticated, and self-contained.
+async function renderDataDeletionStatus(env, code) {
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const page = (title, bodyHtml, statusCode) => new Response(
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+    "<title>" + title + "</title></head>" +
+    "<body style=\"font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem;line-height:1.5;color:#222\">" +
+    bodyHtml + "</body></html>",
+    { status: statusCode, headers: { "Content-Type": "text/html; charset=utf-8" } }
+  );
+  try {
+    const resp = await fetch(
+      getSupabaseUrl(env) + "/rest/v1/data_deletion_requests?confirmation_code=eq." + encodeURIComponent(code) +
+      "&select=status,created_at,completed_at&limit=1",
+      { headers: { "apikey": env.SUPABASE_SERVICE_KEY, "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY } }
+    );
+    if (!resp.ok) {
+      return page("Data deletion status",
+        "<h1>Data deletion status</h1><p>We could not look up that request right now. Please try again later.</p>", 200);
+    }
+    const rows = await resp.json();
+    if (!rows || !rows[0]) {
+      return page("Data deletion request not found",
+        "<h1>Request not found</h1><p>We have no data deletion request matching that confirmation code.</p>", 404);
+    }
+    const row = rows[0];
+    const received = row.created_at ? new Date(row.created_at).toUTCString() : "unknown";
+    const done = row.completed_at ? new Date(row.completed_at).toUTCString() : null;
+    const statusText = row.status === "completed"
+      ? "Completed. The personal data associated with your request has been removed."
+      : row.status === "failed"
+        ? "We hit a problem completing this request. Our team has been notified and will resolve it."
+        : "Received and in progress.";
+    return page("Data deletion status",
+      "<h1>Data deletion status</h1>" +
+      "<p>Confirmation code: <code>" + esc(code) + "</code></p>" +
+      "<p>Status: <strong>" + esc(statusText) + "</strong></p>" +
+      "<p>Requested: " + esc(received) + "</p>" +
+      (done ? "<p>Completed: " + esc(done) + "</p>" : ""),
+      200);
+  } catch (e) {
+    return page("Data deletion status",
+      "<h1>Data deletion status</h1><p>We could not look up that request right now. Please try again later.</p>", 200);
+  }
 }
 
 // ============================================================================
