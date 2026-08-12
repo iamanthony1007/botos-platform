@@ -46,6 +46,14 @@ COMMIT_MSG_*.txt
 # Regression test artifacts (session-specific, regenerated per run)
 phase_f_*.json
 run_phase_f_regression_v*.ps1
+
+# Local env and Cloudflare account state, untracked 2026-08-12 (chore(security)).
+# These hold per-environment config and must never live in the repo. The files
+# stay on disk; the deploy chain reads them from disk, not from git. Template of
+# the key names lives in dashboard/.env.example.
+dashboard/.env
+dashboard/.env.production
+.wrangler/cache/
 d i f f - f o r - r e v i e w . t x t 
  
  
