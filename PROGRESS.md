@@ -39,6 +39,13 @@ OPEN SECURITY FOLLOW-UPS (not blocking):
   history, not only the five files audited on 2026-08-12. The patcher scripts and
   early Worker versions were never checked and could contain committed secrets.
 
+META COMPLIANCE FOLLOW-UP (ship alongside the deauthorize/data-deletion endpoints):
+- Privacy policy retention wording: data_deletion_requests (migration 012) retains
+  external_user_id indefinitely by design (it is the audit trail Meta App Review
+  expects), but getmu.co/privacy currently states 12-month retention. Add one
+  sentence to the privacy policy stating that data-deletion request records are
+  retained for audit purposes. Deploy it in the same push as the endpoints.
+
 2026-08-07: Public waitlist shipped to production (feat/waitlist, merged to main
 fast-forward). Applicants at getmu.co/waitlist write to waitlist_applications via
 a Cloudflare Pages Function. All 12 verification gates pass.
