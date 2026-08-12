@@ -35,6 +35,9 @@ OPEN SECURITY FOLLOW-UPS (not blocking):
 - Write-side RLS check outstanding: a FOR ALL USING (true) policy granting anon
   writes is not ruled out by the SELECT-only test. Do NOT test writes against
   production; confirm from the pg_policies capture instead.
+- Repo-wide historical secret scan: run gitleaks or trufflehog over the FULL git
+  history, not only the five files audited on 2026-08-12. The patcher scripts and
+  early Worker versions were never checked and could contain committed secrets.
 
 2026-08-07: Public waitlist shipped to production (feat/waitlist, merged to main
 fast-forward). Applicants at getmu.co/waitlist write to waitlist_applications via
