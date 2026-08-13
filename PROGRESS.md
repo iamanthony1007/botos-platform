@@ -57,10 +57,14 @@ TWO ID FORMS for one IG account, do not confuse:
 resolveConnectedAccount keys on external_account_id, so for BOTH the deauthorize PATCH
 (user_id) and IG webhook routing (recipient.id) to hit the same row, the OAuth flow must
 store the 17841... form. Storing the /me form would break every lookup SILENTLY.
-UNCONFIRMED: which form the IG webhook sends as recipient.id (no IG webhook event has ever
-been captured; tail had none, Observability disabled, no instagram_api row). Confirm by
-sending a real IG DM to the business while tail runs (the no-mapping log prints
-recipient.id) BEFORE building OAuth.
+CONFIRMED 2026-08-13 (live IG DM captured in production tail, 14:31:05Z): the IG webhook
+sends recipient.id = 17841480168261359, the SAME 1784 form the callbacks use, NOT the
+graph.instagram.com/me form. Webhook signature verified with key=instagram_app_secret. The
+event took the expected no-mapping branch (no instagram_api row) and logged recipient.id.
+DECISION for the OAuth flow: store 17841480168261359 (the 1784 / Instagram-scoped
+Professional account id) as connected_accounts.external_account_id; both webhook routing and
+the deauthorize/data-deletion callbacks will then hit that row. (The webhook subscription had
+to be toggled On AFTER a token existed; that is why earlier attempts delivered nothing.)
 
 2026-08-13: Meta compliance endpoints shipped to PRODUCTION on branch
 feat/meta-compliance-endpoints (deauthorize + data deletion + status page). NOT yet
