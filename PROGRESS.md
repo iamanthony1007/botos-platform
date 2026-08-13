@@ -57,6 +57,12 @@ DEFERRED, LOWER:
 - Scope the conversations anonymise PATCH by the resolved bot_id once the consumer
   branch is confirmed the live path (customer_id alone spans tenants). Noted in the
   performDataDeletion comment.
+- Privacy policy section 8 (Your rights, added 2026-08-13 in feat/privacy-policy-update) states
+  that a deletion request is handled by removing or anonymising the associated conversation data.
+  That is true of the CONSUMER branch only; the BUSINESS branch currently refuses and writes
+  status=failed, pending the same identity question above. No live mismatch, since the endpoints
+  are dark until the Meta dashboard URLs are set. When the first real callback resolves who user_id
+  is, re-check that privacy sentence against what the code then actually does.
 - Retry/duplicate: if the 'received' INSERT succeeds but the 200 does not reach Meta,
   Meta retries and creates a SECOND row for the same user (different code). Both
   resolve, both point at the same anonymisation. Harmless; recorded so it is not later
