@@ -1,6 +1,21 @@
 2026-08-13 (later): First real Meta callback fired (deauthorize test from account
-anthony_make1, IG id 17841480168261359) and answered the open questions. Fix on branch
-feat/meta-signed-request-multipart (off main), NOT merged.
+anthony_make1, IG id 17841480168261359) and answered the open questions. Fix MERGED to
+main (16be849, fast-forward) and DEPLOYED to production; verified.
+
+SHIPPED + VERIFIED (production): wrangler deploy from sales-bot/. Rollback anchor (pre-fix)
+7643422e-7058-491f-b9f4-684b4384433e. /health + regressions (/instagram/webhook,
+/meta/webhook, /webhook) unchanged. Full matrix (16 cases + the EXACT captured Meta
+multipart envelope with a resigned payload) all pass against the live Worker + real
+Supabase, signed with a temporary META_TEST_SECRET set for the window and DELETED right
+after (confirmed gone, both real app secrets intact). Multipart verification proven end to
+end (M2 + M5: data-deletion rows keyed by the REAL user_id, not UNVERIFIED); business
+REFUSE left the real WhatsApp row untouched; tampered wrote nothing.
+NOTE: data_deletion_requests is NOT empty: it holds 1 real row from Anthony's live callback
+(code 72a01e59..., external_user_id 17841480168261359, status failed unresolvable,
+2026-08-13T03:12Z). Left in place as a genuine record; purge is a decision, not cleanup.
+STILL PENDING: Anthony re-runs the live test (reconnect via Add account, then remove the
+grant with wrangler tail running) to prove a real multipart deauthorize VERIFIES in
+production and to capture the content types a second time.
 
 LIVE-CALLBACK FINDINGS (from the production wrangler tail):
 - Meta sends the two callbacks with DIFFERENT content types on the same fire.
