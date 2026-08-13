@@ -3777,7 +3777,19 @@ async function parseSignedRequest(rawBody, appSecret) {
 
 // Try the Instagram Login app secret first, then the parent Meta app secret,
 // mirroring the /instagram/webhook dual-secret check. Returns { payload,
-// keyMatched } or null. keyMatched is "instagram_app_secret" | "main_app_secret".
+// keyMatched } or null. keyMatched is "instagram_app_secret" | "main_app_secret"
+// | "test_secret".
+//
+// META_TEST_SECRET is a VERIFICATION-ONLY third secret, tried LAST so it can
+// never shadow a real secret. It exists because the two real app secrets cannot
+// be read back, so we cannot forge a signature they would accept; to run the full
+// signed_request matrix against a live Worker, a known secret is set on
+// META_TEST_SECRET for a short window, the matrix is signed with it, and the
+// secret is DELETED immediately after. It MUST NEVER be set outside such a
+// verification window. Its absence is the normal, expected state: when unset this
+// branch is inert, with no warning, no error and no behaviour change. The guard
+// stays in the code permanently so the matrix can be re-run (e.g. once staging
+// exists) without another code change.
 async function parseSignedRequestAnySecret(rawBody, env) {
   if (env.INSTAGRAM_APP_SECRET) {
     const payload = await parseSignedRequest(rawBody, env.INSTAGRAM_APP_SECRET);
@@ -3786,6 +3798,10 @@ async function parseSignedRequestAnySecret(rawBody, env) {
   if (env.WHATSAPP_APP_SECRET) {
     const payload = await parseSignedRequest(rawBody, env.WHATSAPP_APP_SECRET);
     if (payload) return { payload, keyMatched: "main_app_secret" };
+  }
+  if (env.META_TEST_SECRET) {
+    const payload = await parseSignedRequest(rawBody, env.META_TEST_SECRET);
+    if (payload) return { payload, keyMatched: "test_secret" };
   }
   return null;
 }
