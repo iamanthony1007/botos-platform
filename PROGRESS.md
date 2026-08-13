@@ -1,3 +1,69 @@
+2026-08-13: Meta compliance endpoints shipped to PRODUCTION on branch
+feat/meta-compliance-endpoints (deauthorize + data deletion + status page). NOT yet
+merged to main. Staging was waived for this change only (staging is unavailable, see
+deferred).
+
+WHAT SHIPPED:
+- db/migrations/012_data_deletion_requests.sql (+012_rollback.sql): request log,
+  status CHECK, user index, RLS enabled + REVOKE from anon/authenticated (010
+  posture, stronger than 009). Applied to PRODUCTION ahead of staging (independent
+  new table; 011 not applied anywhere). NOT applied to staging (no project exists).
+- sales-bot/src/index.js: 3 routes (POST /meta/deauthorize, POST /meta/data-deletion,
+  GET /meta/data-deletion/status) + 9 helpers. signed_request verification (base64url,
+  HMAC over the encoded payload, constant-time compare, algorithm check), dual real
+  secret + an INERT META_TEST_SECRET branch tried LAST (verification-only, never set
+  outside a test window). performDataDeletion resolves identity first:
+  connected_accounts hit -> business -> REFUSE (no delete), conversations hit ->
+  consumer -> anonymise (null username/profile_name, empty messages), neither ->
+  failed+unresolvable. HTML status page. All Supabase writes via ctx.waitUntil EXCEPT
+  the awaited data-deletion 'received' INSERT (Anthony-approved exception: never hand
+  out a code without a resolvable status row; 503 on insert failure so Meta retries).
+- sales-bot/wrangler.toml: PUBLIC_WORKER_URL in [vars] + [env.staging.vars].
+- sales-bot/package.json: deploy:staging = wrangler deploy --env staging (Worker, NOT
+  the dashboard Pages deploy which is a different target).
+- Commits: 899545b, b6eca52, 87f7bd9, d5027c7, ddd52ae.
+
+PRODUCTION VERIFICATION (all pass): live version 380ebaec (rollback anchor 5e427f3d).
+Full 12-case matrix against the live Worker + real Supabase, signed with a temporary
+META_TEST_SECRET set for the window and DELETED right after (confirmed gone, both real
+app secrets intact). Consumer anonymise, business REFUSE (real WhatsApp row
+1190161784184058 untouched: deauthorized false, deauthorized_at null), neither,
+tampered writes nothing (ddr count 3->3), status URLs, PUBLIC_WORKER_URL host from
+[vars]. Post-deletion: forged-with-deleted-secret rejected (UNVERIFIED), /health 200.
+Tail hygiene: no token/secret/decoded payload (encoded bodyHead diagnostics only, all
+TEST- data). data_deletion_requests left at 0.
+
+NEXT (Anthony, not code): set the two callback URLs in the Meta App Dashboard (Mu
+AI-IG, app 3322663157905914): deauthorize ->
+https://sales-bot.nellakuate.workers.dev/meta/deauthorize ; data deletion ->
+https://sales-bot.nellakuate.workers.dev/meta/data-deletion . Then trigger a real
+deauthorize from a test account: that is the only way to confirm Instagram Login's
+actual signed_request format (still unverified; the code logs a bounded diagnostic on
+first failure to reveal it). Merge feat/meta-compliance-endpoints to main (Anthony's
+call, not done).
+
+DEFERRED, HIGH PRIORITY (BLOCKS STAGE 4):
+- Restore/re-provision staging Supabase: hlpucysbaqerhwahfolg.supabase.co has NO DNS
+  record (deprovisioned). Then point sales-bot-staging SUPABASE_URL/SUPABASE_SERVICE_KEY
+  at it and apply ALL migrations (009-012) there.
+- Set INSTAGRAM_APP_SECRET and WHATSAPP_APP_SECRET on the sales-bot-staging Worker: it
+  has neither today, so every verification there would fail and look like a code bug.
+- Fix stale sales-bot/src/index.js:9 comment (names old staging ref
+  hpqdoikpjikqjnxotcvi; the real [env.staging.vars] value hlpucysbaqerhwahfolg is now
+  gone too). Staging must work before Stage 4 (live reply pipeline); waiver was for
+  this change only.
+
+DEFERRED, LOWER:
+- Scope the conversations anonymise PATCH by the resolved bot_id once the consumer
+  branch is confirmed the live path (customer_id alone spans tenants). Noted in the
+  performDataDeletion comment.
+- Retry/duplicate: if the 'received' INSERT succeeds but the 200 does not reach Meta,
+  Meta retries and creates a SECOND row for the same user (different code). Both
+  resolve, both point at the same anonymisation. Harmless; recorded so it is not later
+  mistaken for a bug.
+- bodyHead failure diagnostic logs the encoded request body (truncated 500) for format
+  discovery; consider removing once Meta's format is confirmed.
+
 2026-08-12: Security hygiene on main (two chore(security) commits, pushed) plus a
 clean git-history audit. No feature code changed.
 
