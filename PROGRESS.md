@@ -1,3 +1,49 @@
+2026-08-13 (later): First real Meta callback fired (deauthorize test from account
+anthony_make1, IG id 17841480168261359) and answered the open questions. Fix on branch
+feat/meta-signed-request-multipart (off main), NOT merged.
+
+LIVE-CALLBACK FINDINGS (from the production wrangler tail):
+- Meta sends the two callbacks with DIFFERENT content types on the same fire.
+  deauthorize arrived as multipart/form-data; data-deletion as
+  application/x-www-form-urlencoded. Our parser used only URLSearchParams, which returns
+  null on multipart, so deauthorize failed at PARSE, before the signature check.
+- Signature verification is CONFIRMED WORKING end to end. The urlencoded data-deletion
+  callback verified and ran performDataDeletion with the real user_id, which only happens
+  after HMAC + algorithm pass. The whole verification stack is correct; only multipart
+  parsing was broken. Payload confirmed {"user_id":"17841480168261359",
+  "algorithm":"HMAC-SHA256","issued_at":...}, sig 32 bytes.
+
+FIX (this branch): new extractSignedRequest(rawBody, contentType), branches on content
+type. urlencoded keeps URLSearchParams; multipart parses the boundary from Content-Type,
+splits the body, finds the name="signed_request" part, strips trailing CRLF. contentType
+threaded through parseSignedRequest / parseSignedRequestAnySecret / both routes. rawBody
+text read kept so the diagnostic still works; request.formData() deliberately NOT used
+(need rawBody + a deterministic, testable parser). Verified against the real captured
+multipart body (extracts + decodes exactly). Local matrix v3 (16 cases) all pass:
+valid multipart deauthorize + data-deletion now verify, malformed multipart writes
+nothing, urlencoded regression holds, tampered still writes nothing.
+
+BLOCKER, business-deletion semantics (now ACTIVE): the callback user_id is the BUSINESS
+that authorized the app (17841480168261359 matches the App Dashboard exactly), not a
+consumer. So performDataDeletion's conversations.customer_id lookup matches nothing on a
+REAL request; it lands in the REFUSE (business) branch and writes failed, which is
+CORRECT for now (never wipe a tenant on an unverified assumption). Do NOT change that
+logic until we decide the right business-deletion semantics (what a business's deletion
+request should remove, and whether Meta expects tenant data removed vs the business's own
+account/token). This is the real open question behind the endpoint.
+
+TWO ID FORMS for one IG account, do not confuse:
+- 17841480168261359 = Instagram-scoped Professional account ID. Sent by the callbacks as
+  user_id; shown in the App Dashboard.
+- 28018440311128050 = what graph.instagram.com/me returns (Login/app-scoped id).
+resolveConnectedAccount keys on external_account_id, so for BOTH the deauthorize PATCH
+(user_id) and IG webhook routing (recipient.id) to hit the same row, the OAuth flow must
+store the 17841... form. Storing the /me form would break every lookup SILENTLY.
+UNCONFIRMED: which form the IG webhook sends as recipient.id (no IG webhook event has ever
+been captured; tail had none, Observability disabled, no instagram_api row). Confirm by
+sending a real IG DM to the business while tail runs (the no-mapping log prints
+recipient.id) BEFORE building OAuth.
+
 2026-08-13: Meta compliance endpoints shipped to PRODUCTION on branch
 feat/meta-compliance-endpoints (deauthorize + data deletion + status page). NOT yet
 merged to main. Staging was waived for this change only (staging is unavailable, see

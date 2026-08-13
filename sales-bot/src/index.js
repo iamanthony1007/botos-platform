@@ -1074,7 +1074,7 @@ var index_default = {
     // and drop its token. Disconnection, not deletion; lead data is untouched.
     if (url.pathname === "/meta/deauthorize" && request.method === "POST") {
       const rawBody = await request.text();
-      const verified = await parseSignedRequestAnySecret(rawBody, env);
+      const verified = await parseSignedRequestAnySecret(rawBody, request.headers.get("content-type"), env);
       if (!verified) {
         console.log(
           "meta/deauthorize: verification FAILED. ct=" +
@@ -1097,7 +1097,7 @@ var index_default = {
     // then background the anonymisation and return the status URL + code.
     if (url.pathname === "/meta/data-deletion" && request.method === "POST") {
       const rawBody = await request.text();
-      const verified = await parseSignedRequestAnySecret(rawBody, env);
+      const verified = await parseSignedRequestAnySecret(rawBody, request.headers.get("content-type"), env);
       const code = generateConfirmationCode();
       const baseUrl = env.PUBLIC_WORKER_URL || "https://sales-bot.nellakuate.workers.dev";
       const statusUrl = baseUrl + "/meta/data-deletion/status?code=" + code;
@@ -3721,19 +3721,58 @@ function base64UrlToBytes(str) {
   return bytes;
 }
 
+// Extract the raw signed_request field from the request body. Meta does NOT use a
+// single content type for these callbacks: the data-deletion callback arrives as
+// application/x-www-form-urlencoded, but the deauthorize callback arrives as
+// multipart/form-data (confirmed 2026-08-13 from a live callback in wrangler tail).
+// URLSearchParams only handles the urlencoded form and returns null on multipart,
+// so we branch on the Content-Type. The multipart body is parsed deterministically
+// from rawBody (which is kept for the failure diagnostic) rather than via
+// request.formData(), which would consume the stream and is harder to test.
+// Returns the signed_request token string, or null if it cannot be found.
+function extractSignedRequest(rawBody, contentType) {
+  if (!rawBody) return null;
+  const ct = (contentType || "").toLowerCase();
+
+  if (ct.indexOf("multipart/form-data") !== -1) {
+    const bm = /boundary=([^;]+)/i.exec(contentType || "");
+    if (!bm) return null;
+    let boundary = bm[1].trim();
+    // A quoted boundary (RFC 2046) may be wrapped in double quotes.
+    if (boundary.length >= 2 && boundary.charAt(0) === '"' && boundary.charAt(boundary.length - 1) === '"') {
+      boundary = boundary.slice(1, -1);
+    }
+    if (!boundary) return null;
+    const parts = rawBody.split("--" + boundary);
+    for (const part of parts) {
+      if (!/name="?signed_request"?/i.test(part)) continue;
+      // Headers and body of a part are separated by a blank line (CRLFCRLF).
+      const sep = part.indexOf("\r\n\r\n");
+      if (sep === -1) return null;
+      // The value is base64url "sig.payload" with no internal whitespace, so
+      // stripping trailing CR/LF (the part terminator) is safe.
+      const value = part.slice(sep + 4).replace(/\s+$/, "");
+      return value.length ? value : null;
+    }
+    return null;
+  }
+
+  // application/x-www-form-urlencoded (and the default).
+  try {
+    return new URLSearchParams(rawBody).get("signed_request");
+  } catch (e) {
+    return null;
+  }
+}
+
 // Verify + decode one signed_request against a single app secret. Returns the
 // decoded payload object on success, or null on ANY failure (missing field, no
 // "." separator, HMAC mismatch, bad JSON, wrong algorithm). The HMAC is computed
 // over the ENCODED payload string exactly as received; the payload is only
 // decoded and parsed AFTER the signature check passes.
-async function parseSignedRequest(rawBody, appSecret) {
+async function parseSignedRequest(rawBody, contentType, appSecret) {
   if (!rawBody || !appSecret) return null;
-  let signedRequest;
-  try {
-    signedRequest = new URLSearchParams(rawBody).get("signed_request");
-  } catch (e) {
-    return null;
-  }
+  const signedRequest = extractSignedRequest(rawBody, contentType);
   if (!signedRequest) return null;
   const dot = signedRequest.indexOf(".");
   if (dot < 0) return null;
@@ -3790,17 +3829,17 @@ async function parseSignedRequest(rawBody, appSecret) {
 // branch is inert, with no warning, no error and no behaviour change. The guard
 // stays in the code permanently so the matrix can be re-run (e.g. once staging
 // exists) without another code change.
-async function parseSignedRequestAnySecret(rawBody, env) {
+async function parseSignedRequestAnySecret(rawBody, contentType, env) {
   if (env.INSTAGRAM_APP_SECRET) {
-    const payload = await parseSignedRequest(rawBody, env.INSTAGRAM_APP_SECRET);
+    const payload = await parseSignedRequest(rawBody, contentType, env.INSTAGRAM_APP_SECRET);
     if (payload) return { payload, keyMatched: "instagram_app_secret" };
   }
   if (env.WHATSAPP_APP_SECRET) {
-    const payload = await parseSignedRequest(rawBody, env.WHATSAPP_APP_SECRET);
+    const payload = await parseSignedRequest(rawBody, contentType, env.WHATSAPP_APP_SECRET);
     if (payload) return { payload, keyMatched: "main_app_secret" };
   }
   if (env.META_TEST_SECRET) {
-    const payload = await parseSignedRequest(rawBody, env.META_TEST_SECRET);
+    const payload = await parseSignedRequest(rawBody, contentType, env.META_TEST_SECRET);
     if (payload) return { payload, keyMatched: "test_secret" };
   }
   return null;
