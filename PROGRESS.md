@@ -12,7 +12,10 @@ end (M2 + M5: data-deletion rows keyed by the REAL user_id, not UNVERIFIED); bus
 REFUSE left the real WhatsApp row untouched; tampered wrote nothing.
 NOTE: data_deletion_requests is NOT empty: it holds 1 real row from Anthony's live callback
 (code 72a01e59..., external_user_id 17841480168261359, status failed unresolvable,
-2026-08-13T03:12Z). Left in place as a genuine record; purge is a decision, not cleanup.
+2026-08-13T03:12Z). DELIBERATELY RETAINED (Anthony's call), do NOT purge or treat as
+leftover test data: it is the compliance artifact this table exists for, its
+confirmation_code was handed to Meta so the status URL must stay resolvable, and it is the
+recorded evidence that the callback user_id names the BUSINESS, not a consumer.
 STILL PENDING: Anthony re-runs the live test (reconnect via Add account, then remove the
 grant with wrangler tail running) to prove a real multipart deauthorize VERIFIES in
 production and to capture the content types a second time.
