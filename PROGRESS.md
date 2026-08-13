@@ -69,6 +69,15 @@ DEFERRED, LOWER:
   mistaken for a bug.
 - bodyHead failure diagnostic logs the encoded request body (truncated 500) for format
   discovery; consider removing once Meta's format is confirmed.
+- verify-deploy.mjs cries wolf on network flakiness (seen 2026-08-13, privacy deploy): its
+  fail() prints the same "DEPLOYED BUNDLE POINTS AT WRONG SUPABASE, ROLL BACK NOW" block for
+  EVERY failure path, including a plain network fetch error that never reached the Supabase-ref
+  check. It should (a) distinguish "check could not run" (network/HTTP) from "check ran and found
+  the wrong ref", and (b) retry transient fetch failures before failing. A guard that cries wolf
+  gets ignored, and this one exists precisely because of the stale-dist lockout incident.
+- dashboard/node_modules did NOT have wrangler installed (2026-08-13). A fresh checkout cannot
+  run npm run deploy:production (it fails at the wrangler pages deploy step); run npm install in
+  dashboard/ first. Logged so it does not cost an hour mid-incident.
 
 2026-08-12: Security hygiene on main (two chore(security) commits, pushed) plus a
 clean git-history audit. No feature code changed.
