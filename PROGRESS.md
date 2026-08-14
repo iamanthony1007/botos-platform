@@ -1,3 +1,46 @@
+2026-08-14 SECURITY: STAGING LEAD DATA WAS PUBLICLY READABLE. Found, contained, verified.
+
+FINDING. The staging Supabase anon key is committed in the PUBLIC repo history (commit
+bf6bdae, dashboard/.env.staging). Untracking it on 2026-08-12 (504af3a) removed it from
+HEAD, not from history, and the on-disk key is byte-identical to the committed one. Staging
+RLS did not stop it: migration 011 was never applied there, so the old permissive state was
+still live. Using only that public key, unauthenticated, staging returned REAL lead PII:
+  conversations 41 rows (username, profile_name, message content, channel instagram, May 2026)
+  reviews 53, learnings 20, bot_documents 3, profiles 1, bots 1, organizations 1
+
+WHY IT WAS MISSED ON 2026-08-12. That exposure check tested the PRODUCTION anon key only,
+and production was and is clean (anon gets 200 [] or 42501). Staging could not be tested
+because its DNS was dead (project paused), so it was never covered. When the project came
+back, the same check against staging failed immediately. Lesson: an exposure check that
+cannot reach one environment has NOT cleared that environment; record it as untested rather
+than concluding from the environment that did answer.
+
+CONTAINMENT (Anthony, staging SQL editor): revoke all on every table from anon AND from
+authenticated, then NOTIFY pgrst reload.
+
+VERIFIED AFTER CONTAINMENT (read-only probe):
+  anon SELECT on all 13 tables: 13/13 DENIED (http 401, code 42501)
+  anon INSERT into conversations: DENIED (401/42501)
+  self-registered AUTHENTICATED user, 9 tables: 9/9 DENIED (http 403, code 42501)
+  so the containment covers authenticated, not just anon.
+
+SEPARATE FINDING, STILL OPEN: auth signup is OPEN on staging. Anyone holding the public anon
+key can self-register a user (verified: signup returned 200 with a live access token). Today
+that user can read NOTHING because of the revokes, so severity is low, but it is a standing
+hazard: any future GRANT or permissive policy on staging silently becomes world-readable via
+self-registration. Decide whether to disable open signup on staging.
+  Probe hygiene: the signup checks created 2 accounts (probe-check-*, probe-authcheck-*
+  @example.invalid). Both were DELETED via the admin API and verified gone; staging is back
+  to its 2 legitimate users.
+
+STILL TO DECIDE (not done): rotating the exposed staging anon key. The revokes neutralise it,
+but it remains a published credential for that project. Rotation is the clean end state.
+
+STAGING MIGRATION STATE, CORRECTED. Staging is at roughly 008, NOT 001-011. Missing:
+009 connected_accounts, 010 waitlist_applications, 012 data_deletion_requests. 011 could not
+have been applied even if attempted, since it targets waitlist_applications which does not
+exist there. Apply order: 009, 010, 012, and 011 held pending review.
+
 2026-08-14 SESSION CLOSE-OUT. Meta compliance + Instagram OAuth are DONE and live on
 production; main matches what is deployed. Remaining Meta work is Anthony-side config and
 two named Stage 4 preconditions.
