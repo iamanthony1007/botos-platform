@@ -1,3 +1,39 @@
+2026-08-14: Instagram OAuth connect flow SHIPPED, DEPLOYED to production (version
+9c1733ef-e2e5-4c9e-8958-eecac69f17b9, rollback anchor cdc08486-69cb-4c53-a18f-3f1fb299bbd6)
+and MERGED to main (554620a, fast-forward). A business can now authorise Mu AI themselves.
+End-to-end live run passed: connect -> row written -> DM routed to the bot.
+
+THE ID QUESTION IS NOW SETTLED, AS FACT, NOT INFERENCE. From the live callback:
+  account id resolved to 17841480168261359 from me.user_id | candidates:
+    code_exchange.user_id = 28018440311128050 (len 17)
+    me.id                 = 28018440311128050 (len 17)
+    me.user_id            = 17841480168261359 (len 17)  <-- the correct 1784 form
+So: graph.instagram.com/me?fields=user_id is the ONLY field that returns the 1784 form.
+CRITICAL AND COUNTERINTUITIVE: code_exchange.user_id returns the 2801 form, even though
+Meta documents it as "your app user's Instagram-scoped user ID". Trusting the documented
+field, or any single field, would have stored the wrong id and produced a connection that
+looked successful and silently never received a message. The empirical
+resolveInstagramAccountId check (shape 1784 + exactly one distinct match, else abort) is
+what caught it. Do NOT "simplify" it to read one field.
+
+WEBHOOK PROOF (the whole chain): before connect, /instagram/webhook logged
+"no connected_accounts mapping for IG account 17841480168261359 ... skipping". After
+connect it logged "Instagram route: inbound text from IGSID <redacted> -> bot
+00000000-0000-0000-0000-000000000002 | sigkey=instagram_app_secret". The mapping resolves.
+A same-thread echo event arrived first and was correctly skipped as an echo.
+
+ROW WRITTEN (verified in production): external_account_id 17841480168261359,
+account_username anthony_make1, bot_id 00000000-0000-0000-0000-000000000002 (Coach Shaun /
+Bombers Blueprint), deauthorized false, token_expires_at 2026-10-12 (59.1 days out, derived
+from expires_in), access_token_encrypted populated (256 chars, ciphertext, not a plaintext
+IG token).
+
+REQUIRED CLEANUP, NOT OPTIONAL: delete that connected_accounts row
+(id 20471f2b-e63a-4c90-8d1b-b871e3017ca5). It maps Anthony's TEST account anthony_make1
+onto Coach Shaun's LIVE production tenant. It is inert today only because Stage 4 does not
+exist. Once Stage 4 ships, DMs to the test account would route into Shaun's real
+conversation data. Delete it before Stage 4 begins.
+
 2026-08-13 (later): First real Meta callback fired (deauthorize test from account
 anthony_make1, IG id 17841480168261359) and answered the open questions. Fix MERGED to
 main (16be849, fast-forward) and DEPLOYED to production; verified.
