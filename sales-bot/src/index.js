@@ -4341,6 +4341,16 @@ async function fetchInstagramMe(env, longLivedToken) {
 // Resolve the account id EMPIRICALLY (Step 1: docs do not settle which field returns the id
 // form webhooks/callbacks use). 2026-08-13 finding: me?fields=id returned 28018440311128050
 // while the webhook + deauthorize + data-deletion callbacks all used 17841480168261359.
+//
+// DO NOT SIMPLIFY THIS TO A SINGLE FIELD. Confirmed 2026-08-14 by a real connect:
+//   code_exchange.user_id = 28018440311128050  <- WRONG form, and Meta DOCUMENTS this field
+//                                                 as "your app user's Instagram-scoped user ID"
+//   me.id                 = 28018440311128050  <- WRONG form
+//   me.user_id            = 17841480168261359  <- the correct form, the only one that matched
+// The documented field is wrong. Reading any one field, including the documented one, would
+// store an id that never matches a webhook recipient.id, producing a connection that looks
+// successful and silently never receives a message. Keep the collect-all + shape-check +
+// exactly-one-distinct-match + abort behaviour.
 // Collect every candidate, select the one matching the known-good shape (17 digits, begins
 // 1784), and ABORT on zero or more-than-one distinct match. Storing the wrong form yields a
 // connection that looks successful and silently never receives a message. Account ids are not

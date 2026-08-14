@@ -22,6 +22,19 @@ connect it logged "Instagram route: inbound text from IGSID <redacted> -> bot
 00000000-0000-0000-0000-000000000002 | sigkey=instagram_app_secret". The mapping resolves.
 A same-thread echo event arrived first and was correctly skipped as an echo.
 
+ROW EVIDENCE, captured before deletion (this is the only record once the row is gone):
+  id                     20471f2b-e63a-4c90-8d1b-b871e3017ca5
+  external_account_id    17841480168261359
+  account_username       anthony_make1
+  bot_id                 00000000-0000-0000-0000-000000000002
+  token_expires_at       2026-10-12T02:52:30.125+00:00  (59.1 days out, from expires_in)
+  created_at             2026-08-14T00:22:37.708704+00:00
+  deauthorized           false / deauthorized_at null
+  access_token_encrypted 256 base64 chars -> 190 bytes = iv(12) + ciphertext(162) + gcm tag(16),
+                         random iv, implied plaintext 162 chars (an IG long-lived token length).
+                         Structurally valid. Full decrypt round-trip NOT verified: the key is a
+                         Worker secret and cannot be read back, so no local decrypt is possible.
+
 ROW WRITTEN (verified in production): external_account_id 17841480168261359,
 account_username anthony_make1, bot_id 00000000-0000-0000-0000-000000000002 (Coach Shaun /
 Bombers Blueprint), deauthorized false, token_expires_at 2026-10-12 (59.1 days out, derived
