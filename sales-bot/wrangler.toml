@@ -14,6 +14,7 @@ id = "34e52c784a4e4e40925b93b17354cbec"
 ENVIRONMENT = "production"
 SUPABASE_URL = "https://rydkwsjwlgnivlwlvqku.supabase.co"
 PUBLIC_WORKER_URL = "https://sales-bot.nellakuate.workers.dev"
+INSTAGRAM_APP_ID = "3322663157905914"
 
 # Priority 3 (2026-05-12): hourly cron trigger for T+20h auto follow-up.
 # Schedule is UTC. The scheduled() handler in src/index.js runs the
@@ -44,6 +45,7 @@ id = "e1bc76417c284a3ebd82758623e1d148"
 ENVIRONMENT = "staging"
 SUPABASE_URL = "https://hlpucysbaqerhwahfolg.supabase.co"
 PUBLIC_WORKER_URL = "https://sales-bot-staging.nellakuate.workers.dev"
+INSTAGRAM_APP_ID = "3322663157905914"
 
 # Staging: cron handler present in code, schedule explicitly disabled.
 # Manual invocation via GET https://sales-bot-staging.nellakuate.workers.dev/__cron-test

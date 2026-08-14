@@ -989,6 +989,11 @@ var index_default = {
     } catch (e) {
       console.error(`[cron] uncaught: ${e && e.message}`);
     }
+    try {
+      await refreshInstagramTokens(env, ctx, Date.now());
+    } catch (e) {
+      console.error("[cron] ig-refresh uncaught: " + (e && e.message));
+    }
   },
   async fetch(request, env, ctx) {
     const corsHeaders = {
@@ -1167,6 +1172,121 @@ var index_default = {
         });
       }
       return await renderDataDeletionStatus(env, code);
+    }
+
+    // ========================================================================
+    // Instagram OAuth connect flow (Instagram API with Instagram Login). Lets a
+    // business authorise Mu AI themselves; the long-lived token is stored
+    // encrypted against their tenant (bot_id). Both endpoints are GET.
+    // ========================================================================
+
+    // Start: validate bot_id, mint single-use state in KV, redirect to Instagram.
+    // TODO(dashboard): once the dashboard UI exists, require an authenticated dashboard
+    // session here. Today this only mints a short-lived state; the real work is gated by
+    // state validation in the callback.
+    if (url.pathname === "/meta/oauth/start" && request.method === "GET") {
+      const botId = url.searchParams.get("bot_id");
+      if (!isValidUuid(botId)) {
+        return new Response("Invalid or missing bot_id.", { status: 400, headers: { "Content-Type": "text/plain" } });
+      }
+      const state = generateOauthState();
+      await env.MEMORY_STORE.put("oauth_state:" + state,
+        JSON.stringify({ bot_id: botId, created_at: Date.now() }), { expirationTtl: 600 });
+      const redirectUri = (env.PUBLIC_WORKER_URL || "https://sales-bot.nellakuate.workers.dev") + "/meta/oauth/callback";
+      const scope = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments";
+      const authUrl = getInstagramAuthorizeUrl(env) +
+        "?client_id=" + encodeURIComponent(env.INSTAGRAM_APP_ID) +
+        "&redirect_uri=" + encodeURIComponent(redirectUri) +
+        "&response_type=code" +
+        "&scope=" + encodeURIComponent(scope) +
+        "&state=" + encodeURIComponent(state);
+      return new Response(null, { status: 302, headers: { "Location": authUrl } });
+    }
+
+    // Callback: exchange code, resolve account id, store encrypted. HTML for a human.
+    // Never leak token material into the page or logs.
+    if (url.pathname === "/meta/oauth/callback" && request.method === "GET") {
+      // 1) Error from Meta (user denied, etc.). Do not proceed.
+      const oErr = url.searchParams.get("error") || url.searchParams.get("error_reason");
+      if (oErr) {
+        console.log("meta/oauth callback: Meta returned error=" + oErr);
+        return renderOauthPage("Connection cancelled", "Connection not completed",
+          "Instagram reported: " + oErr + ". You can close this window and try connecting again.", 200);
+      }
+      // 2) Validate + CONSUME state (delete before the exchange so it cannot be replayed).
+      const state = url.searchParams.get("state");
+      const code = url.searchParams.get("code");
+      if (!state || !code) {
+        return renderOauthPage("Connection failed", "Something went wrong",
+          "The connection link was incomplete. Please start again from your dashboard.", 400);
+      }
+      const stateKey = "oauth_state:" + state;
+      const stateRaw = await env.MEMORY_STORE.get(stateKey);
+      if (stateRaw) { await env.MEMORY_STORE.delete(stateKey); }
+      if (!stateRaw) {
+        console.log("meta/oauth callback: unknown or expired state");
+        return renderOauthPage("Connection expired", "This link has expired",
+          "The connection link expired or was already used. Please start again from your dashboard.", 400);
+      }
+      let stateObj;
+      try { stateObj = JSON.parse(stateRaw); } catch (e) { stateObj = null; }
+      const botId = stateObj && stateObj.bot_id;
+      if (!isValidUuid(botId)) {
+        console.log("meta/oauth callback: state missing a valid bot_id");
+        return renderOauthPage("Connection failed", "Something went wrong",
+          "Please start again from your dashboard.", 400);
+      }
+      const redirectUri = (env.PUBLIC_WORKER_URL || "https://sales-bot.nellakuate.workers.dev") + "/meta/oauth/callback";
+      // 3) Code -> short-lived token.
+      const shortLived = await exchangeCodeForShortLivedToken(env, code, redirectUri);
+      if (!shortLived) {
+        return renderOauthPage("Connection failed", "We could not complete the connection",
+          "Instagram did not accept the connection. Please try again.", 502);
+      }
+      // 4) Short-lived -> long-lived token.
+      const longLived = await exchangeForLongLivedToken(env, shortLived.accessToken);
+      if (!longLived) {
+        return renderOauthPage("Connection failed", "We could not complete the connection",
+          "Instagram did not issue a long-lived token. Please try again.", 502);
+      }
+      // 5) Resolve the account id empirically, then 6) fetch username, both from /me.
+      const me = await fetchInstagramMe(env, longLived.accessToken);
+      const resolved = resolveInstagramAccountId([
+        { source: "code_exchange.user_id", value: shortLived.userId },
+        { source: "me.id", value: me && me.id },
+        { source: "me.user_id", value: me && me.user_id }
+      ]);
+      if (!resolved) {
+        return renderOauthPage("Connection failed", "We could not verify the account",
+          "We could not confirm your Instagram account id. Please contact support.", 500);
+      }
+      const username = me && me.username ? String(me.username) : null;
+      // 7) Encrypt long-lived token, derive expiry from expires_in (not a hardcoded 60 days).
+      const tokenEnc = await encryptToken(longLived.accessToken, env);
+      const tokenExpiresAt = longLived.expiresIn
+        ? new Date(Date.now() + longLived.expiresIn * 1000).toISOString() : null;
+      // 8) Upsert into connected_accounts.
+      const up = await upsertConnectedAccount(env, {
+        botId: botId,
+        externalAccountId: resolved.id,
+        tokenEncrypted: tokenEnc,
+        tokenExpiresAt: tokenExpiresAt,
+        username: username
+      });
+      if (!up.ok && up.reason === "bot_conflict") {
+        return renderOauthPage("Account already connected", "This Instagram account is already connected",
+          "This Instagram account is linked to a different workspace. Please contact support.", 409);
+      }
+      if (!up.ok) {
+        return renderOauthPage("Connection failed", "We could not save the connection",
+          "Please try again, or contact support if this keeps happening.", 500);
+      }
+      // 9) Success. Log the id + source (account id is not a secret); the PAGE shows neither
+      // the token, the account id, nor the bot id.
+      console.log("meta/oauth callback: connected account " + resolved.id +
+        " (source " + resolved.source + ") to bot " + botId + " mode=" + up.mode);
+      return renderOauthPage("Connected", "Instagram connected",
+        "Your Instagram account is now connected to Mu AI. You can close this window.", 200);
     }
 
     // Meta/WhatsApp webhook. GET = subscription verification; POST = signed inbound events.
@@ -4099,6 +4219,252 @@ async function resolveConnectedAccount(env, platform, externalAccountId) {
     console.log("resolveConnectedAccount: error " + (e && e.message));
     return null;
   }
+}
+
+// ============================================================================
+// Instagram OAuth connect flow helpers (Instagram API with Instagram Login).
+// Endpoints (confirmed against Meta docs 2026-08-13):
+//   authorize:      https://www.instagram.com/oauth/authorize   (NOT the deprecated
+//                   api.instagram.com/oauth/authorize Basic Display endpoint, which
+//                   most online material still wrongly shows)
+//   code exchange:  POST https://api.instagram.com/oauth/access_token (form body)
+//   long-lived:     GET  https://graph.instagram.com/access_token?grant_type=ig_exchange_token
+//   refresh:        GET  https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token
+// Base URLs are env-overridable (production defaults) so the local matrix can point
+// them at a mock, mirroring getSupabaseUrl.
+// ============================================================================
+function getInstagramAuthorizeUrl(env) {
+  // https://www.instagram.com/oauth/authorize is the CURRENT Instagram-Login endpoint.
+  // api.instagram.com/oauth/authorize is the DEPRECATED Basic Display endpoint; do NOT use it.
+  return env.INSTAGRAM_AUTHORIZE_URL || "https://www.instagram.com/oauth/authorize";
+}
+function getInstagramApiBase(env) {
+  return env.INSTAGRAM_API_BASE || "https://api.instagram.com";
+}
+function getInstagramGraphBase(env) {
+  return env.INSTAGRAM_GRAPH_BASE || "https://graph.instagram.com";
+}
+
+function isValidUuid(s) {
+  return typeof s === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+function generateOauthState() {
+  return metaHexFromBytes(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+// Plain HTML page for a human landing in a browser. Callers pass only fixed copy:
+// never a token, account id, or bot id (security requirement).
+function renderOauthPage(title, heading, message, statusCode) {
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+  const html = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+    "<title>" + esc(title) + "</title></head>" +
+    "<body style=\"font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem;line-height:1.5;color:#222\">" +
+    "<h1>" + esc(heading) + "</h1><p>" + esc(message) + "</p></body></html>";
+  return new Response(html, { status: statusCode, headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+
+// Code -> short-lived token. POST, form-encoded body carrying the app secret.
+// SECURITY: NEVER log the request body (it contains INSTAGRAM_APP_SECRET) and never the
+// raw response (it can echo request material). On failure log the HTTP status + fixed label.
+async function exchangeCodeForShortLivedToken(env, code, redirectUri) {
+  const body = new URLSearchParams();
+  body.set("client_id", env.INSTAGRAM_APP_ID);
+  body.set("client_secret", env.INSTAGRAM_APP_SECRET);
+  body.set("grant_type", "authorization_code");
+  body.set("redirect_uri", redirectUri);
+  body.set("code", code);
+  let resp;
+  try {
+    resp = await fetch(getInstagramApiBase(env) + "/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString() // DO NOT log this value; it carries the app secret.
+    });
+  } catch (e) {
+    console.log("meta/oauth: code exchange failed (network)");
+    return null;
+  }
+  if (!resp.ok) {
+    console.log("meta/oauth: code exchange failed HTTP " + resp.status);
+    return null;
+  }
+  let j;
+  try { j = await resp.json(); } catch (e) { console.log("meta/oauth: code exchange bad JSON"); return null; }
+  // Response is either flat { access_token, user_id, permissions } or { data: [ { ... } ] }.
+  const d = j && Array.isArray(j.data) ? j.data[0] : j;
+  if (!d || !d.access_token) { console.log("meta/oauth: code exchange missing access_token"); return null; }
+  return { accessToken: d.access_token, userId: d.user_id != null ? String(d.user_id) : null };
+}
+
+// Short-lived -> long-lived. GET with client_secret in the QUERY STRING (Meta's
+// ig_exchange_token has no POST form; see Step 1). SECURITY, CRITICAL: this URL contains
+// the app secret AND the short-lived token. NEVER log the URL, NEVER put it in an error
+// message, and NEVER let it ride inside a thrown exception. Cloudflare captures unhandled
+// exception text, so a stack trace carrying this URL would leak the app secret into logs.
+// That is why the fetch is wrapped: a network error must not surface the URL. Do NOT add a
+// debug line here that echoes the URL, the body, or e.message.
+async function exchangeForLongLivedToken(env, shortLivedToken) {
+  const url = getInstagramGraphBase(env) + "/access_token?grant_type=ig_exchange_token" +
+    "&client_secret=" + encodeURIComponent(env.INSTAGRAM_APP_SECRET) +
+    "&access_token=" + encodeURIComponent(shortLivedToken);
+  let resp;
+  try {
+    resp = await fetch(url, { method: "GET" });
+  } catch (e) {
+    console.log("meta/oauth: long-lived exchange failed (network)");
+    return null;
+  }
+  if (!resp.ok) {
+    console.log("meta/oauth: long-lived exchange failed HTTP " + resp.status);
+    return null;
+  }
+  let j;
+  try { j = await resp.json(); } catch (e) { console.log("meta/oauth: long-lived exchange bad JSON"); return null; }
+  if (!j || !j.access_token) { console.log("meta/oauth: long-lived exchange missing access_token"); return null; }
+  return { accessToken: j.access_token, expiresIn: Number(j.expires_in) || null };
+}
+
+// GET /me for id candidates + username. URL carries the long-lived token; never log it.
+async function fetchInstagramMe(env, longLivedToken) {
+  const url = getInstagramGraphBase(env) + "/me?fields=id,user_id,username,account_type" +
+    "&access_token=" + encodeURIComponent(longLivedToken);
+  let resp;
+  try { resp = await fetch(url, { method: "GET" }); }
+  catch (e) { console.log("meta/oauth: me fetch failed (network)"); return null; }
+  if (!resp.ok) { console.log("meta/oauth: me fetch failed HTTP " + resp.status); return null; }
+  try { return await resp.json(); } catch (e) { console.log("meta/oauth: me fetch bad JSON"); return null; }
+}
+
+// Resolve the account id EMPIRICALLY (Step 1: docs do not settle which field returns the id
+// form webhooks/callbacks use). 2026-08-13 finding: me?fields=id returned 28018440311128050
+// while the webhook + deauthorize + data-deletion callbacks all used 17841480168261359.
+// Collect every candidate, select the one matching the known-good shape (17 digits, begins
+// 1784), and ABORT on zero or more-than-one distinct match. Storing the wrong form yields a
+// connection that looks successful and silently never receives a message. Account ids are not
+// secrets, so we log every candidate with its source and length.
+function resolveInstagramAccountId(candidates) {
+  const logList = candidates.map((c) =>
+    c.source + "=" + (c.value == null ? "null" : String(c.value)) +
+    " (len " + (c.value == null ? 0 : String(c.value).length) + ")").join(", ");
+  const shaped = candidates.filter((c) => c.value != null && /^1784[0-9]{13}$/.test(String(c.value)));
+  const distinct = [...new Set(shaped.map((c) => String(c.value)))];
+  if (distinct.length === 1) {
+    const winner = shaped.find((c) => String(c.value) === distinct[0]);
+    console.log("meta/oauth: account id resolved to " + distinct[0] + " from " + winner.source + " | candidates: " + logList);
+    return { id: distinct[0], source: winner.source };
+  }
+  console.log("meta/oauth: account id UNRESOLVED (" + distinct.length + " shaped matches). ABORTING, no write. candidates: " + logList);
+  return null;
+}
+
+// Upsert on (platform='instagram_api', external_account_id). Reconnect clears the
+// deauthorized flag. If a row exists under a DIFFERENT bot_id, refuse (one IG account
+// claimed by two tenants): write nothing, log loudly, caller renders a support page.
+async function upsertConnectedAccount(env, fields) {
+  const base = getSupabaseUrl(env);
+  const svc = {
+    "apikey": env.SUPABASE_SERVICE_KEY,
+    "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY,
+    "Content-Type": "application/json"
+  };
+  let lookup;
+  try {
+    lookup = await fetch(base + "/rest/v1/connected_accounts?platform=eq.instagram_api&external_account_id=eq." +
+      encodeURIComponent(fields.externalAccountId) + "&select=id,bot_id&limit=1", { headers: svc });
+  } catch (e) { console.log("meta/oauth: upsert lookup error"); return { ok: false, reason: "lookup_failed" }; }
+  if (!lookup.ok) { console.log("meta/oauth: upsert lookup failed HTTP " + lookup.status); return { ok: false, reason: "lookup_failed" }; }
+  const rows = await lookup.json().catch(() => null);
+  const existing = Array.isArray(rows) && rows[0] ? rows[0] : null;
+  if (existing && existing.bot_id && existing.bot_id !== fields.botId) {
+    console.log("meta/oauth: CONFLICT external_account_id " + fields.externalAccountId +
+      " already mapped to bot_id " + existing.bot_id + "; refused claim by bot_id " + fields.botId);
+    return { ok: false, reason: "bot_conflict" };
+  }
+  if (existing) {
+    const patch = await fetch(base + "/rest/v1/connected_accounts?id=eq." + encodeURIComponent(existing.id), {
+      method: "PATCH", headers: Object.assign({}, svc, { "Prefer": "return=minimal" }),
+      body: JSON.stringify({
+        access_token_encrypted: fields.tokenEncrypted,
+        token_expires_at: fields.tokenExpiresAt,
+        account_username: fields.username,
+        deauthorized: false,
+        deauthorized_at: null,
+        updated_at: new Date().toISOString()
+      })
+    });
+    if (!patch.ok) { console.log("meta/oauth: upsert PATCH failed HTTP " + patch.status); return { ok: false, reason: "patch_failed" }; }
+    return { ok: true, mode: "updated" };
+  }
+  const insert = await fetch(base + "/rest/v1/connected_accounts", {
+    method: "POST", headers: Object.assign({}, svc, { "Prefer": "return=minimal" }),
+    body: JSON.stringify({
+      bot_id: fields.botId,
+      platform: "instagram_api",
+      external_account_id: fields.externalAccountId,
+      access_token_encrypted: fields.tokenEncrypted,
+      token_expires_at: fields.tokenExpiresAt,
+      account_username: fields.username,
+      deauthorized: false
+    })
+  });
+  if (!insert.ok) { console.log("meta/oauth: upsert INSERT failed HTTP " + insert.status); return { ok: false, reason: "insert_failed" }; }
+  return { ok: true, mode: "created" };
+}
+
+// Refresh Instagram Login long-lived tokens nearing expiry. Called from scheduled().
+// Instagram tokens last ~60 days and refresh when >=24h old and not expired; an unrefreshed
+// token silently kills a client's integration. Token AGE is read from updated_at: the connect
+// upsert and every refresh set it, and connected_accounts has no auto-update trigger, so it
+// marks when the current token was stored. The "expires within 7 days" gate already implies an
+// age far past 24h; the explicit 24h skip is belt-and-braces for Meta's rule. Writes go through
+// ctx.waitUntil (standing rule). One bad token must not stop the sweep. Cap 50 per run.
+async function refreshInstagramTokens(env, ctx, nowMs) {
+  const base = getSupabaseUrl(env);
+  const svc = { "apikey": env.SUPABASE_SERVICE_KEY, "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY };
+  const soon = new Date(nowMs + 7 * 24 * 60 * 60 * 1000).toISOString();
+  let rows;
+  try {
+    const resp = await fetch(base + "/rest/v1/connected_accounts?platform=eq.instagram_api&deauthorized=eq.false" +
+      "&token_expires_at=not.is.null&token_expires_at=lte." + encodeURIComponent(soon) +
+      "&select=id,external_account_id,access_token_encrypted,token_expires_at,updated_at&limit=50", { headers: svc });
+    if (!resp.ok) { console.log("[cron] ig-refresh: query failed HTTP " + resp.status); return; }
+    rows = await resp.json();
+  } catch (e) { console.log("[cron] ig-refresh: query error"); return; }
+  if (!Array.isArray(rows) || rows.length === 0) { console.log("[cron] ig-refresh: 0 candidates"); return; }
+  const minAgeMs = 24 * 60 * 60 * 1000;
+  let refreshed = 0, skipped = 0, failed = 0;
+  for (const row of rows) {
+    try {
+      const updatedMs = row.updated_at ? Date.parse(row.updated_at) : 0;
+      if (updatedMs && (nowMs - updatedMs) < minAgeMs) { skipped++; continue; }
+      if (!row.access_token_encrypted) { skipped++; continue; }
+      const current = await decryptToken(row.access_token_encrypted, env);
+      // URL carries the long-lived token; never log it. On failure log external_account_id + status only.
+      let resp;
+      try {
+        resp = await fetch(getInstagramGraphBase(env) + "/refresh_access_token?grant_type=ig_refresh_token&access_token=" +
+          encodeURIComponent(current), { method: "GET" });
+      } catch (e) { console.log("[cron] ig-refresh: FAILED external_account_id " + row.external_account_id + " (network)"); failed++; continue; }
+      if (!resp.ok) { console.log("[cron] ig-refresh: FAILED external_account_id " + row.external_account_id + " HTTP " + resp.status); failed++; continue; }
+      const j = await resp.json().catch(() => null);
+      if (!j || !j.access_token) { console.log("[cron] ig-refresh: FAILED external_account_id " + row.external_account_id + " (no token)"); failed++; continue; }
+      const newEnc = await encryptToken(j.access_token, env);
+      const newExpiry = new Date(nowMs + (Number(j.expires_in) || 0) * 1000).toISOString();
+      ctx.waitUntil(fetch(base + "/rest/v1/connected_accounts?id=eq." + encodeURIComponent(row.id), {
+        method: "PATCH", headers: Object.assign({}, svc, { "Content-Type": "application/json", "Prefer": "return=minimal" }),
+        body: JSON.stringify({ access_token_encrypted: newEnc, token_expires_at: newExpiry, updated_at: new Date(nowMs).toISOString() })
+      }).then((pr) => { if (!pr.ok) console.log("[cron] ig-refresh: PATCH failed external_account_id " + row.external_account_id + " HTTP " + pr.status); })
+        .catch(() => console.log("[cron] ig-refresh: PATCH error external_account_id " + row.external_account_id)));
+      refreshed++;
+    } catch (e) {
+      console.log("[cron] ig-refresh: FAILED external_account_id " + (row && row.external_account_id) + " (exception)");
+      failed++;
+    }
+  }
+  console.log("[cron] ig-refresh: done refreshed=" + refreshed + " skipped=" + skipped + " failed=" + failed);
 }
 
 // ============================================================================
