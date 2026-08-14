@@ -160,6 +160,21 @@ first failure to reveal it). Merge feat/meta-compliance-endpoints to main (Antho
 call, not done).
 
 DEFERRED, HIGH PRIORITY (BLOCKS STAGE 4):
+- DECRYPT ROUND-TRIP, PRECONDITION OF STAGE 4. Stage 4 must NOT proceed past its first
+  task until decryptToken has round-tripped a REAL Instagram token, verified in staging
+  once staging exists. Why this is named rather than assumed: encryption has only ever
+  been exercised on the WRITE path (encryptToken at connect). Nothing has ever decrypted a
+  stored Instagram token. A blob that cannot decrypt would first surface at Stage 5's first
+  send and would present as a broken SEND path, which is the wrong debugging direction and
+  would cost hours. Verify it deliberately, early, in staging.
+  Evidence that made deferring acceptable (2026-08-14, the row since deleted): the stored
+  blob was structurally exactly what encryptToken produces. 256 base64 chars -> 190 bytes =
+  iv(12) + ciphertext(162) + gcm tag(16), random iv, implied plaintext 162 chars, which is
+  an Instagram long-lived token length. Encrypt and decrypt also read the same
+  TOKEN_ENCRYPTION_KEY in the same Worker via the same encBase64ToBytes path. That is
+  strong but NOT the GCM-authenticated proof, which needs the key and therefore the Worker.
+  A local decrypt is impossible: TOKEN_ENCRYPTION_KEY is a Worker secret and Cloudflare does
+  not allow reading secrets back.
 - Restore/re-provision staging Supabase: hlpucysbaqerhwahfolg.supabase.co has NO DNS
   record (deprovisioned). Then point sales-bot-staging SUPABASE_URL/SUPABASE_SERVICE_KEY
   at it and apply ALL migrations (009-012) there.
