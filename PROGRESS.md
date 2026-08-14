@@ -1,3 +1,44 @@
+2026-08-14 SESSION CLOSE-OUT. Meta compliance + Instagram OAuth are DONE and live on
+production; main matches what is deployed. Remaining Meta work is Anthony-side config and
+two named Stage 4 preconditions.
+
+WHAT IS LIVE AND PROVEN (production):
+- Deauthorize + data-deletion callbacks + public status page (migration 012 applied).
+  signed_request verification works against INSTAGRAM_APP_SECRET, over BOTH content types
+  Meta actually sends (deauthorize multipart/form-data, data-deletion urlencoded).
+- Instagram OAuth connect flow (/meta/oauth/start + /meta/oauth/callback), token refresh in
+  the hourly cron, INSTAGRAM_APP_ID in both env var blocks. Live version
+  9c1733ef-e2e5-4c9e-8958-eecac69f17b9 (rollback anchor cdc08486-69cb-4c53-a18f-3f1fb299bbd6).
+- End-to-end chain proven once: connect -> encrypted token + row written -> real DM routed
+  to the bot instead of the old no-mapping log.
+
+THE FINDING THAT MATTERED MOST: Meta documents code_exchange.user_id as the
+Instagram-scoped user ID and it returns the WRONG (2801) form. Only me.user_id returns the
+1784 form that webhooks and both callbacks use. The empirical collect-all + shape-check +
+abort resolver is the only reason a silently dead connection did not ship. The resolver
+comment now says so explicitly with the date. Never reduce it to one field.
+
+STAGE 4 PRECONDITIONS, BOTH NAMED BLOCKERS (see DEFERRED, HIGH PRIORITY below):
+  1. Restore/re-provision staging Supabase, set the two IG secrets on sales-bot-staging,
+     apply migrations 009-012 there. Staging has been unavailable for this entire session,
+     and every production deploy since has been on an explicit, per-change waiver.
+  2. Decrypt round-trip: prove decryptToken recovers a REAL Instagram token, in staging,
+     before Stage 4 goes past its first task.
+
+OPEN DECISION, NOT A CODE TASK, SITS WITH NELLA: business-deletion semantics. The
+data-deletion callback user_id is the BUSINESS that authorized the app, not a consumer, so
+performDataDeletion correctly REFUSES and records status=failed rather than guessing. What a
+business deletion request should actually remove (their account and token only, or tenant
+conversation data too) is a product and legal decision. Until it is made, refusing is right.
+
+ALSO STILL ANTHONY-SIDE: set the two callback URLs in the Meta App Dashboard, and re-run the
+deauthorize test to confirm a multipart deauthorize now VERIFIES (the fix is deployed but
+only the pre-fix failure has been observed live).
+
+Final tail capture for this session: /tmp/wtail4.log (24 lines, 2 connect cycles, 1 drop
+auto-recovered by the supervisor, 6 oauth/webhook event lines). Tail and all local dev
+processes stopped at close-out.
+
 2026-08-14: Instagram OAuth connect flow SHIPPED, DEPLOYED to production (version
 9c1733ef-e2e5-4c9e-8958-eecac69f17b9, rollback anchor cdc08486-69cb-4c53-a18f-3f1fb299bbd6)
 and MERGED to main (554620a, fast-forward). A business can now authorise Mu AI themselves.
@@ -41,7 +82,15 @@ Bombers Blueprint), deauthorized false, token_expires_at 2026-10-12 (59.1 days o
 from expires_in), access_token_encrypted populated (256 chars, ciphertext, not a plaintext
 IG token).
 
-REQUIRED CLEANUP, NOT OPTIONAL: delete that connected_accounts row
+CLEANUP DONE 2026-08-14: the test row was DELETED (verified). SELECT before confirmed the
+expected row (instagram_api / 17841480168261359 / anthony_make1 / bot ...0002), scoped
+DELETE on id=20471f2b-e63a-4c90-8d1b-b871e3017ca5 removed exactly 1 row, SELECT after
+returned 0 rows for that id, and connected_accounts now holds ONLY the original WhatsApp
+row (1190161784184058, deauthorized false, deauthorized_at null, untouched). No
+instagram_api rows remain. The row evidence captured above is now the only record of it.
+Anthony must reconnect the CORRECT account (not anthony_make1) before Stage 4.
+
+WAS (now done): delete that connected_accounts row
 (id 20471f2b-e63a-4c90-8d1b-b871e3017ca5). It maps Anthony's TEST account anthony_make1
 onto Coach Shaun's LIVE production tenant. It is inert today only because Stage 4 does not
 exist. Once Stage 4 ships, DMs to the test account would route into Shaun's real
