@@ -4641,6 +4641,15 @@ async function routeInstagramEvent(env, rawBody, keyMatched) {
         // Stage 4: generate + persist via the shared reply core under the
         // instagram_api channel. Dedup on mid happens inside processWhatsAppReply
         // (ig_seen key) so it is not duplicated here. Send remains Stage 5.
+        //
+        // DELIBERATE bare await, do not "fix" this to ctx.waitUntil. Two reasons:
+        //  1. The standing rule is already satisfied one level up: the webhook calls
+        //     ctx.waitUntil(routeInstagramEvent(...)), so the 200 returns to Meta
+        //     immediately regardless of how long this pipeline takes.
+        //  2. Awaiting sequentially inside the event loop is load-bearing. A batch of
+        //     messages from the SAME sender shares one KV memory key, and the pipeline
+        //     is a read-modify-write on it. Per-event ctx.waitUntil would run those
+        //     concurrently and the last writer would clobber the others' turns.
         await processWhatsAppReply(env, botId, senderId, text, null, mid, "instagram_api");
       } catch (e) {
         console.log("Instagram route: event error (continuing): " + (e && e.message));
@@ -4668,7 +4677,17 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid, 
       await env.MEMORY_STORE.put(`${seenPrefix}:${wamid}`, "1", { expirationTtl: 604800 });
     }
     const botSettings = await getBotSettings(env, botId);
-    const autoSendEnabled = botSettings.auto_send_enabled === true;
+    // STAGE 4 GUARD, REMOVE IN STAGE 5 WHEN THE INSTAGRAM SEND PATH EXISTS.
+    // instagram_api is forced onto the review path regardless of the bot's
+    // auto_send_enabled setting. This is not belt-and-braces against a rogue send:
+    // AUTO_SEND performs no send today (see persistWhatsAppTurn, it logs and stops).
+    // The actual failure it prevents is a SILENT DROP. On AUTO_SEND the assistant
+    // turn is appended to the conversation but NO review row is created, so the
+    // reply reaches neither a setter nor the lead. Staging currently has
+    // auto_send_enabled=true with "HOOK / ENTRY" unlocked in stage_automation, which
+    // is exactly the stage a first inbound message lands in, so without this guard
+    // the very first Instagram turn there would vanish.
+    const autoSendEnabled = channel === "instagram_api" ? false : (botSettings.auto_send_enabled === true);
     const stageAutomation = (botSettings.stage_automation && typeof botSettings.stage_automation === "object")
       ? botSettings.stage_automation : {};
     const systemPrompt = botSettings.system_prompt || FALLBACK_SYSTEM_PROMPT;
@@ -4715,19 +4734,19 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid, 
 
     const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig, priorStage, false);
     if (!botResponse || (!botResponse.reply && !botResponse.messages)) {
-      console.log("WhatsApp 3d-i: invalid/empty bot response | bot=" + botId + " wa_id=" + waId);
+      console.log(channel + " 3d-i: invalid/empty bot response | bot=" + botId + " customer=" + waId);
       return;
     }
 
     // 3d-ii: persist the turn (memory, conversation, inbox review).
     const persistResult = await persistWhatsAppTurn(env, botId, waId, profileName,
       userEntry, memory, memoryKey, botResponse, autoSendEnabled, stageAutomation, channel);
-    console.log("WhatsApp 3d-ii PERSISTED | bot=" + botId + " wa_id=" + waId +
+    console.log(channel + " 3d-ii PERSISTED | bot=" + botId + " customer=" + waId +
       " | action=" + persistResult.finalAction + " review=" + (persistResult.review_id || "none") +
       " rpc_ok=" + persistResult.rpc_ok + " review_ok=" + persistResult.review_ok +
       " | reply=" + JSON.stringify(persistResult.messages));
   } catch (e) {
-    console.log("WhatsApp 3d-i error | bot=" + botId + " wa_id=" + waId + ": " + (e && e.message));
+    console.log(channel + " 3d-i error | bot=" + botId + " customer=" + waId + ": " + (e && e.message));
   }
 }
 
@@ -4863,12 +4882,12 @@ async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, mem
       result.review_ok = !!(insRes && insRes.success);
       result.review_id = review_id;
     } else if (finalAction === "AUTO_SEND") {
-      console.log("WhatsApp 3d-ii: AUTO_SEND resolved but send path is Stage 4; draft stored in memory only | review=" + review_id);
+      console.log(channel + " 3d-ii: AUTO_SEND resolved but no send path is wired; draft stored in memory only, NO review row created | review=" + review_id);
       result.review_ok = true;
     }
     return result;
   } catch (e) {
-    console.log("WhatsApp 3d-ii persist error | bot=" + botId + " wa_id=" + waId + ": " + (e && e.message));
+    console.log(channel + " 3d-ii persist error | bot=" + botId + " customer=" + waId + ": " + (e && e.message));
     return result;
   }
 }
