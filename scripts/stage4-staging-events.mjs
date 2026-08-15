@@ -10,7 +10,15 @@
 //     Remove-Item Env:\INSTAGRAM_APP_SECRET
 //
 // Target is STAGING only. It posts to sales-bot-staging.nellakuate.workers.dev and
-// uses a TEST- fixture account id, so it cannot touch production or a real lead.
+// uses TEST- fixture ids, so it cannot touch production or a real lead.
+//
+// TWO DISTINCT IDS, do not conflate them when checking the database:
+//   IG_ACCOUNT (recipient.id) is the BUSINESS. It must match
+//     connected_accounts.external_account_id, which is what resolveConnectedAccount
+//     looks up to find the bot.
+//   IG_SENDER (sender.id) is the LEAD. It plays the waId role, so THIS is the value
+//     that becomes conversations.customer_id and the review row's customer_id.
+// So the conversation to verify afterwards is keyed on IG_SENDER, not IG_ACCOUNT.
 //
 // Cost: 2 Claude calls and 2 Voyage embeddings on Nella's staging key. The third
 // event is a deliberate duplicate and must cost nothing.
