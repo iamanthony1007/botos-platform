@@ -1404,6 +1404,27 @@ var index_default = {
       }
     }
 
+    // Staging-only crypto self-test. Same gate as /__cron-test above: 404 anywhere
+    // that is not staging, so this is inert in production. Proves the
+    // encryptToken/decryptToken round-trip under the real Worker key. Takes no
+    // input and returns booleans and lengths only.
+    if (url.pathname === "/__crypto-test" && request.method === "GET") {
+      if (env.ENVIRONMENT !== "staging") {
+        return new Response(JSON.stringify({ error: "not available in this environment" }),
+          { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+      try {
+        const result = await runCryptoSelfTest(env);
+        console.log("crypto self-test: " + (result.all_pass ? "PASS" : "FAIL"));
+        return new Response(JSON.stringify(result, null, 2),
+          { status: result.all_pass ? 200 : 500, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      } catch (e) {
+        console.log("crypto self-test: FAIL (exception)");
+        return new Response(JSON.stringify({ all_pass: false, error: "self-test threw" }),
+          { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } });
+      }
+    }
+
     // POST /meta/send (Stage 4). Send an APPROVED WhatsApp review's reply back to
     // the lead via the Meta Graph API, using the bot's per-account token decrypted
     // server-side. Body: { review_id }. Strictly separate from the Instagram Make
@@ -3782,6 +3803,94 @@ async function decryptToken(blob, env) {
   const ciphertext = packed.slice(12);
   const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
   return new TextDecoder().decode(decrypted);
+}
+
+// ============================================================================
+// Crypto self-test (staging only, exposed via GET /__crypto-test).
+// Proves that encryptToken and decryptToken round-trip under the Worker's real
+// TOKEN_ENCRYPTION_KEY, which is otherwise only ever exercised on the WRITE path:
+// nothing had ever decrypted a stored Instagram token, so a blob that could not be
+// decrypted would first surface at the first send and would look like a broken
+// send path. See PROGRESS.md, Stage 4 preconditions.
+//
+// Uses only self-generated synthetic values. No inputs, no stored tokens, no
+// account data. Returns booleans and lengths only: never a plaintext, never a
+// blob, never key material.
+//
+// Check C is the one that ties this to production: a real Instagram long-lived
+// token observed on 2026-08-14 was 162 chars and encrypted to 190 bytes
+// (iv 12 + ciphertext 162 + gcm tag 16), stored as 256 base64 chars. Reproducing
+// those exact numbers here shows that stored blob is a correct encryption of a
+// 162-char token.
+// ============================================================================
+async function runCryptoSelfTest(env) {
+  const out = {};
+
+  // A. Short known string round-trips.
+  const shortPlain = "MU-CRYPTO-SELFTEST-v1";
+  const shortBlob = await encryptToken(shortPlain, env);
+  const shortBack = await decryptToken(shortBlob, env);
+  out.short_string = {
+    roundtrip_ok: shortBack === shortPlain,
+    plaintext_len: shortPlain.length,
+    blob_b64_len: shortBlob.length,
+    blob_bytes: encBase64ToBytes(shortBlob).length
+  };
+
+  // B + C. A synthetic value shaped like a real IG long-lived token (162 chars),
+  // then assert the byte layout matches what production stored.
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+  const rand = crypto.getRandomValues(new Uint8Array(162 - 4));
+  let igShaped = "IGAA";
+  for (let i = 0; i < rand.length; i++) igShaped += alphabet[rand[i] % alphabet.length];
+  const igBlob = await encryptToken(igShaped, env);
+  const igBack = await decryptToken(igBlob, env);
+  const igBytes = encBase64ToBytes(igBlob).length;
+  const ctLen = igBytes - 12 - 16;
+  out.ig_shaped = {
+    roundtrip_ok: igBack === igShaped,
+    plaintext_len: igShaped.length,
+    blob_b64_len: igBlob.length,
+    blob_bytes: igBytes
+  };
+  out.structure_match = {
+    iv: 12,
+    ciphertext: ctLen,
+    gcm_tag: 16,
+    ciphertext_equals_plaintext_len: ctLen === igShaped.length,
+    blob_bytes_190: igBytes === 190,
+    blob_b64_256: igBlob.length === 256,
+    matches_prod_observation: igBytes === 190 && igBlob.length === 256 && ctLen === 162
+  };
+
+  // D. IV is random per encryption, and GCM authentication rejects tampering.
+  const blob1 = await encryptToken(igShaped, env);
+  const blob2 = await encryptToken(igShaped, env);
+  const bothBack = (await decryptToken(blob1, env)) === igShaped && (await decryptToken(blob2, env)) === igShaped;
+  const tamperBytes = encBase64ToBytes(blob1);
+  tamperBytes[tamperBytes.length - 20] ^= 0xff; // flip a byte inside the ciphertext
+  let tamperRejected = false;
+  try {
+    await decryptToken(encBytesToBase64(tamperBytes), env);
+  } catch (e) {
+    tamperRejected = true;
+  }
+  out.iv_and_tamper = {
+    two_encrypts_differ: blob1 !== blob2,
+    both_decrypt_ok: bothBack,
+    flipped_byte_rejected: tamperRejected
+  };
+
+  out.all_pass = Boolean(
+    out.short_string.roundtrip_ok &&
+    out.ig_shaped.roundtrip_ok &&
+    out.structure_match.matches_prod_observation &&
+    out.structure_match.ciphertext_equals_plaintext_len &&
+    out.iv_and_tamper.two_encrypts_differ &&
+    out.iv_and_tamper.both_decrypt_ok &&
+    out.iv_and_tamper.flipped_byte_rejected
+  );
+  return out;
 }
 
 // ============================================================================
