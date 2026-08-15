@@ -380,7 +380,27 @@ export default function Inbox() {
     setReplyMessages(prev => prev.filter((_, i) => i !== idx))
   }
 
-  async function sendToMake(customerId, messages, typingDelays) {
+  // Channels the ManyChat Make scenario can actually deliver to. Confirmed from
+  // PRODUCTION DATA on 2026-08-14, not assumed: reviews.channel holds only
+  // 'instagram' (5951 rows), and conversations.channel holds 'manychat' (2341),
+  // 'instagram' (3617) and 'tester' (73). Anything else is a channel this webhook
+  // cannot route: it takes a ManyChat subscriber id, so posting an Instagram-API
+  // IGSID or a WhatsApp id would at best fail the scenario and at worst deliver to
+  // an unrelated subscriber. A null or empty channel is treated as legacy and
+  // allowed, so no existing row changes behaviour.
+  const MAKE_DELIVERABLE_CHANNELS = ['instagram', 'manychat', 'tester']
+
+  // Returns true when the reply was handed to Make, false when the channel is not
+  // deliverable from the inbox. Does NOT throw on a blocked channel: two of the
+  // three call sites await this outside a try/catch, so throwing would leave the
+  // UI stuck in its sending state. Network failures still throw, as before.
+  async function sendToMake(customerId, messages, typingDelays, channel) {
+    const ch = String(channel || '').toLowerCase()
+    if (ch && !MAKE_DELIVERABLE_CHANNELS.includes(ch)) {
+      console.warn('[sendToMake] blocked: channel', ch, 'is not deliverable via the ManyChat scenario')
+      showToast('Saved, but not delivered: ' + channel + ' replies cannot be sent from the inbox yet', 'error')
+      return false
+    }
     try {
       await fetch('https://hook.eu2.make.com/jknvsf64c05m0urc1f7qph523pi310st', {
         method: 'POST',
@@ -391,6 +411,7 @@ export default function Inbox() {
           typing_delays_ms: typingDelays && typingDelays.length > 0 ? typingDelays : messages.map(() => 1500)
         })
       })
+      return true
     } catch (e) {
       console.error('Make webhook error:', e)
       throw e
@@ -490,8 +511,8 @@ export default function Inbox() {
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
 
-    await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [])
-    showToast('Approved - reply sent to lead', 'success')
+    const approveDelivered = await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [], activeReview.channel)
+    if (approveDelivered) showToast('Approved - reply sent to lead', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -600,9 +621,9 @@ export default function Inbox() {
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
 
-    await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [])
+    const trainDelivered = await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [], activeReview.channel)
     setShowTrainModal(false)
-    showToast('Edited - reply sent to lead', 'success')
+    if (trainDelivered) showToast('Edited - reply sent to lead', 'success')
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -660,8 +681,8 @@ export default function Inbox() {
 
     // 2. Deliver to Instagram via Make
     try {
-      await sendToMake(selectedLead.customer_id, [text], [1500])
-      showToast(containsBookingLink ? 'Manual reply sent - lead marked as Booked' : 'Manual reply sent', 'success')
+      const manualDelivered = await sendToMake(selectedLead.customer_id, [text], [1500], selectedLead.channel)
+      if (manualDelivered) showToast(containsBookingLink ? 'Manual reply sent - lead marked as Booked' : 'Manual reply sent', 'success')
     } catch (e) {
       showToast('Saved but failed to deliver to Instagram', 'error')
     }
