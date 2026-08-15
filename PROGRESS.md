@@ -1,3 +1,25 @@
+2026-08-14 STAGE 4 (Instagram reply generation + persistence) built on
+feat/stage-4-instagram-reply. NOT merged, NOT deployed to production. Staging first,
+no waiver: this is the first change of the session that modifies the LIVE WhatsApp
+reply pipeline rather than adding alongside it.
+
+PRIOR WORK LOCATED, EVALUATED, SUPERSEDED (closes the open item). A Stage 4 briefing
+was delivered in a much earlier session and its outcome was never confirmed. The work
+existed: branch feat/instagram-stage4-reply, commit 8ba2c3b, authored by Anthony
+2026-07-10, pushed to origin, never merged, 31 commits behind main. It contained the
+correct mechanical parameterization (channel param on both functions, single-owner
+dedup moved into the core, p_channel and review channel threaded) but was missing two
+things: no auto-send guard, and no explanation of the bare await. It was cherry-picked
+onto feat/stage-4-instagram-reply (clean, no conflicts, Anthony authorship preserved)
+and the two gaps fixed on top. The old branch is left UNTOUCHED as history. Two other
+similarly named branches, feat/parameterize-bot-core and feat/whatsapp-send-stage4,
+were checked and are fully merged into main already.
+
+WHAT CHANGED (4 commits): 738e882 cherry-pick, 979518b auto-send guard + dual-reason
+await comment + channel-aware log labels, 33dd580 dashboard Make-webhook gate,
+8ef7f75 overridable ANTHROPIC_BASE_URL / VOYAGE_BASE_URL for local tests.
+Local matrix: 8/8 pass, no real credits spent.
+
 2026-08-14 SECURITY: STAGING LEAD DATA WAS PUBLICLY READABLE. Found, contained, verified.
 
 FINDING. The staging Supabase anon key is committed in the PUBLIC repo history (commit
@@ -276,6 +298,24 @@ DEFERRED, HIGH PRIORITY (BLOCKS STAGE 4):
   hpqdoikpjikqjnxotcvi; the real [env.staging.vars] value hlpucysbaqerhwahfolg is now
   gone too). Staging must work before Stage 4 (live reply pipeline); waiver was for
   this change only.
+
+DEFERRED, HIGH PRIORITY (GATES ANY FUTURE AUTO-SEND ENABLEMENT):
+- WhatsApp AUTO_SEND SILENTLY DROPS THE REPLY. Found while mapping Stage 4, 2026-08-14.
+  When resolveNextAction returns AUTO_SEND (auto_send_enabled true AND the current stage
+  unlocked in stage_automation), persistWhatsAppTurn appends the assistant turn to the
+  conversation and then logs and stops. It creates NO review row, and no send happens:
+  the WhatsApp send path is /meta/send, which is driven by a setter pressing Approve on
+  a review row that in this branch never exists. So the generated reply reaches neither
+  the lead nor a setter. It is written into conversation history as though it had been
+  sent, which is worse than dropping it silently, because the next turn is generated
+  against a transcript containing a message the lead never received.
+  Not urgent today ONLY because production WhatsApp has auto_send_enabled false. It must
+  be fixed BEFORE auto-send is enabled for any tenant on any channel. Staging DOES have
+  auto_send_enabled true with HOOK / ENTRY unlocked, which is why Stage 4 needed an
+  explicit instagram_api guard: without it the very first Instagram turn on staging
+  would have vanished this way.
+  Fix direction (not built): either wire a real send on the AUTO_SEND branch, or create
+  the review row anyway and mark it auto-approved. Do not simply delete the branch.
 
 DEFERRED, LOWER:
 - Scope the conversations anonymise PATCH by the resolved bot_id once the consumer
