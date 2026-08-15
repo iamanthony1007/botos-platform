@@ -3387,7 +3387,10 @@ The lead sent a REAL message that also happened to trigger a keyword automation 
     systemBlocks.push({ type: "text", text: dynamicSuffix });
   }
 
-  const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
+  // Base URL is overridable for LOCAL TESTING ONLY, following the OAuth pattern:
+  // unset everywhere real, so production and staging hit api.anthropic.com exactly
+  // as before. Set only by the local matrix driver to avoid spending real credits.
+  const response = await fetchWithRetry((env.ANTHROPIC_BASE_URL || "https://api.anthropic.com") + "/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -3478,7 +3481,8 @@ async function embedQueryText(env, text) {
   // input_type="query" optimizes for retrieval search vs "document" for indexing.
   if (!text || !env.VOYAGE_API_KEY) return null;
   try {
-    const response = await fetch("https://api.voyageai.com/v1/embeddings", {
+    // Overridable for local testing only, same rationale as ANTHROPIC_BASE_URL.
+    const response = await fetch((env.VOYAGE_BASE_URL || "https://api.voyageai.com") + "/v1/embeddings", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${env.VOYAGE_API_KEY}`,
