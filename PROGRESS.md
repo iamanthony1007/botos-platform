@@ -1,3 +1,25 @@
+2026-08-16 PRODUCTION IS INTENTIONALLY DORMANT. NOT AN INCIDENT. Read this before
+interpreting any production silence.
+
+Nella deliberately paused live operation on 2026-07-30, pending Meta API approval.
+Production has had zero reviews and zero conversation activity since
+2026-07-30T20:53:38Z. That flatline is a business decision, not a fault. Make
+Scenario 1 is OFF and STAYS OFF until go-live. No leads were dropped, no messages
+were lost, and no Make recovery or replay is needed. The Anthropic credit exhaustion
+discovered on 2026-08-15 happened while the system was ALREADY off, so it affected
+nothing live; it only blocked the Stage 4 staging test.
+
+CORRECTION TO THE 2026-08-16 ANALYSIS. Before Anthony supplied this context, the
+pattern was read as a possible 17-day silent outage. That reading was CORRECT ON THE
+DATA and WRONG ON THE CAUSE. The data genuinely supported it: sustained daily volume
+(49, 73, 63, 26 reviews on 07-27 through 07-30, steady all month, 5951 reviews over
+104 active days) stopping dead mid-stream, plus a confirmed failure mode (exhausted
+credit) that writes NOTHING to the database, leaving no way to distinguish traffic
+failing silently from no traffic at all without owner knowledge. The lesson is not
+that the analysis was sloppy, it is that operational intent is invisible in
+telemetry: when data shows an abrupt stop, ASK THE OWNER before concluding incident.
+Recorded so the same flatline is not re-litigated as an outage by whoever looks next.
+
 2026-08-14 STAGE 4 (Instagram reply generation + persistence) built on
 feat/stage-4-instagram-reply. NOT merged, NOT deployed to production. Staging first,
 no waiver: this is the first change of the session that modifies the LIVE WhatsApp
@@ -316,6 +338,27 @@ DEFERRED, HIGH PRIORITY (GATES ANY FUTURE AUTO-SEND ENABLEMENT):
   would have vanished this way.
   Fix direction (not built): either wire a real send on the AUTO_SEND branch, or create
   the review row anyway and mark it auto-approved. Do not simply delete the branch.
+
+GO-LIVE CHECKLIST (the day Meta App Review approves). Production is dormant by
+decision, so these are the steps that actually turn it back on. Do them in order and
+confirm each, rather than assuming the system resumes by itself:
+- Confirm Anthropic credit on the account the PRODUCTION Worker key belongs to, and
+  confirm whether production and staging share one Anthropic account (unknown today;
+  the keys cannot be read back, so this has to come from the billing dashboard).
+- Arm freshness alerting BEFORE reopening traffic, not after. Scope it as part of
+  this checklist, NOT as a standing alarm: an always-on no-reviews-in-N-hours alert
+  would have fired continuously through this intentional dormancy and been muted or
+  ignored, which is how real alerts get lost. It must be armed at go-live and must
+  respect a documented dormant state (an explicit on/off flag, so pausing operation
+  also pauses the alert rather than relying on someone remembering).
+  Design note: because a failing pipeline writes NOTHING, freshness must be measured
+  on inbound arrival (Make executions, or Worker request count) as well as on
+  reviews.created_at. Watching only the database cannot tell silence from failure.
+- Reactivate the inbound path: Make Scenario 1 for the legacy ManyChat route, or the
+  Instagram API path once Stage 4 and 5 ship, whichever is going live.
+- Connect the client Instagram account through the OAuth flow (/meta/oauth/start) and
+  verify the connected_accounts row stores the 1784 form of the id.
+- Verify one real end-to-end message produces a review row before declaring go-live.
 
 DEFERRED, LOWER:
 - Scope the conversations anonymise PATCH by the resolved bot_id once the consumer
