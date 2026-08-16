@@ -4668,18 +4668,33 @@ async function routeInstagramEvent(env, rawBody, keyMatched) {
 // ManyChat-specific handling. Runs inside ctx.waitUntil so the webhook 200s fast.
 // ============================================================================
 async function processWhatsAppReply(env, botId, waId, text, profileName, wamid, channel = "whatsapp") {
+  // Dedup on Meta's message id: Meta re-delivers webhooks (retries up to 7 days).
+  // Without this a redelivery re-runs the pipeline and double-writes.
+  // NOTE: seenKey and releaseSeenKey are declared OUTSIDE the try on purpose. They
+  // are referenced from the catch block, and a const declared inside the try is not
+  // in scope there: doing so throws a ReferenceError from inside the catch, which
+  // ctx.waitUntil swallows, turning every pipeline error into a silent failure.
+  const seenPrefix = channel === "instagram_api" ? "ig_seen" : "wa_seen";
+  const seenKey = (wamid && wamid !== "(no-id)") ? `${seenPrefix}:${wamid}` : null;
+  const releaseSeenKey = async (why) => {
+    if (!seenKey) return;
+    try {
+      await env.MEMORY_STORE.delete(seenKey);
+      console.log(channel + " reply: released dedup key after " + why + ", redelivery can retry | " + wamid);
+    } catch (delErr) {
+      console.log(channel + " reply: could not release dedup key (" + why + "): " + (delErr && delErr.message));
+    }
+  };
   try {
-    // Dedup on Meta's message id: Meta re-delivers webhooks (retries up to
-    // 7 days). Without this a redelivery re-runs the pipeline and double-writes.
-    const seenPrefix = channel === "instagram_api" ? "ig_seen" : "wa_seen";
-    if (wamid && wamid !== "(no-id)") {
-      const seen = await env.MEMORY_STORE.get(`${seenPrefix}:${wamid}`);
+    if (seenKey) {
+      const seen = await env.MEMORY_STORE.get(seenKey);
       if (seen) {
         console.log(channel + " reply: duplicate message id, skipping | " + wamid);
         return;
       }
-      await env.MEMORY_STORE.put(`${seenPrefix}:${wamid}`, "1", { expirationTtl: 604800 });
+      await env.MEMORY_STORE.put(seenKey, "1", { expirationTtl: 604800 });
     }
+
     const botSettings = await getBotSettings(env, botId);
     // STAGE 4 GUARD, REMOVE IN STAGE 5 WHEN THE INSTAGRAM SEND PATH EXISTS.
     // instagram_api is forced onto the review path regardless of the bot's
@@ -4739,6 +4754,7 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid, 
     const botResponse = await callClaude(env, memory, learnings, documents, systemPrompt, botModel, intentDefs, campaignConfig, priorStage, false);
     if (!botResponse || (!botResponse.reply && !botResponse.messages)) {
       console.log(channel + " 3d-i: invalid/empty bot response | bot=" + botId + " customer=" + waId);
+      await releaseSeenKey("empty bot response");
       return;
     }
 
@@ -4751,6 +4767,7 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid, 
       " | reply=" + JSON.stringify(persistResult.messages));
   } catch (e) {
     console.log(channel + " 3d-i error | bot=" + botId + " customer=" + waId + ": " + (e && e.message));
+    await releaseSeenKey("pipeline error");
   }
 }
 
