@@ -4,10 +4,19 @@
 // Anthony runs this. The secret is read from an environment variable so it is never
 // typed into chat, never written to a file, and never printed by this script.
 //
-//   PowerShell, from the repo root:
-//     $env:INSTAGRAM_APP_SECRET="<paste from the Meta App Dashboard>"
+// INVOCATION: use the masked prompt below, EXACTLY as written. Do NOT set the env var
+// with a plain $env:NAME="value" assignment: that puts the secret verbatim into the
+// PSReadLine command history file, which is the exact leak path from the token
+// incident. Read-Host input is masked and is not recorded in history.
+//
+//   PowerShell 5.1, from the repo root:
+//     $sec = Read-Host -Prompt "Paste INSTAGRAM_APP_SECRET" -AsSecureString
+//     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+//     $env:INSTAGRAM_APP_SECRET = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+//     [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
 //     node scripts/stage4-staging-events.mjs
 //     Remove-Item Env:\INSTAGRAM_APP_SECRET
+//     $sec = $null
 //
 // Target is STAGING only. It posts to sales-bot-staging.nellakuate.workers.dev and
 // uses TEST- fixture ids, so it cannot touch production or a real lead.
