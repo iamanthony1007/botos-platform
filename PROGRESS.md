@@ -361,6 +361,15 @@ confirm each, rather than assuming the system resumes by itself:
 - Verify one real end-to-end message produces a review row before declaring go-live.
 
 DEFERRED, LOWER:
+- PARTIAL-PERSIST MODE (exposed live by the 2026-08-16 staging run, known mode, no
+  build now): when the conversation RPC succeeds but the review insert fails all
+  retries (rpc_ok=true review_ok=false, honestly logged by the 3d-ii PERSISTED line),
+  the lead exists in the transcript and in KV memory but NO setter ever sees them,
+  because the inbox is driven entirely by review rows. The burned-mid release
+  correctly does not fire here (something persisted, so redelivery would double-
+  append). reconciliation_queue is the natural future catch: a sweep that finds
+  conversations whose latest user turn has no corresponding review row and re-queues
+  them. Recorded so the mode is recognized when seen, not rediscovered.
 - Scope the conversations anonymise PATCH by the resolved bot_id once the consumer
   branch is confirmed the live path (customer_id alone spans tenants). Noted in the
   performDataDeletion comment.
