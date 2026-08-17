@@ -1,3 +1,14 @@
+2026-08-18 PROFILE FETCH LIVE ON PRODUCTION. main at e0c50cf (fast-forward),
+Worker 06c0e54d (rollback anchor 712b358e). First inbound from a new
+instagram_api lead now fetches name+username with the tenant token and writes
+them onto the conversation, so the inbox shows a name instead of an IGSID.
+Also live: the META_TEST_SECRET webhook fallback (CONFIRMED ABSENT from
+production secrets, so inert where it matters most) and the hardened tail
+supervisor (scripts/tail-supervisor.sh, 5h hard timeout). Staging run was the
+first fully autonomous one: self-signed events, no human secret handling.
+Production stays dormant until the recorded cycle connects. Disconnect watch
+running; deauthorize + refuse third observations and cycle cleanup still queued.
+
 2026-08-17 (later) CORS FIX + HONEST BADGE + RETRY on fix/meta-send-cors-retry.
 The first production browser send was blocked by CORS preflight: the Worker
 allowlisted only Content-Type, and /meta/send is called with Authorization.
