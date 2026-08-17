@@ -1,3 +1,20 @@
+2026-08-17 (later) CORS FIX + HONEST BADGE + RETRY on fix/meta-send-cors-retry.
+The first production browser send was blocked by CORS preflight: the Worker
+allowlisted only Content-Type, and /meta/send is called with Authorization.
+TESTING LESSON, PERMANENT: browser-enforced behaviors (CORS, preflight, mixed
+content) are INVISIBLE to Node-based matrices, because fetch from Node never
+preflights. Every browser-called route gets a browser-context test from now on
+(a real fetch from the page origin, via the embedded browser or DevTools), in
+addition to the Node matrix. The Stage 5 matrix passed 10/10 while the feature
+was unusable from the actual dashboard.
+Also shipped with the fix, both always required by the retriable design:
+- Honest Sent badge: for instagram_api, only status=sent renders as Sent;
+  approved/edited render as approved-with-Not-delivered and never fake a
+  delivery. Legacy channels keep their old semantics (Make delivers at approve).
+- Send now / retry button on undelivered instagram_api reviews, calling the same
+  authenticated Worker route with the same truthful toasts. Anthony's two
+  pre-fix approved reviews are the live retry test once this deploys.
+
 2026-08-17 STAGE 5 LIVE ON PRODUCTION. Merged to main (00ac5d4, fast-forward),
 Worker e651ddbe (rollback anchor 443f3a57), dashboard index-BAVoIlfJ.js. Staging
 canary verified (Stage 4 unbroken upstream), staging cleaned to 41/53/20. Bare

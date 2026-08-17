@@ -1007,7 +1007,12 @@ var index_default = {
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PATCH",
-      "Access-Control-Allow-Headers": "Content-Type"
+      // Authorization is REQUIRED here: the dashboard calls /meta/send with the
+      // user's Supabase JWT in the Authorization header, and the browser's CORS
+      // preflight rejects the request before it leaves the page unless the header
+      // is allowlisted. Found live on production (2026-08-17): Node-based tests
+      // never preflight, so only a browser could surface this.
+      "Access-Control-Allow-Headers": "Content-Type, Authorization"
     };
 
     if (request.method === "OPTIONS") {
