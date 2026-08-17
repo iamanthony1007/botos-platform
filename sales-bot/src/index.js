@@ -4887,6 +4887,12 @@ async function processWhatsAppReply(env, botId, waId, text, profileName, wamid, 
       " | action=" + persistResult.finalAction + " review=" + (persistResult.review_id || "none") +
       " rpc_ok=" + persistResult.rpc_ok + " review_ok=" + persistResult.review_ok +
       " | reply=" + JSON.stringify(persistResult.messages));
+
+    // Profile fetch: FIRST inbound from a new instagram_api lead only. After
+    // persist on purpose, so it can never delay or fail the reply draft.
+    if (channel === "instagram_api" && persistResult.firstTurn) {
+      await fetchInstagramProfile(env, botId, waId);
+    }
   } catch (e) {
     console.log(channel + " 3d-i error | bot=" + botId + " customer=" + waId + ": " + (e && e.message));
     await releaseSeenKey("pipeline error");
@@ -4991,6 +4997,10 @@ async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, mem
       p_profile_name: profileName ? String(profileName) : null
     });
     result.rpc_ok = !!(rpcRes && rpcRes.ok);
+    // First inbound signal for the profile fetch: the RPC reports the
+    // conversation's message count AFTER this append, so 1 means this turn
+    // created the conversation.
+    result.firstTurn = !!(rpcRes && rpcRes.ok && rpcRes.result && rpcRes.result.final_message_count === 1);
 
     if (finalAction === "SEND_TO_INBOX_REVIEW" || finalAction === "ESCALATE_TO_HUMAN") {
       await sendToSlack(env, {
@@ -5040,6 +5050,71 @@ async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, mem
 // Returns { phoneNumberId, tokenBlob } or null. Service-role read; skips
 // deauthorized rows. Used by POST /meta/send (Stage 4).
 // ============================================================================
+// ============================================================================
+// Instagram profile fetch (first inbound only). Fetches the lead's display name
+// and username from the Graph API with the tenant token and writes them onto the
+// conversation row, so the inbox shows a name instead of a bare IGSID.
+// Best-effort BY CONTRACT: it must never fail or delay the reply pipeline. It
+// runs AFTER persist, inside the webhook's outer ctx.waitUntil chain; ctx itself
+// is deliberately not threaded through the shared core, so sequencing here is
+// the equivalent of a waitUntil and a thrown error is swallowed by the catch.
+// Zero Claude tokens. One Graph call per new lead, two only if the username
+// field errors: fields=username has a documented history of erroring on the
+// sibling (Facebook Login) path, and this fetch is how we settle empirically
+// whether Instagram Login shares that behavior, so the error body is logged in
+// full (token-safe: Graph error bodies never echo the Authorization header) and
+// the fetch retries once with fields=name alone.
+// Logs set/length flags only, never the fetched values: lead names are PII.
+async function fetchInstagramProfile(env, botId, customerId) {
+  try {
+    const creds = await getInstagramSendCreds(env, botId);
+    if (!creds || !creds.tokenBlob) { console.log("ig profile: no creds for bot " + botId + ", skipping"); return; }
+    let token;
+    try { token = await decryptToken(creds.tokenBlob, env); }
+    catch (e) { console.log("ig profile: token decrypt failed, skipping: " + (e && e.message)); return; }
+    const graphBase = env.GRAPH_BASE_URL || "https://graph.instagram.com";
+    const get = async (fields) => {
+      const r = await fetch(graphBase + "/v23.0/" + encodeURIComponent(customerId) + "?fields=" + fields, {
+        headers: { "Authorization": "Bearer " + token }
+      });
+      const j = await r.json().catch(() => ({}));
+      return { ok: r.ok, status: r.status, j };
+    };
+    let res = await get("name,username");
+    let usernameTried = true;
+    if (!res.ok) {
+      console.log("ig profile: name,username fetch failed | customer=" + customerId + " http=" + res.status +
+        " body=" + JSON.stringify(res.j).slice(0, 600));
+      res = await get("name");
+      usernameTried = false;
+      if (!res.ok) {
+        console.log("ig profile: name-only retry failed, leaving profile_name null | customer=" + customerId +
+          " http=" + res.status + " body=" + JSON.stringify(res.j).slice(0, 600));
+        return;
+      }
+    }
+    const name = res.j && res.j.name ? String(res.j.name) : null;
+    const username = usernameTried && res.j && res.j.username ? String(res.j.username) : null;
+    const profileName = name || username;
+    if (!profileName && !username) { console.log("ig profile: empty fields returned | customer=" + customerId); return; }
+    const patch = {};
+    if (profileName) patch.profile_name = profileName;
+    if (username) patch.username = username;
+    const upd = await fetch(getSupabaseUrl(env) + "/rest/v1/conversations?bot_id=eq." + encodeURIComponent(botId) +
+      "&customer_id=eq." + encodeURIComponent(customerId), {
+      method: "PATCH",
+      headers: { "apikey": env.SUPABASE_SERVICE_KEY, "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY,
+        "Content-Type": "application/json", "Prefer": "return=minimal" },
+      body: JSON.stringify(patch)
+    });
+    console.log("ig profile: " + (upd.ok ? "SET" : "PATCH failed HTTP " + upd.status) + " | customer=" + customerId +
+      " profile_name=" + (profileName ? "set(" + profileName.length + ")" : "null") +
+      " username=" + (username ? "set" : "null"));
+  } catch (e) {
+    console.log("ig profile: error (pipeline unharmed): " + (e && e.message));
+  }
+}
+
 // ============================================================================
 // Stage 5 send helpers.
 // ============================================================================
