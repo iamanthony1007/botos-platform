@@ -159,7 +159,7 @@ export default function Inbox() {
     // Compute AI progress stats
     if (progressReviews) {
       const total = progressReviews.length
-      const approved = progressReviews.filter(r => r.status === 'approved').length
+      const approved = progressReviews.filter(r => r.status === 'approved' || r.status === 'sent').length
       const approvalRate = total > 0 ? Math.round((approved / total) * 100) : 0
       const recentWithConf = progressReviews.filter(r => r.confidence != null).slice(-20)
       const avgConfidence = recentWithConf.length > 0
@@ -237,7 +237,7 @@ export default function Inbox() {
       if (r.status === 'delivery_failed') leadsMap[r.customer_id].delivery_failed_count = (leadsMap[r.customer_id].delivery_failed_count || 0) + 1
       if ((r.action_type === 'ESCALATE_TO_HUMAN' || r.action_type === 'HANDOFF_TO_SETTER') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
       // Track when the bot last sent a message (approved, edited, auto_sent)
-      const isSentByBot = r.status === 'approved' || r.status === 'edited' || r.status === 'auto_sent'
+      const isSentByBot = r.status === 'approved' || r.status === 'edited' || r.status === 'auto_sent' || r.status === 'sent'
       if (isSentByBot && r.resolved_at) {
         const prev = leadsMap[r.customer_id].last_bot_sent_at
         if (!prev || r.resolved_at > prev) leadsMap[r.customer_id].last_bot_sent_at = r.resolved_at
@@ -358,7 +358,7 @@ export default function Inbox() {
 
   function getReviewMessages(review) {
     // For sent reviews, show what was actually delivered (final), not the original draft
-    if (review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent') {
+    if (review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent' || review.status === 'sent') {
       if (Array.isArray(review.final_messages) && review.final_messages.length > 0) return review.final_messages
       if (review.final_reply) return [review.final_reply]
     }
@@ -415,6 +415,32 @@ export default function Inbox() {
     } catch (e) {
       console.error('Make webhook error:', e)
       throw e
+    }
+  }
+
+  // Stage 5: deliver an instagram_api review through the Worker's authenticated
+  // /meta/send route (official Graph API send using the tenant's stored token).
+  // The Worker owns the status flip to 'sent'; a failure leaves the review
+  // approved/edited so it stays retriable through the same route. Returns
+  // { delivered, toastMsg } and never throws (call sites sit outside try/catch).
+  async function sendViaWorker(reviewId) {
+    try {
+      const { data: sess } = await supabase.auth.getSession()
+      const jwt = sess?.session?.access_token
+      if (!jwt) return { delivered: false, toastMsg: 'Saved, but sending failed: no login session' }
+      const resp = await fetch(WORKER_URL + '/meta/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + jwt },
+        body: JSON.stringify({ review_id: reviewId })
+      })
+      const j = await resp.json().catch(() => ({}))
+      if (resp.ok && j.success) return { delivered: true, toastMsg: '' }
+      if (j.windowClosed) return { delivered: false, toastMsg: "Saved, but not sent: the lead's 24-hour reply window has closed" }
+      const last = Array.isArray(j.results) && j.results.length ? j.results[j.results.length - 1] : null
+      const reason = (last && last.error) || j.error || ('HTTP ' + resp.status)
+      return { delivered: false, toastMsg: 'Saved, but sending failed: ' + reason }
+    } catch {
+      return { delivered: false, toastMsg: 'Saved, but sending failed: network error' }
     }
   }
 
@@ -511,8 +537,16 @@ export default function Inbox() {
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
 
-    const approveDelivered = await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [], activeReview.channel)
-    if (approveDelivered) showToast('Approved - reply sent to lead', 'success')
+    if (activeReview.channel === 'instagram_api') {
+      // Stage 5: real Graph API delivery via the Worker. Toast tells the truth
+      // either way; a failed send leaves the review approved and retriable.
+      const send = await sendViaWorker(activeReview.id)
+      if (send.delivered) showToast('Approved - reply sent to lead', 'success')
+      else showToast(send.toastMsg, 'error')
+    } else {
+      const approveDelivered = await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [], activeReview.channel)
+      if (approveDelivered) showToast('Approved - reply sent to lead', 'success')
+    }
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -621,9 +655,17 @@ export default function Inbox() {
       }).eq('bot_id', botId).eq('customer_id', activeReview.customer_id)
     }
 
-    const trainDelivered = await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [], activeReview.channel)
-    setShowTrainModal(false)
-    if (trainDelivered) showToast('Edited - reply sent to lead', 'success')
+    if (activeReview.channel === 'instagram_api') {
+      // Stage 5: edited flows to sent through the same Worker route as approve.
+      const send = await sendViaWorker(activeReview.id)
+      setShowTrainModal(false)
+      if (send.delivered) showToast('Edited - reply sent to lead', 'success')
+      else showToast(send.toastMsg, 'error')
+    } else {
+      const trainDelivered = await sendToMake(activeReview.customer_id, validMessages, activeReview.typing_delays || [], activeReview.channel)
+      setShowTrainModal(false)
+      if (trainDelivered) showToast('Edited - reply sent to lead', 'success')
+    }
     setSending(false)
     setActiveReview(null)
     setReplyMessages([])
@@ -1429,7 +1471,7 @@ export default function Inbox() {
                     const review = item._review
                     const isPending = review?.status === 'pending'
                     const isActive = activeReview?.id === review?.id
-                    const isSent = review && (review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent')
+                    const isSent = review && (review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent' || review.status === 'sent')
                     const isDiscarded = review?.status === 'discarded'
                     // For sent reviews show final delivered text; for pending show draft; fallback to message content
                     const botMessages = isLead ? null
