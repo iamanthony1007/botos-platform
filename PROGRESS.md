@@ -1,3 +1,24 @@
+2026-08-17 STAGE 4 LIVE ON PRODUCTION, reconnect cycle proven end to end. main at
+5bac511 (fast-forward), Worker 443f3a57 (rollback anchor 9c1733ef), dashboard
+6b07b64d with the Inbox gate. Dormant-safe: no instagram_api row remains.
+
+RECONNECT CYCLE (one pass closed four proofs, all from the production tail + DB):
+- OAuth: row created with the 1784 form, winning source me.user_id AGAIN
+  (code_exchange.user_id and me.id both returned the wrong 2801 form a second time,
+  hardening the 2026-08-14 finding).
+- Webhook: resolved the mapping (IGSID 1556388662649415 -> Bombers bot), pipeline
+  produced conversation + review with channel=instagram_api, review_ok=true.
+- Approve on the synthetic lead: blocked path fired, review approved, zero outgoing
+  Make request (Anthony network-panel), conversation got the final text locally.
+- Multipart deauthorize VERIFIED LIVE (keyMatched=instagram_app_secret,
+  rows_updated=1, deauthorized=true, token nulled). Closes the pending re-test.
+- Data-deletion hit the BUSINESS REFUSE branch live for the first time
+  (bot_id populated, no data removed). Its row stays as the second compliance
+  record; data_deletion_requests now holds 2, both deliberately retained.
+CLEANUP: anthony_make1 row, synthetic-lead conversation + review, both KV keys
+deleted. Production counts after: conversations 6031, reviews 5951, WhatsApp row
+untouched. Staging back to 41/53/20 with 0 connected_accounts, 0 ddr.
+
 2026-08-16 PRODUCTION IS INTENTIONALLY DORMANT. NOT AN INCIDENT. Read this before
 interpreting any production silence.
 
@@ -21,7 +42,7 @@ telemetry: when data shows an abrupt stop, ASK THE OWNER before concluding incid
 Recorded so the same flatline is not re-litigated as an outage by whoever looks next.
 
 2026-08-14 STAGE 4 (Instagram reply generation + persistence) built on
-feat/stage-4-instagram-reply. NOT merged, NOT deployed to production. Staging first,
+feat/stage-4-instagram-reply. (SUPERSEDED 2026-08-17: merged + live, see top entry.) Staging first,
 no waiver: this is the first change of the session that modifies the LIVE WhatsApp
 reply pipeline rather than adding alongside it.
 
