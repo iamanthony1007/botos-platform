@@ -1510,13 +1510,21 @@ var index_default = {
               { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
           const graphBase = env.GRAPH_BASE_URL || "https://graph.instagram.com";
+          // ATOMIC SEND (review ruling 2026-08-17): all message parts join into
+          // ONE text with a blank-line separator, one Graph call. The sequential
+          // per-part loop this replaces had a partial-send hole: a failure on
+          // part 2 left part 1 already delivered while the review stayed
+          // approved/retriable, so the retry re-sent part 1 as a duplicate to
+          // the lead. One call is all-or-nothing: either the whole reply arrives
+          // or none of it does and the retry is clean.
+          const joinedText = messages.join("\n\n");
           const igResults = [];
           let igWindowClosed = false;
-          for (const msg of messages) {
+          {
             const sendResp = await fetch(`${graphBase}/v23.0/${encodeURIComponent(creds.igId)}/messages`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Authorization": `Bearer ${igToken}` },
-              body: JSON.stringify({ recipient: { id: String(review.customer_id) }, message: { text: msg } })
+              body: JSON.stringify({ recipient: { id: String(review.customer_id) }, message: { text: joinedText } })
             });
             const sendJson = await sendResp.json().catch(() => ({}));
             if (sendResp.ok && (sendJson.message_id || sendJson.id)) {
@@ -1535,10 +1543,9 @@ var index_default = {
                 " body=" + JSON.stringify(sendJson).slice(0, 800));
               igResults.push({ ok: false, code: gErr.code || null, subcode: gErr.error_subcode || null,
                 error: gErr.message || ("HTTP " + sendResp.status) });
-              break;
             }
           }
-          const igAllOk = igResults.length === messages.length && igResults.every(r => r.ok);
+          const igAllOk = igResults.length === 1 && igResults[0].ok;
           const notesBase = typeof review.internal_notes === "string" ? review.internal_notes : "";
           if (igAllOk) {
             // Awaited on purpose: the caller needs the truth, and the flip to
