@@ -1,3 +1,18 @@
+2026-08-17 STAGE 5 BUILT on feat/stage-5-instagram-send (NOT merged, NOT deployed).
+Full build report committed as docs/stage5-build-report.md (the matrix record).
+Two notes that outlive the branch:
+- /meta/send WhatsApp branch now sits BEHIND the JWT auth, deliberately. The
+  matrix case 7 "unchanged behavior" means unchanged AFTER auth: an
+  unauthenticated caller gets 401 on every channel, and with a valid dashboard
+  JWT the WhatsApp gates behave exactly as before. Nothing calls the WhatsApp
+  branch today, so no caller needed updating.
+- verifyDashboardJwt has NO TENANT SCOPING yet, deliberately: any logged-in
+  dashboard user can trigger any bot's send. That is consistent with the
+  pre-011 posture everywhere else (USING (true) policies, client-side bot_id
+  filters) and folds into the multi-tenant RLS phase: the JWT already carries the
+  user id, so the future check is JWT -> profiles row -> assigned bot. Do not
+  treat this as an oversight; it is recorded scope.
+
 2026-08-17 STAGE 4 LIVE ON PRODUCTION, reconnect cycle proven end to end. main at
 5bac511 (fast-forward), Worker 443f3a57 (rollback anchor 9c1733ef), dashboard
 6b07b64d with the Inbox gate. Dormant-safe: no instagram_api row remains.
