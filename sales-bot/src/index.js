@@ -1050,6 +1050,15 @@ var index_default = {
             igKeyMatched = "instagram_app_secret";
           } else if (env.WHATSAPP_APP_SECRET && await verifyMetaSignature(igRawBody, igSig, env.WHATSAPP_APP_SECRET)) {
             igKeyMatched = "main_app_secret";
+          } else if (env.META_TEST_SECRET && await verifyMetaSignature(igRawBody, igSig, env.META_TEST_SECRET)) {
+            // VERIFICATION-ONLY third secret, mirroring parseSignedRequestAnySecret
+            // exactly: tried LAST so it can never shadow a real secret, inert when
+            // unset (the normal, expected state), and it MUST NEVER be set outside
+            // a verification window. It exists so staging webhook events can be
+            // self-signed by the test harness: the real app secrets cannot be read
+            // back, which previously made every staging pipeline test depend on a
+            // human pasting the secret.
+            igKeyMatched = "test_secret";
           }
           if (!igKeyMatched) {
             console.log("Instagram webhook: signature FAILED (len " + igRawBody.length + ").");
