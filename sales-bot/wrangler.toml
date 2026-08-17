@@ -14,6 +14,9 @@ id = "34e52c784a4e4e40925b93b17354cbec"
 ENVIRONMENT = "production"
 SUPABASE_URL = "https://rydkwsjwlgnivlwlvqku.supabase.co"
 PUBLIC_WORKER_URL = "https://sales-bot.nellakuate.workers.dev"
+# Public RLS-gated anon key (same value the dashboard ships in its bundle).
+# Used by /meta/send to validate dashboard user JWTs against /auth/v1/user.
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ5ZGt3c2p3bGduaXZsd2x2cWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1MDA1ODEsImV4cCI6MjA5MTA3NjU4MX0.8Th4ObB8I22BgbedX8_S1CAdSlAAZ3nXk8ScA7164G4"
 INSTAGRAM_APP_ID = "3322663157905914"
 
 # Priority 3 (2026-05-12): hourly cron trigger for T+20h auto follow-up.
@@ -45,6 +48,7 @@ id = "e1bc76417c284a3ebd82758623e1d148"
 ENVIRONMENT = "staging"
 SUPABASE_URL = "https://hlpucysbaqerhwahfolg.supabase.co"
 PUBLIC_WORKER_URL = "https://sales-bot-staging.nellakuate.workers.dev"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhscHVjeXNiYXFlcmh3YWhmb2xnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5MTQ5ODgsImV4cCI6MjA5MzQ5MDk4OH0.pghFKVJ2P-lZ0CkMacRf4bGnyKCXhMkffsUDeIqtH98"
 INSTAGRAM_APP_ID = "3322663157905914"
 
 # Staging: cron handler present in code, schedule explicitly disabled.

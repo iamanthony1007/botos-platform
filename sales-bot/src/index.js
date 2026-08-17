@@ -858,7 +858,15 @@ async function runFollowUpCron(env, ctx, now) {
     }
   };
 
-  const baseUrl = `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&followed_up=eq.false&for_coach=eq.false&conversation_stage=not.eq.BOOKED&updated_at=gte.${lower}&updated_at=lte.${upper}&select=id,customer_id,username,profile_name,messages,conversation_stage&limit=200`;
+  // Channel allowlist (Stage 5): follow-ups deliver through the ManyChat Make
+  // scenario, so only ManyChat-deliverable channels may be candidates. Confirmed
+  // from production data 2026-08-17: followed_up=true splits manychat 73 /
+  // instagram 38 / tester 0, so both listed channels carry real follow-ups
+  // (tester is excluded by its own gate below). This line is what keeps
+  // instagram_api and whatsapp conversations out of a webhook that would hand
+  // their ids to ManyChat. Graph-based follow-ups for instagram_api are the
+  // deferred proper fix.
+  const baseUrl = `${getSupabaseUrl(env)}/rest/v1/conversations?bot_id=eq.${BOT_ID}&followed_up=eq.false&for_coach=eq.false&channel=in.(instagram,manychat)&conversation_stage=not.eq.BOOKED&updated_at=gte.${lower}&updated_at=lte.${upper}&select=id,customer_id,username,profile_name,messages,conversation_stage&limit=200`;
 
   let convs = [];
   try {
@@ -1425,13 +1433,20 @@ var index_default = {
       }
     }
 
-    // POST /meta/send (Stage 4). Send an APPROVED WhatsApp review's reply back to
-    // the lead via the Meta Graph API, using the bot's per-account token decrypted
-    // server-side. Body: { review_id }. Strictly separate from the Instagram Make
-    // path. Detects the 24-hour customer-service-window rejection (131047) so the
-    // dashboard can surface "window closed" rather than failing silently.
+    // POST /meta/send (Stage 4 whatsapp, Stage 5 instagram_api). Send an APPROVED
+    // or EDITED review's reply to the lead via the Meta Graph API, using the bot's
+    // per-account token decrypted server-side. Body: { review_id }. The channel
+    // comes from the review row, never from the caller. Window-closed detection is
+    // per channel: 131047/131026 for WhatsApp, code 10/subcode 2534022 for
+    // Instagram. Requires a logged-in dashboard user (Supabase JWT), validated
+    // before anything else: this route arms real tenant tokens.
     if (url.pathname === "/meta/send" && request.method === "POST") {
       try {
+        const callerUserId = await verifyDashboardJwt(env, request);
+        if (!callerUserId) {
+          return new Response(JSON.stringify({ error: "unauthorized" }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
         const body = await request.json().catch(() => ({}));
         const review_id = body && body.review_id;
         if (!review_id) {
@@ -1440,7 +1455,7 @@ var index_default = {
         }
         const rvResp = await fetch(
           `${getSupabaseUrl(env)}/rest/v1/reviews?id=eq.${encodeURIComponent(review_id)}` +
-          `&select=id,bot_id,customer_id,channel,status,final_messages,final_reply,bot_messages&limit=1`,
+          `&select=id,bot_id,customer_id,channel,status,final_messages,final_reply,bot_messages,internal_notes&limit=1`,
           { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
         );
         const rvRows = rvResp.ok ? await rvResp.json() : [];
@@ -1449,10 +1464,14 @@ var index_default = {
           return new Response(JSON.stringify({ error: "review not found" }),
             { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
-        if (review.channel !== "whatsapp") {
-          return new Response(JSON.stringify({ error: "not a whatsapp review", channel: review.channel }),
+        if (review.channel !== "whatsapp" && review.channel !== "instagram_api") {
+          return new Response(JSON.stringify({ error: "unsupported channel", channel: review.channel }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
+        // "sent" is deliberately NOT in this list: a successfully delivered
+        // instagram_api review is flipped to "sent" below, so a double-send
+        // request dies here without ever reaching the Graph. Idempotency lives
+        // in the status machine, not in a dedup table.
         if (!["approved", "edited", "auto_sent"].includes(review.status)) {
           return new Response(JSON.stringify({ error: "review not approved", status: review.status }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1466,6 +1485,97 @@ var index_default = {
           return new Response(JSON.stringify({ error: "no messages to send" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
+        if (review.channel === "instagram_api") {
+          // Stage 5: send via the official Instagram Graph API with the tenant's
+          // stored token. POST {GRAPH_BASE_URL}/v23.0/<IG_ID>/messages with
+          // {recipient:{id:<IGSID>},message:{text}} per the Instagram API with
+          // Instagram Login docs (token in the Authorization header; no
+          // messaging_type on this path). We address the EXPLICIT account id
+          // rather than /me/messages (the documented alternative) so the request
+          // is unambiguous about which connected account sends; if Meta ever
+          // rejects the id form, /me/messages with the same token is the
+          // fallback. GRAPH_BASE_URL is the local/staging mock override and is
+          // unset in production.
+          const creds = await getInstagramSendCreds(env, review.bot_id);
+          if (!creds || !creds.igId || !creds.tokenBlob) {
+            return new Response(JSON.stringify({ error: "no instagram send credentials for this bot", bot_id: review.bot_id }),
+              { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+          let igToken;
+          try {
+            igToken = await decryptToken(creds.tokenBlob, env);
+          } catch (e) {
+            console.error("meta/send: instagram token decrypt failed", e && e.message);
+            return new Response(JSON.stringify({ error: "token decrypt failed" }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+          const graphBase = env.GRAPH_BASE_URL || "https://graph.instagram.com";
+          const igResults = [];
+          let igWindowClosed = false;
+          for (const msg of messages) {
+            const sendResp = await fetch(`${graphBase}/v23.0/${encodeURIComponent(creds.igId)}/messages`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${igToken}` },
+              body: JSON.stringify({ recipient: { id: String(review.customer_id) }, message: { text: msg } })
+            });
+            const sendJson = await sendResp.json().catch(() => ({}));
+            if (sendResp.ok && (sendJson.message_id || sendJson.id)) {
+              igResults.push({ ok: true, mid: sendJson.message_id || sendJson.id });
+            } else {
+              const gErr = sendJson && sendJson.error ? sendJson.error : {};
+              // Window-closed detection keys on the community-documented pair for
+              // graph.instagram.com: code 10 / subcode 2534022 ("This message is
+              // sent outside of allowed window"). The WhatsApp branch's 131047 is
+              // a different code space; the two must not be conflated. Meta's own
+              // docs omit the code, so log the FULL error body (Graph error
+              // bodies never echo the Authorization header, so this is
+              // token-safe) and let the first real failure teach us the shape.
+              if (gErr.code === 10 || gErr.error_subcode === 2534022) igWindowClosed = true;
+              console.log("meta/send instagram error | review=" + review_id + " http=" + sendResp.status +
+                " body=" + JSON.stringify(sendJson).slice(0, 800));
+              igResults.push({ ok: false, code: gErr.code || null, subcode: gErr.error_subcode || null,
+                error: gErr.message || ("HTTP " + sendResp.status) });
+              break;
+            }
+          }
+          const igAllOk = igResults.length === messages.length && igResults.every(r => r.ok);
+          const notesBase = typeof review.internal_notes === "string" ? review.internal_notes : "";
+          if (igAllOk) {
+            // Awaited on purpose: the caller needs the truth, and the flip to
+            // "sent" is the idempotency mechanism itself. The status gate above
+            // does not accept "sent", so a re-call can never reach the Graph
+            // again. edited flows to sent the same way approved does.
+            const mids = igResults.map(r => r.mid).join(",");
+            const upd = await fetch(`${getSupabaseUrl(env)}/rest/v1/reviews?id=eq.${encodeURIComponent(review_id)}`, {
+              method: "PATCH",
+              headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+                "Content-Type": "application/json", Prefer: "return=minimal" },
+              body: JSON.stringify({ status: "sent",
+                internal_notes: (notesBase + " [sent " + new Date().toISOString() + " mid=" + mids + "]").slice(0, 4000) })
+            });
+            if (!upd.ok) console.log("meta/send: sent-status update failed HTTP " + upd.status + " review=" + review_id);
+            console.log("instagram send OK | review=" + review_id + " msgs=" + igResults.length + " mid=" + mids);
+            return new Response(JSON.stringify({ success: true, sent: igResults.length, results: igResults }),
+              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+          // Failure: the review KEEPS its approved/edited status so it stays
+          // retriable through the same route. Only the error lands in
+          // internal_notes, truncated.
+          const failNote = (notesBase + " [send failed " + new Date().toISOString() + " " +
+            JSON.stringify(igResults[igResults.length - 1]).slice(0, 300) + "]").slice(0, 4000);
+          const updFail = await fetch(`${getSupabaseUrl(env)}/rest/v1/reviews?id=eq.${encodeURIComponent(review_id)}`, {
+            method: "PATCH",
+            headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+              "Content-Type": "application/json", Prefer: "return=minimal" },
+            body: JSON.stringify({ internal_notes: failNote })
+          });
+          if (!updFail.ok) console.log("meta/send: fail-note update failed HTTP " + updFail.status + " review=" + review_id);
+          console.log("instagram send FAILED | review=" + review_id + " windowClosed=" + igWindowClosed +
+            " results=" + JSON.stringify(igResults));
+          return new Response(JSON.stringify({ success: false, windowClosed: igWindowClosed, results: igResults }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
         const rawWaId = String(review.customer_id);
         const toNumber = rawWaId.startsWith("+") ? rawWaId : "+" + rawWaId;
         const creds = await getWhatsAppSendCreds(env, review.bot_id);
@@ -4918,6 +5028,68 @@ async function persistWhatsAppTurn(env, botId, waId, profileName, userEntry, mem
 // Returns { phoneNumberId, tokenBlob } or null. Service-role read; skips
 // deauthorized rows. Used by POST /meta/send (Stage 4).
 // ============================================================================
+// ============================================================================
+// Stage 5 send helpers.
+// ============================================================================
+
+// Validates the caller's Supabase user JWT against the auth API. The dashboard
+// sends the logged-in user's session token; the Worker forwards it to
+// /auth/v1/user and only proceeds on a 200 with a user id. apikey is the ANON
+// key (public, RLS-gated, least privilege: token validation needs no elevated
+// key; the service key works as a fallback if the var is unset). Returns the
+// user id, or null for anything invalid. Never logs the JWT.
+async function verifyDashboardJwt(env, request) {
+  try {
+    const auth = request.headers.get("Authorization") || "";
+    if (!auth.startsWith("Bearer ")) return null;
+    const jwt = auth.slice(7).trim();
+    if (!jwt) return null;
+    const apikey = env.SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_KEY;
+    const resp = await fetch(`${getSupabaseUrl(env)}/auth/v1/user`, {
+      headers: { apikey: apikey, Authorization: `Bearer ${jwt}` }
+    });
+    if (!resp.ok) return null;
+    const user = await resp.json().catch(() => null);
+    return user && user.id ? user.id : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Resolve the Instagram send credentials for a bot: the connected account id
+// (the 1784 form, which is exactly what /<IG_ID>/messages wants) plus the
+// encrypted token. Mirror of getWhatsAppSendCreds below.
+// NOTE: the table's unique constraint is (platform, external_account_id), which
+// bounds rows per ACCOUNT, not per bot, so two Instagram accounts on one bot are
+// representable. order=created_at.desc makes the pick deterministic (newest
+// connect wins) and the multi-row case logs LOUDLY until a business rule exists.
+async function getInstagramSendCreds(env, botId) {
+  if (!botId) return null;
+  try {
+    const resp = await fetch(
+      `${getSupabaseUrl(env)}/rest/v1/connected_accounts?platform=eq.instagram_api` +
+      `&bot_id=eq.${encodeURIComponent(botId)}&deauthorized=eq.false` +
+      `&select=external_account_id,access_token_encrypted&order=created_at.desc&limit=2`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+    );
+    if (!resp.ok) {
+      console.log("getInstagramSendCreds: lookup failed HTTP " + resp.status);
+      return null;
+    }
+    const rows = await resp.json();
+    if (Array.isArray(rows) && rows.length > 1) {
+      console.log("getInstagramSendCreds: MULTIPLE active instagram_api rows for bot " + botId +
+        ", using the newest. One-account-per-bot needs a real business rule.");
+    }
+    const row = rows && rows[0];
+    if (!row || !row.external_account_id || !row.access_token_encrypted) return null;
+    return { igId: row.external_account_id, tokenBlob: row.access_token_encrypted };
+  } catch (e) {
+    console.log("getInstagramSendCreds: error " + (e && e.message));
+    return null;
+  }
+}
+
 async function getWhatsAppSendCreds(env, botId) {
   if (!botId) return null;
   try {
