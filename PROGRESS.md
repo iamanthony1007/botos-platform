@@ -1,4 +1,9 @@
-2026-08-17 STAGE 5 BUILT on feat/stage-5-instagram-send (NOT merged, NOT deployed).
+2026-08-17 STAGE 5 LIVE ON PRODUCTION. Merged to main (00ac5d4, fast-forward),
+Worker e651ddbe (rollback anchor 443f3a57), dashboard index-BAVoIlfJ.js. Staging
+canary verified (Stage 4 unbroken upstream), staging cleaned to 41/53/20. Bare
+/meta/send is 401 on production, GRAPH_BASE_URL absent so graph.instagram.com is
+live. The recorded production cycle (first real-token decrypt + send + screencast
+footage) is the remaining step. Stage 5 originally built as:
 Full build report committed as docs/stage5-build-report.md (the matrix record).
 Two notes that outlive the branch:
 - /meta/send WhatsApp branch now sits BEHIND the JWT auth, deliberately. The
