@@ -67,6 +67,7 @@ export default function Inbox() {
   const [conversation, setConversation] = useState(null)
   const [reviews, setReviews] = useState([])
   const [activeReview, setActiveReview] = useState(null)
+  const [retrySending, setRetrySending] = useState(null)
   const [replyMessages, setReplyMessages] = useState([])
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(() => {
@@ -237,7 +238,7 @@ export default function Inbox() {
       if (r.status === 'delivery_failed') leadsMap[r.customer_id].delivery_failed_count = (leadsMap[r.customer_id].delivery_failed_count || 0) + 1
       if ((r.action_type === 'ESCALATE_TO_HUMAN' || r.action_type === 'HANDOFF_TO_SETTER') && r.status === 'pending') leadsMap[r.customer_id].handoff_count++
       // Track when the bot last sent a message (approved, edited, auto_sent)
-      const isSentByBot = r.status === 'approved' || r.status === 'edited' || r.status === 'auto_sent' || r.status === 'sent'
+      const isSentByBot = isDelivered(r)
       if (isSentByBot && r.resolved_at) {
         const prev = leadsMap[r.customer_id].last_bot_sent_at
         if (!prev || r.resolved_at > prev) leadsMap[r.customer_id].last_bot_sent_at = r.resolved_at
@@ -442,6 +443,31 @@ export default function Inbox() {
     } catch {
       return { delivered: false, toastMsg: 'Saved, but sending failed: network error' }
     }
+  }
+
+  // Stage 5 honest delivery state. For instagram_api the Worker flips a review to
+  // 'sent' only after the Graph API accepts it, so approved/edited means
+  // approved-but-NOT-yet-delivered and must not render as sent. Legacy channels
+  // deliver via Make at approve time, so their historical statuses already mean
+  // delivered and keep their old semantics.
+  function isDelivered(review) {
+    if (!review) return false
+    if (review.channel === 'instagram_api') return review.status === 'sent'
+    return review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent' || review.status === 'sent'
+  }
+
+  // Retry/first-send affordance for instagram_api reviews stuck at approved or
+  // edited (send failed, window closed, or approvals from before the CORS fix).
+  // Same authenticated Worker route and the same truthful toasts as approve.
+  async function retrySendFor(review) {
+    if (!review || retrySending) return
+    setRetrySending(review.id)
+    const send = await sendViaWorker(review.id)
+    if (send.delivered) showToast('Reply sent to lead', 'success')
+    else showToast(send.toastMsg, 'error')
+    setRetrySending(null)
+    if (selectedLead) await loadThread(selectedLead.customer_id, botId)
+    loadData()
   }
 
   async function approve() {
@@ -1471,11 +1497,12 @@ export default function Inbox() {
                     const review = item._review
                     const isPending = review?.status === 'pending'
                     const isActive = activeReview?.id === review?.id
-                    const isSent = review && (review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent' || review.status === 'sent')
+                    const hasFinal = review && (review.status === 'approved' || review.status === 'edited' || review.status === 'auto_sent' || review.status === 'sent')
+                    const isSent = isDelivered(review)
                     const isDiscarded = review?.status === 'discarded'
                     // For sent reviews show final delivered text; for pending show draft; fallback to message content
                     const botMessages = isLead ? null
-                      : isSent ? (Array.isArray(review.final_messages) && review.final_messages.length > 0 ? review.final_messages : review.final_reply ? [review.final_reply] : (item.botMessages || [item.content]))
+                      : hasFinal ? (Array.isArray(review.final_messages) && review.final_messages.length > 0 ? review.final_messages : review.final_reply ? [review.final_reply] : (item.botMessages || [item.content]))
                       : (item.botMessages || [item.content])
                     const showMultiple = !isLead && botMessages && botMessages.length > 1
                     return (
@@ -1569,12 +1596,14 @@ export default function Inbox() {
                           {!isLead && isManual && <span style={{ fontSize: '.65rem', color: '#1a3a8f', fontWeight: 600, background: '#e8f0fe', border: '1px solid #c7d7fc', padding: '1px 6px', borderRadius: '999px' }}>{'\u270F\uFE0F'} Manual</span>}
                           {!isLead && isFollowup && <span style={{ fontSize: '.65rem', color: '#4338ca', fontWeight: 600, background: '#eef2ff', border: '1px solid #c7d2fe', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83D\uDCEC'} Auto follow-up</span>}
                           {!isLead && isFollowup && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'} Sent</span>}
-                          {!isLead && !isManual && isSent && review?.status === 'auto_sent' && <span style={{ fontSize: '.65rem', color: '#5b21b6', fontWeight: 600, background: '#ede9fe', border: '1px solid #ddd6fe', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Auto-sent</span>}
-                          {!isLead && !isManual && isSent && review?.status === 'edited' && <span style={{ fontSize: '.65rem', color: '#9a3412', fontWeight: 600, background: '#ffedd5', border: '1px solid #fed7aa', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Edited</span>}
-                          {!isLead && !isManual && isSent && review?.status === 'approved' && <span style={{ fontSize: '.65rem', color: '#15803d', fontWeight: 600, background: '#dcfce7', border: '1px solid #bbf7d0', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Approved</span>}
+                          {!isLead && !isManual && hasFinal && review?.status === 'auto_sent' && <span style={{ fontSize: '.65rem', color: '#5b21b6', fontWeight: 600, background: '#ede9fe', border: '1px solid #ddd6fe', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Auto-sent</span>}
+                          {!isLead && !isManual && hasFinal && review?.status === 'edited' && <span style={{ fontSize: '.65rem', color: '#9a3412', fontWeight: 600, background: '#ffedd5', border: '1px solid #fed7aa', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Edited</span>}
+                          {!isLead && !isManual && hasFinal && review?.status === 'approved' && <span style={{ fontSize: '.65rem', color: '#15803d', fontWeight: 600, background: '#dcfce7', border: '1px solid #bbf7d0', padding: '1px 6px', borderRadius: '999px' }}>{'\uD83E\uDD16'} AI · Approved</span>}
                           {!isLead && isManual && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'} Sent</span>}
                           {!isLead && !isManual && botMessages && botMessages.length > 1 && <span style={{ fontSize: '.65rem', color: 'var(--blu)' }}>{botMessages.length} msgs</span>}
                           {!isLead && !isManual && isSent && <span style={{ fontSize: '.65rem', color: 'var(--acc)', fontWeight: 600 }}>{'\u2713\u2713'} Sent</span>}
+                          {!isLead && !isManual && hasFinal && !isSent && review?.channel === 'instagram_api' && <span style={{ fontSize: '.65rem', color: '#b45309', fontWeight: 600, background: '#fef3c7', border: '1px solid #fde68a', padding: '1px 6px', borderRadius: '999px' }}>Not delivered</span>}
+                          {!isLead && !isManual && hasFinal && !isSent && review?.channel === 'instagram_api' && <button onClick={() => retrySendFor(review)} disabled={retrySending === review.id} style={{ fontSize: '.65rem', color: '#fff', fontWeight: 600, background: 'var(--acc)', border: 'none', padding: '2px 8px', borderRadius: '999px', cursor: retrySending === review.id ? 'wait' : 'pointer', opacity: retrySending === review.id ? .6 : 1 }}>{retrySending === review.id ? 'Sending...' : 'Send now'}</button>}
                           {!isLead && review?.status === 'discarded' && <span style={{ fontSize: '.65rem', color: 'var(--tx3)' }}>{'\u2715'} Discarded</span>}
                         </div>
                       </div>
