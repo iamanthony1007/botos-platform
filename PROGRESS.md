@@ -447,6 +447,16 @@ confirm each, rather than assuming the system resumes by itself:
 - Verify one real end-to-end message produces a review row before declaring go-live.
 
 DEFERRED, LOWER:
+- tail-supervisor.sh CRASH-LOOPS on auth failure. Found 2026-08-17 while closing
+  the recorded cycle: when wrangler cannot reach Cloudflare auth
+  (UND_ERR_CONNECT_TIMEOUT, then the non-interactive CLOUDFLARE_API_TOKEN error),
+  it exits immediately and the fixed 2-second restart fires again, producing 49
+  cycles in a few hours and hammering an API that is already failing. The 5-hour
+  timeout fixed the ZOMBIE mode correctly and the watch did capture the real
+  disconnect, so this is a second, opposite failure mode, not a regression.
+  Fix direction (not built): exponential backoff on rapid consecutive exits (e.g.
+  if the tail ran for less than 60s, sleep 2, 5, 15, 60 progressively), and stop
+  after N consecutive fast failures with a loud line rather than looping forever.
 - PARTIAL-PERSIST MODE (exposed live by the 2026-08-16 staging run, known mode, no
   build now): when the conversation RPC succeeds but the review insert fails all
   retries (rpc_ok=true review_ok=false, honestly logged by the 3d-ii PERSISTED line),
