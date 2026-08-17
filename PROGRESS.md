@@ -1,3 +1,20 @@
+2026-08-18 (later) RECORDED-CYCLE DISCONNECT LANDED, CAPTURED LIVE, CYCLE CLOSED.
+Anthony removed the grant at 12:29:47Z. Both callbacks captured in real time by the
+HARDENED tail (the zombie mode that missed the sends is dead):
+- Deauthorize, THIRD live observation: multipart parsed + verified
+  (key=instagram_app_secret), rows_updated=1, row flipped deauthorized=true,
+  token nulled.
+- Data-deletion, THIRD live observation of the business REFUSE branch: bot_id
+  populated, no data removed, new compliance row. data_deletion_requests now
+  holds 3, ALL deliberately retained.
+CYCLE CLEANUP, verified: anthony_make1 connected_accounts row, the synthetic-lead
+conversation (890461603873896) and its 2 sent reviews deleted. KV swept by PREFIX
+LISTING (the delete-loop-then-list lesson): 5 ig_seen keys + 1 memory key found,
+deleted, re-listed to ZERO. Final production counts: conversations 6031, reviews
+5951, connected_accounts 1 (the WhatsApp row only), ddr 3. Production fully
+dormant again; every path of the Meta integration now has at least one live proof,
+and the deauthorize/refuse pair has three each.
+
 2026-08-18 PROFILE FETCH LIVE ON PRODUCTION. main at e0c50cf (fast-forward),
 Worker 06c0e54d (rollback anchor 712b358e). First inbound from a new
 instagram_api lead now fetches name+username with the tenant token and writes
