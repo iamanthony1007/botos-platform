@@ -1,3 +1,102 @@
+2026-08-19 (later) CONNECT INSTAGRAM BUTTON + DEMO TENANT, on branch
+feat/connect-ui-and-demo-tenant. Built and locally verified. NOT deployed, NOT
+applied to any database yet.
+
+WHY, two problems found while filling in the App Review forms.
+  A. There was no UI anywhere to connect an Instagram account. Every connect in
+     this project was done by pasting the /meta/oauth/start URL into a browser.
+     A reviewer told to "use Connect Instagram in Settings" would hunt for a
+     button that does not exist. Clients would hit the same wall on day one, so
+     this is a product gap, not just a review gap.
+  B. meta-review@getmu.co could read 6,032 conversations, Coach Shaun's entire
+     real lead history including names and message content. The account is
+     correctly scoped in the UI, but the dashboard filters client side and
+     production RLS is still pre-011, so the scoping is presentational.
+
+WHAT IS IN THE BRANCH
+- Worker: new GET /meta/connection-status?bot_id=<uuid>. Same verifyDashboardJwt
+  gate as /meta/send. Returns exactly { connected, username, connected_at } and
+  nothing else. The PostgREST select names only account_username and created_at,
+  so access_token_encrypted and external_account_id are never on the row object
+  to leak. Mirrors getInstagramSendCreds' pick rule (platform=instagram_api,
+  deauthorized=false, newest first) so the UI describes the account the send path
+  would actually use.
+  connected_at is created_at, NOT updated_at, on purpose: the ig-refresh cron
+  PATCHes updated_at on every token rotation, so updated_at would render a
+  months-old connection as minutes old.
+- Dashboard: Instagram Connection card, first card on Settings. Shows connected
+  state plus handle plus "connected since", or a Connect Instagram button that
+  opens {WORKER_URL}/meta/oauth/start?bot_id=<assigned bot> in a new tab. New tab
+  because the OAuth success page ends with "You can close this window" and there
+  is deliberately no redirect back yet (out of scope for this branch). A Refresh
+  status button covers the manual return. Status is NOT put in DataCache: the
+  connect happens out of band in another tab, so a cached "not connected" would
+  survive the very action it is meant to reflect.
+- db/migrations/014_revoke_waitlist_authenticated.sql plus 014_rollback.sql.
+  Records the waitlist revoke Anthony ran on production out of band, so the chain
+  owns it. Costs nothing: the dashboard has no waitlist UI and the public form
+  inserts through the Pages Function on the service key, which bypasses RLS.
+- db/seeds/demo_tenant_2026-08-19.sql plus demo_tenant_teardown.sql. The "Mu AI
+  Demo" org and bot (ids ...00d0 and ...00d1), auto_send_enabled=false,
+  stage_automation={}, and the profiles repoint for the reviewer account.
+- db/prompts/demo_tenant_prompt_2026-08-19.md, md5 65e10a8a71edfd638a3ce8c67b14a08b
+  (LF). Structure-preserving genericisation of Shaun's prompt: all 17 section
+  headers byte-identical (they are load-bearing, decideRequestedSections keys off
+  them), precedence tiers, ONE THING PER MESSAGE, opt-out guardrail and
+  medical-claims guardrail all retained. Removed: Coach Shaun and Fairway
+  Performance Golf by name, the Australian/Sydney/Cayman/CrossFit/military
+  biography, the golfer ICP, every campaign keyword (BOMBER, LONGEVITY, GLUTES,
+  POWER, HIP FLOW, TPI), and BOTH live client URLs, the acuity booking link and
+  the jotform application form. Scrub verified programmatically: 0 hits on
+  shaun/fairway/golf/tpi/bomber/jotform/as.me/manychat and friends.
+
+LOCAL MATRIX, 18/18 PASS (sales-bot/test-connection-status.mjs, committed and
+re-runnable; drives the shipped handler with a mock Supabase, no real project
+touched, no credits):
+  1-3   missing / non-Bearer / invalid JWT -> 401, connected_accounts never read
+  4-5   missing and malformed bot_id -> 400, never read (case 5 feeds
+        "*&select=access_token_encrypted" as the bot_id; isValidUuid kills it)
+  6-7   no connection -> connected:false with nulls; connected -> handle + date,
+        exactly 3 keys either way
+  8-9   the outgoing query asserted verbatim: right filters, and the select names
+        ONLY account_username,created_at
+  10    deauthorized-only row -> connected:false
+  11    HOSTILE row: the mock ignores the select and hands back a token and an
+        account id anyway. Response is still 3 keys and neither sentinel appears.
+        This is the case that would catch a future refactor that spreads the row.
+  12    null handle -> connected:true, username null, no crash
+  13    Supabase 500 -> 502, generic error, no row data
+  14    POST to the route -> 404 (GET-gated), never read
+  15-16 OPTIONS preflight allows Authorization and GET; 200s carry the CORS origin
+  17    regression: POST /meta/send unauthenticated still 401
+  18    GLOBAL: 13 response bodies scanned, 0 contain token or account id
+Hygiene: node --check clean, dashboard build clean, ESLint 0 errors and the 1
+pre-existing warning only, CRLF preserved (0 lone LF in touched files), 0 em
+dashes in added lines.
+
+STILL TO DO ON THIS BRANCH: browser-context test (the 2026-08-17 CORS lesson: a
+Node matrix cannot see a preflight), staging deploy, staging 014, staging demo
+tenant. Then production, which is Anthony's pass as the reviewer account and is
+the fix verification and the screencast rehearsal at the same time.
+
+THE LIMITATION, STATED HONESTLY. Until 011 lands, the reviewer's token can still
+query other tenants directly through PostgREST. This branch removes the exposure
+from the PRODUCT SURFACE, not from the database. That is a real improvement and
+an honest partial fix. 011 remains the complete one, and the demo tenant does not
+reduce the case for it.
+
+CONSEQUENCE: the recorded screencast is now stale. It shows connecting via a
+pasted URL rather than the button, and it shows Shaun's tenant. Re-record after
+this lands. The footage improves: a real button in the product, a clean inbox,
+and a flow identical to the reviewer's.
+
+KNOWN AND DELIBERATE ON THE DEMO BOT: the Worker's keyword intent regexes
+(bomber, longevity, hipflow, 15min, speedandpower, keyword_power) are Shaun's and
+live in Worker code, so they simply never fire for the demo bot. Likewise the
+BOOKED auto-promotion keys off a form.jotform.com URL, and the demo prompt emits
+no URL at all, so BOOKED is reached by the prompt's own two-condition rule and
+not by link detection. Neither matters for a reviewer who sends two DMs.
+
 2026-08-19 META APP REVIEW ACCOUNT CREATED ON PRODUCTION. REMOVE AFTER APPROVAL.
 
   email:   meta-review@getmu.co

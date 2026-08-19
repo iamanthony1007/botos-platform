@@ -1447,6 +1447,74 @@ var index_default = {
       }
     }
 
+    // GET /meta/connection-status?bot_id=<uuid>. Powers the dashboard's Connect
+    // Instagram section: is an Instagram account live on this bot, under what
+    // handle, and since when.
+    //
+    // WHY THE ROUTE EXISTS AT ALL. The browser cannot read connected_accounts and
+    // must never be able to: 009 enables RLS on that table with no policy
+    // precisely because it holds the encrypted per-tenant token, so an anon-key
+    // dashboard session gets zero rows. That leaves the dashboard unable to
+    // answer "am I connected?" on its own. This route is the sanctioned read.
+    //
+    // NO BRANCH OF THIS ROUTE CAN RETURN TOKEN MATERIAL. The PostgREST select
+    // below names exactly account_username and created_at. access_token_encrypted
+    // and external_account_id are never selected, so they are not present on the
+    // row object to be spread, logged, or returned by accident, and the response
+    // is built field by field rather than from the row. Keep it that way: widen
+    // the select and you widen the blast radius.
+    //
+    // Same JWT gate as /meta/send, and the same recorded absence of tenant
+    // scoping (see the 2026-08-17 Stage 5 note in PROGRESS.md): any logged-in
+    // dashboard user can ask about any bot_id. That is the pre-011 posture
+    // everywhere else and folds into the same future JWT to profiles to assigned
+    // bot check. What leaks under it is a handle and a date, not tenant content.
+    if (url.pathname === "/meta/connection-status" && request.method === "GET") {
+      try {
+        const callerUserId = await verifyDashboardJwt(env, request);
+        if (!callerUserId) {
+          return new Response(JSON.stringify({ error: "unauthorized" }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const botId = url.searchParams.get("bot_id");
+        if (!isValidUuid(botId)) {
+          return new Response(JSON.stringify({ error: "Invalid or missing bot_id" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        // Mirrors getInstagramSendCreds exactly: same platform, same deauthorized
+        // filter, same newest-first order, same limit-1 pick. The UI must describe
+        // the account the send path would actually use, so if that helper's pick
+        // rule ever changes, change this with it.
+        const resp = await fetch(
+          `${getSupabaseUrl(env)}/rest/v1/connected_accounts?platform=eq.instagram_api` +
+          `&bot_id=eq.${encodeURIComponent(botId)}&deauthorized=eq.false` +
+          `&select=account_username,created_at&order=created_at.desc&limit=1`,
+          { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+        );
+        if (!resp.ok) {
+          console.log("meta/connection-status: lookup failed HTTP " + resp.status);
+          return new Response(JSON.stringify({ error: "lookup failed" }),
+            { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const rows = await resp.json().catch(() => null);
+        const row = Array.isArray(rows) && rows[0] ? rows[0] : null;
+        // created_at, not updated_at, is the honest "connected since". The
+        // ig-refresh cron PATCHes updated_at on every token rotation, so
+        // updated_at reads as "last refreshed" and would render a months-old
+        // connection as minutes old. created_at is stable for the life of the
+        // mapping (a reconnect PATCHes the existing row rather than inserting).
+        return new Response(JSON.stringify({
+          connected: !!row,
+          username: row && row.account_username ? String(row.account_username) : null,
+          connected_at: row && row.created_at ? String(row.created_at) : null
+        }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        console.log("meta/connection-status: error " + (e && e.message));
+        return new Response(JSON.stringify({ error: "connection status failed" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     // POST /meta/send (Stage 4 whatsapp, Stage 5 instagram_api). Send an APPROVED
     // or EDITED review's reply to the lead via the Meta Graph API, using the bot's
     // per-account token decrypted server-side. Body: { review_id }. The channel
