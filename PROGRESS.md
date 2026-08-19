@@ -1,3 +1,90 @@
+2026-08-19 (production) CONNECT UI + DEMO TENANT LIVE ON PRODUCTION.
+
+main at 2a00f92 (no-ff merge of feat/connect-ui-and-demo-tenant, pushed
+b8301b2..2a00f92). All 13 changed files confirmed BYTE-IDENTICAL post-merge by
+comparing blob hashes against the branch tip, not by reading the diff.
+
+DEPLOY RECORD
+- Worker production: 3754c1dc-0370-46a3-8938-d5ac2b9c9fd0.
+  ROLLBACK ANCHOR: 06c0e54d-f17e-48d1-84c8-9c0814b6ff6c (wrangler rollback).
+- Dashboard production: index-CQ08tM7m.js, deployment f26822c8.
+  ROLLBACK REFERENCE: previous bundle index--YXHRtyj.js.
+  verify-deploy [production] OK, live bundle calls createClient against
+  rydkwsjwlgnivlwlvqku, wrong-ref matches 0.
+
+PRODUCTION VERIFICATION
+- /meta/connection-status: 401 with no auth, 401 invalid bearer, 401 non-Bearer,
+  404 on POST (GET-gated). /meta/send still 401 unauthenticated (regression).
+  CORS preflight returns Content-Type, Authorization and POST, GET, OPTIONS, PATCH.
+- Demo tenant: org ...00d0 and bot ...00d1 created (neither existed before).
+  auto_send_enabled=false, stage_automation={}, target_avatar='',
+  intent_definitions / welcome_context / webhook_url all NULL.
+  Prompt md5 65e10a8a71edfd638a3ce8c67b14a08b MATCHES, 0 CR characters (LF-only,
+  matching the platform convention), 0 brand leaks across
+  shaun/fairway/golf/tpi/bomber/jotform/as.me/manychat/hipflow/glutes/longevity.
+  Demo inbox 0 conversations, 0 reviews.
+- Reviewer profile repoint, run as its own statement per the standing instruction,
+  with a SELECT of the row immediately before and immediately after:
+    BEFORE: org=null              bot=...0002 (Bombers/Shaun) perms=["inbox"]
+    AFTER : org=...00d0           bot=...00d1 (Mu AI Demo)    perms=["inbox","connections"]
+  Blast radius checked by listing every profile afterwards: exactly one row
+  changed, the other 7 still on Shaun's bot with their permissions untouched.
+
+REVIEWER-PERSPECTIVE PROOF (the fix verification, not an inference). A read-only
+session was minted for meta-review@getmu.co through the admin API (generate_link
+then verify, service key, no password handled) and the dashboard's own queries
+were replayed as that user:
+  profile      -> role=setter perms=[inbox,connections] bot=...00d1
+  bot          -> "Mu AI Demo", auto_send=false
+  THEIR INBOX  -> 0 conversations, 0 reviews
+  connected_accounts -> HTTP 200 with ZERO rows (RLS denies, grant intact, so the
+                        encrypted token stays unreachable)
+Before this change that same account read 6,032 conversations of a live client's
+lead history. It now sees an empty tenant of its own.
+
+PRODUCTION GRANTS VERIFIED, NOT ASSUMED (prompted by staging's grants being found
+silently stripped). Role 'authenticated' on production:
+  profiles, bots, conversations, reviews, learnings, bot_documents, organizations
+    -> readable, the pre-011 USING (true) posture, unchanged
+  connected_accounts     -> 200 with zero rows (RLS deny, grant intact, by design)
+  waitlist_applications  -> 403 permission denied
+  data_deletion_requests -> 403 permission denied (the 012 revoke)
+Production is healthy. Staging's stripping was staging-only and is unrelated.
+
+MIGRATION 014: ITS EFFECT IS ALREADY LIVE ON PRODUCTION (waitlist_applications
+returns 403 permission denied to authenticated, confirmed empirically above),
+because Anthony ran the revoke out of band on 2026-08-19. The migration FILE has
+NOT yet been executed against production, because a revoke is DDL and PostgREST
+cannot run it. Running it changes nothing; it is idempotent and exists so the
+chain owns the change rather than it living only as an out-of-band edit. Still
+outstanding as a bookkeeping step in the SQL editor.
+
+THE LIMITATION, UNCHANGED AND RESTATED WITH THE LIVE NUMBER. The reviewer's token
+can still query 6,032 conversations across all tenants directly through PostgREST.
+This work removed the exposure from the PRODUCT SURFACE, not from the database.
+011 remains the complete fix and this does not reduce the case for it.
+
+POST-APPROVAL ITEMS (do NOT do these while the submission is pending)
+- Register the staging OAuth callback in the Meta app. Staging's Connect button
+  builds a valid authorize URL and Instagram rejects it on redirect_uri only,
+  because the staging callback is not a registered redirect URI. Deliberate.
+- Tear down the demo tenant with db/seeds/demo_tenant_teardown.sql, then remove
+  the reviewer account. NOTE, learned on staging: deleting the auth user does NOT
+  cascade to public.profiles, so the profiles row must be deleted explicitly. The
+  teardown script already orders this correctly.
+- Re-record the screencast. It is stale: it shows connecting via a pasted URL
+  rather than the button, and it shows Shaun's tenant.
+
+STAGING ARTEFACTS LEFT IN PLACE (staging only, no production impact)
+- reviewer-sim@staging.getmu.co, auth id 66f1d464-93c5-4257-aa3d-5b423ff70a7f,
+  role setter, perms ["inbox","connections"], on the staging demo tenant.
+- Staging's 'authenticated' grants were found stripped on every table and were
+  restored by Anthony. Root cause never established; it predates this branch,
+  no migration in the chain produces it, and the last staging dashboard login
+  before today was 2026-05-28. Worth a look before staging is trusted again.
+- AuthContext.fetchProfile discards its error, which is what turned a 403 into a
+  blank screen with a spinner that never clears. Not fixed here, out of scope.
+
 2026-08-19 (later 2) CONNECT UI MOVED OUT OF SETTINGS, own permission and route.
 SUPERSEDES the placement described in the entry below (that entry says the card is
 the first card on Settings; it is not, it is its own page now).
