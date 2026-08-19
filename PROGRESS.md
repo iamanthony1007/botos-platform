@@ -1,3 +1,47 @@
+2026-08-19 META APP REVIEW ACCOUNT CREATED ON PRODUCTION. REMOVE AFTER APPROVAL.
+
+  email:   meta-review@getmu.co
+  auth id: 98b266d7-1753-48b8-9811-c51553691f8a
+  profile: role=setter, permissions=["inbox"], assigned_bot_id=00000000-0000-0000-
+           0000-000000000002 (Bombers Blueprint / Coach Shaun), organization_id null
+           (matching every other production profile; 011 is still not applied here)
+  created via the admin API with email_confirm=true, because production signup is
+  DISABLED and a reviewer cannot action a confirmation mail. The mailbox itself does
+  not exist, so there is no email password recovery: rotate in the Supabase Dashboard.
+  Password generated locally, never in chat, written to a single file OUTSIDE the
+  repo (C:UsersOrder AccountMETA_REVIEWER_PASSWORD.txt), to be deleted once it is
+  in a password manager or the Meta form.
+
+REMOVAL (do this once Meta approves):
+  DELETE from profiles where id = '98b266d7-1753-48b8-9811-c51553691f8a';
+  then delete the auth user via the Supabase Dashboard or the admin API.
+
+WHAT IT CAN ACTUALLY SEE, probed empirically by logging in as it (not assumed):
+  READABLE: conversations 6032 (all lead PII), reviews 5952, learnings 480,
+    bot_documents 3, bots 2 (BOTH tenants), organizations 2 (BOTH), profiles 8 (every
+    staff account and email). It can also UPDATE reviews, which is required for the
+    approve action Meta needs to review and is therefore intended.
+  DENIED: connected_accounts (RLS denies, so the encrypted Instagram token is NOT
+    reachable, confirmed directly), data_deletion_requests (403, the 012 revoke).
+  INCONCLUSIVE, and this is the one to act on: waitlist_applications and audit_log
+    both returned 200 with ZERO rows because those tables are currently EMPTY. They
+    are not protected. Migration 010 grants authenticated a USING (true) SELECT on
+    waitlist_applications, so the moment anyone applies at getmu.co/waitlist while
+    this account exists, the reviewer could read that applicant's name, email, revenue
+    figures and Instagram handle. The waitlist form is LIVE.
+
+THE SCOPING CAVEAT, stated plainly: the account is scoped to Coach Shaun's bot only
+in the DASHBOARD UI, which filters by bot_id client side. It is NOT scoped in the
+database, because 011 was never applied to production, so every authenticated user
+still has permissive access. Today the blast radius is small only because the second
+tenant (SuperYOU) has 0 conversations and 0 reviews. This is the same gap 011 exists
+to close and it is now a live consideration rather than a theoretical one.
+
+RECOMMENDED BEFORE HANDING THE ACCOUNT TO META (not done, needs sign-off):
+  revoke all on public.waitlist_applications from authenticated;
+  mirroring the staging containment. It costs nothing (the dashboard has no waitlist
+  UI yet) and removes the only path from this account to third-party PII.
+
 2026-08-18 (later) RECORDED-CYCLE DISCONNECT LANDED, CAPTURED LIVE, CYCLE CLOSED.
 Anthony removed the grant at 12:29:47Z. Both callbacks captured in real time by the
 HARDENED tail (the zombie mode that missed the sends is dead):
