@@ -1,0 +1,49 @@
+-- ============================================================================
+-- 014_revoke_waitlist_authenticated.sql
+-- ============================================================================
+-- Strips the `authenticated` role's table grant on waitlist_applications,
+-- mirroring what 012 already does for data_deletion_requests and what 010 did
+-- for anon on this same table.
+--
+-- WHY, and why now. 010 created this table with two permissive policies for
+-- authenticated (waitlist_authenticated_select and waitlist_authenticated_update,
+-- both USING (true)) so that Nella could work applications from the dashboard.
+-- 010's own TODO says that must not survive the first real tenant. It has not
+-- survived it: the Meta App Review account (meta-review@getmu.co, created on
+-- production 2026-08-19) is `authenticated`, so those USING (true) policies
+-- reach it. The 2026-08-19 empirical probe of that account returned HTTP 200 on
+-- waitlist_applications and read zero rows ONLY because the table is currently
+-- empty, not because anything denied it. The public waitlist form at
+-- getmu.co/waitlist is LIVE, so the first person to apply while a reviewer
+-- account exists would hand a Meta reviewer that applicant's name, email,
+-- revenue figures and Instagram handle.
+--
+-- WHAT THIS COSTS: nothing today. The dashboard has no waitlist UI. Grep for
+-- waitlist_applications across dashboard/src returns one comment reference in
+-- Waitlist.jsx and no query. The only writer is the Pages Function
+-- dashboard/functions/api/waitlist.js, which uses the SERVICE key and so
+-- bypasses RLS and table grants entirely. Public applications keep working.
+--
+-- RECORD-KEEPING NOTE: Anthony ran this statement directly against production
+-- out of band on 2026-08-19. This migration exists so the chain records it
+-- rather than it living only as an out-of-band change, and so staging gets the
+-- same containment. It is idempotent, so re-running it on production where it
+-- has already been applied is a no-op.
+--
+-- The two policies from 010 are deliberately LEFT IN PLACE. Revoking the grant
+-- is sufficient to deny (Postgres checks the table grant before the policy) and
+-- keeping the policies means restoring access later is a single GRANT rather
+-- than a policy rewrite. This is the same belt-and-braces posture 012 describes:
+-- even if a policy is added by mistake later, the role has no table-level grant
+-- to fall back on. service_role is intentionally NOT revoked, so the Worker and
+-- the Pages Function are unaffected.
+--
+-- This is NOT migration 011. It does not add tenant scoping to anything. The
+-- reviewer account's token can still query other tenants' conversations and
+-- reviews directly through PostgREST until 011 lands. This closes one specific
+-- third-party-PII path, nothing wider.
+-- ============================================================================
+
+revoke all on public.waitlist_applications from authenticated;
+
+NOTIFY pgrst, 'reload schema';

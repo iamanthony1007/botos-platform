@@ -13,6 +13,7 @@ import PromptEditor from './pages/PromptEditor'
 import Documents from './pages/Documents'
 import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
+import Connections from './pages/Connections'
 import UserManagement from './pages/UserManagement'
 import AcceptInvite from './pages/AcceptInvite'
 import ForgotPassword from './pages/ForgotPassword'
@@ -67,6 +68,7 @@ function App() {
               <Route index element={<Dashboard />} />
               <Route path="settings"  element={<PermissionRoute permission="settings_admin"><Settings /></PermissionRoute>} />
               <Route path="inbox"     element={<PermissionRoute permission="inbox"><Inbox /></PermissionRoute>} />
+              <Route path="connections" element={<PermissionRoute permission="connections"><Connections /></PermissionRoute>} />
               <Route path="tester"    element={<PermissionRoute permission="bot_tester"><Tester /></PermissionRoute>} />
               <Route path="train"     element={<PermissionRoute permission="train_bot"><TrainBot /></PermissionRoute>} />
               <Route path="learnings" element={<PermissionRoute permission="learnings"><Learnings /></PermissionRoute>} />

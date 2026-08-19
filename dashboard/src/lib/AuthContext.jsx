@@ -4,17 +4,30 @@ import { supabase } from './supabase'
 export const ALL_PERMISSIONS = [
   { key: 'inbox',            label: 'Setter Inbox',       description: 'View and make corrections in the inbox' },
   { key: 'bot_tester',      label: 'Bot Tester',         description: 'Test the bot in a chat interface' },
-  { key: 'bot_tester_edit', label: 'Bot Tester — Edit',  description: 'Edit bot replies and save learnings from Tester' },
+  { key: 'bot_tester_edit', label: 'Bot Tester (Edit)',  description: 'Edit bot replies and save learnings from Tester' },
+  // Connecting a messaging account is deliberately SEPARATE from settings_admin.
+  // Connecting or reconnecting an Instagram account is a different job from
+  // configuring automation: a setter may legitimately need to reconnect an
+  // expired token without being handed the master auto-send switch and the whole
+  // bot config. It also lets an account be scoped to "inbox plus connect", which
+  // is exactly what the Meta App Review account gets.
+  { key: 'connections',     label: 'Connections',        description: 'Connect and reconnect the Instagram account' },
   { key: 'train_bot',       label: 'Train Bot',          description: 'Access the Train Bot page' },
   { key: 'learnings',       label: 'Learnings',          description: 'View all bot learnings' },
   { key: 'prompt_editor',   label: 'Prompt Editor',      description: 'Edit the bot system prompt' },
   { key: 'documents',       label: 'Documents',          description: 'Upload and manage knowledge documents' },
   { key: 'analytics',       label: 'Analytics',          description: 'View analytics and conversation data' },
   { key: 'user_management', label: 'User Management',    description: 'Invite and manage users' },
-  { key: 'settings_admin',  label: 'Settings — Admin',   description: 'Control auto-send toggle and bot config' },
+  { key: 'settings_admin',  label: 'Settings (Admin)',   description: 'Control auto-send toggle and bot config' },
 ]
 
-export const DEFAULT_CLIENT_PERMISSIONS = ['inbox', 'bot_tester', 'analytics']
+// 'connections' added to the client default: a client who cannot connect their
+// own Instagram account cannot use the product at all on day one, which is the
+// gap this whole branch exists to close. This only pre-ticks the box on the
+// invite form, which an admin can still untick; it grants nothing retroactively.
+// Setters stay inbox-only by default and get 'connections' deliberately, per
+// account, the way the Meta App Review account does.
+export const DEFAULT_CLIENT_PERMISSIONS = ['inbox', 'bot_tester', 'analytics', 'connections']
 export const DEFAULT_SETTER_PERMISSIONS = ['inbox']
 
 export const ROLE_OPTIONS_FOR = {

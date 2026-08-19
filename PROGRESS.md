@@ -1,3 +1,179 @@
+2026-08-19 (later 2) CONNECT UI MOVED OUT OF SETTINGS, own permission and route.
+SUPERSEDES the placement described in the entry below (that entry says the card is
+the first card on Settings; it is not, it is its own page now).
+
+THE BLOCKER THIS FIXES. /dashboard/settings is gated on the settings_admin
+permission (App.jsx) and so is its sidebar link (Layout.jsx). The Meta App Review
+account has permissions ["inbox"], as specified. So the reviewer could not reach
+the Connect Instagram button AT ALL: no nav entry, and a direct URL redirect back
+to /dashboard. The button was unreachable by the exact account it was built for.
+Caught by auditing what the reviewer can actually see, not by testing as an admin.
+
+DECISION: option (b), a separate permission, not granting settings_admin.
+Anthony's reasoning, recorded verbatim in intent: granting settings_admin would
+show a Meta reviewer an auto-send toggle on a submission whose Human Agent
+justification states replies are never sent automatically. The page also carries
+per-stage automation unlocks and the whole bot config.
+
+WHAT CHANGED
+- New permission 'connections' in ALL_PERMISSIONS (AuthContext.jsx). Adding one
+  entry is the whole cost: UserManagement renders ALL_PERMISSIONS generically, so
+  the permission picker picked it up with no edit.
+- New route /dashboard/connections behind PermissionRoute permission="connections",
+  new sidebar section "Setup", new page dashboard/src/pages/Connections.jsx.
+- The Instagram Connection card MOVED there. Settings.jsx is restored byte-for-byte
+  to its pre-branch state (git checkout b8301b2), so this branch no longer touches
+  Settings at all.
+- Seed updated: reviewer permissions are ["inbox","connections"], and the profiles
+  UPDATE now carries a run note that it must be run alone with a SELECT before and
+  after, since it is the only statement touching a row the file did not create.
+- 'connections' added to DEFAULT_CLIENT_PERMISSIONS. FLAGGED FOR REVIEW: this only
+  pre-ticks the box on the invite form and grants nothing retroactively, but it is
+  a default change nobody explicitly asked for. Reasoning: a client who cannot
+  connect their own Instagram account cannot use the product on day one, which is
+  the gap this branch exists to close. Setters stay inbox-only by default.
+
+BRANDING AUDIT (asked for explicitly: does anything the reviewer sees carry Coach
+Shaun's branding). The demo bot's own fields are clean, verified against the live
+staging row: name "Mu AI Demo", target_avatar '', ai_behavior_settings all-empty,
+intent_definitions/welcome_context/webhook_url NULL, prompt md5 matches with 0
+brand hits. There is no bot avatar image concept in the dashboard at all.
+The DASHBOARD CHROME is where the branding lives:
+- FIXED HERE: Inbox lead panel hardcoded the field label "Golf Identity". Now
+  "Self Description". The KEY stays profile_facts.golf_identity because the
+  Worker's extraction schema writes that key for every bot and renaming it would
+  silently blank the field on Coach Shaun's existing rows. Label only.
+- FIXED HERE: em dashes in two ALL_PERMISSIONS labels ("Bot Tester - Edit",
+  "Settings - Admin"), now parenthesised. Standing-rule violation, user-visible.
+- NOT FIXED, deliberately out of scope, see the sweep item below.
+
+DEFERRED: WHITE-LABEL SWEEP, before the SECOND TENANT onboards, NOT before the
+Meta submission. None of the following is reachable by the reviewer account
+(each needs a permission it does not have), so none of it blocks the submission.
+All of it breaks white-label the moment Nella onboards a client who is not Coach
+Shaun:
+  1. Settings.jsx placeholders name Shaun's actual offer ("e.g. Bombers
+     Blueprint, ...") and are golf-specific throughout (offer summary,
+     qualification criteria, target avatar). Needs 'settings_admin'.
+  2. Analytics.jsx uses 'Bombers Blueprint' as BOTH the initial useState value
+     and the bot.name fallback, so it renders another tenant's client name on
+     first paint. Needs 'analytics'.
+  3. Tester.jsx is Shaun-branded throughout ("What Coach Shaun Actually Said",
+     "G'day mate. How long have you been playing golf for?"). Needs 'bot_tester'.
+  4. The Worker's profile_facts extraction schema asks EVERY bot for
+     golf_identity (sales-bot/src/index.js). Deliberately left alone in this
+     branch: it is a Worker change with a data-shape blast radius, and the label
+     fix removes the visible symptom.
+
+VERIFICATION AFTER THE MOVE: dashboard build clean, bundle carries the new route
+and card and shows 0 hits for "Golf Identity". ESLint: Layout.jsx and
+AuthContext.jsx unchanged from baseline (4 and 6 pre-existing problems), Inbox.jsx
+unchanged at 19, Settings.jsx back to its baseline 1 warning. Connections.jsx as a
+new file carries 2 errors from the react-hooks rule family that is endemic in this
+codebase (Inbox 16, AuthContext 6, Layout 3); both possible declaration orderings
+produce 2 errors of that family, so the codebase-idiomatic ordering was kept
+rather than contorting the code for a rule nothing else here satisfies. Stated
+plainly rather than reported as zero.
+
+2026-08-19 (later) CONNECT INSTAGRAM BUTTON + DEMO TENANT, on branch
+feat/connect-ui-and-demo-tenant. Built and locally verified. NOT deployed, NOT
+applied to any database yet.
+
+WHY, two problems found while filling in the App Review forms.
+  A. There was no UI anywhere to connect an Instagram account. Every connect in
+     this project was done by pasting the /meta/oauth/start URL into a browser.
+     A reviewer told to "use Connect Instagram in Settings" would hunt for a
+     button that does not exist. Clients would hit the same wall on day one, so
+     this is a product gap, not just a review gap.
+  B. meta-review@getmu.co could read 6,032 conversations, Coach Shaun's entire
+     real lead history including names and message content. The account is
+     correctly scoped in the UI, but the dashboard filters client side and
+     production RLS is still pre-011, so the scoping is presentational.
+
+WHAT IS IN THE BRANCH
+- Worker: new GET /meta/connection-status?bot_id=<uuid>. Same verifyDashboardJwt
+  gate as /meta/send. Returns exactly { connected, username, connected_at } and
+  nothing else. The PostgREST select names only account_username and created_at,
+  so access_token_encrypted and external_account_id are never on the row object
+  to leak. Mirrors getInstagramSendCreds' pick rule (platform=instagram_api,
+  deauthorized=false, newest first) so the UI describes the account the send path
+  would actually use.
+  connected_at is created_at, NOT updated_at, on purpose: the ig-refresh cron
+  PATCHes updated_at on every token rotation, so updated_at would render a
+  months-old connection as minutes old.
+- Dashboard: Instagram Connection card, first card on Settings. Shows connected
+  state plus handle plus "connected since", or a Connect Instagram button that
+  opens {WORKER_URL}/meta/oauth/start?bot_id=<assigned bot> in a new tab. New tab
+  because the OAuth success page ends with "You can close this window" and there
+  is deliberately no redirect back yet (out of scope for this branch). A Refresh
+  status button covers the manual return. Status is NOT put in DataCache: the
+  connect happens out of band in another tab, so a cached "not connected" would
+  survive the very action it is meant to reflect.
+- db/migrations/014_revoke_waitlist_authenticated.sql plus 014_rollback.sql.
+  Records the waitlist revoke Anthony ran on production out of band, so the chain
+  owns it. Costs nothing: the dashboard has no waitlist UI and the public form
+  inserts through the Pages Function on the service key, which bypasses RLS.
+- db/seeds/demo_tenant_2026-08-19.sql plus demo_tenant_teardown.sql. The "Mu AI
+  Demo" org and bot (ids ...00d0 and ...00d1), auto_send_enabled=false,
+  stage_automation={}, and the profiles repoint for the reviewer account.
+- db/prompts/demo_tenant_prompt_2026-08-19.md, md5 65e10a8a71edfd638a3ce8c67b14a08b
+  (LF). Structure-preserving genericisation of Shaun's prompt: all 17 section
+  headers byte-identical (they are load-bearing, decideRequestedSections keys off
+  them), precedence tiers, ONE THING PER MESSAGE, opt-out guardrail and
+  medical-claims guardrail all retained. Removed: Coach Shaun and Fairway
+  Performance Golf by name, the Australian/Sydney/Cayman/CrossFit/military
+  biography, the golfer ICP, every campaign keyword (BOMBER, LONGEVITY, GLUTES,
+  POWER, HIP FLOW, TPI), and BOTH live client URLs, the acuity booking link and
+  the jotform application form. Scrub verified programmatically: 0 hits on
+  shaun/fairway/golf/tpi/bomber/jotform/as.me/manychat and friends.
+
+LOCAL MATRIX, 18/18 PASS (sales-bot/test-connection-status.mjs, committed and
+re-runnable; drives the shipped handler with a mock Supabase, no real project
+touched, no credits):
+  1-3   missing / non-Bearer / invalid JWT -> 401, connected_accounts never read
+  4-5   missing and malformed bot_id -> 400, never read (case 5 feeds
+        "*&select=access_token_encrypted" as the bot_id; isValidUuid kills it)
+  6-7   no connection -> connected:false with nulls; connected -> handle + date,
+        exactly 3 keys either way
+  8-9   the outgoing query asserted verbatim: right filters, and the select names
+        ONLY account_username,created_at
+  10    deauthorized-only row -> connected:false
+  11    HOSTILE row: the mock ignores the select and hands back a token and an
+        account id anyway. Response is still 3 keys and neither sentinel appears.
+        This is the case that would catch a future refactor that spreads the row.
+  12    null handle -> connected:true, username null, no crash
+  13    Supabase 500 -> 502, generic error, no row data
+  14    POST to the route -> 404 (GET-gated), never read
+  15-16 OPTIONS preflight allows Authorization and GET; 200s carry the CORS origin
+  17    regression: POST /meta/send unauthenticated still 401
+  18    GLOBAL: 13 response bodies scanned, 0 contain token or account id
+Hygiene: node --check clean, dashboard build clean, ESLint 0 errors and the 1
+pre-existing warning only, CRLF preserved (0 lone LF in touched files), 0 em
+dashes in added lines.
+
+STILL TO DO ON THIS BRANCH: browser-context test (the 2026-08-17 CORS lesson: a
+Node matrix cannot see a preflight), staging deploy, staging 014, staging demo
+tenant. Then production, which is Anthony's pass as the reviewer account and is
+the fix verification and the screencast rehearsal at the same time.
+
+THE LIMITATION, STATED HONESTLY. Until 011 lands, the reviewer's token can still
+query other tenants directly through PostgREST. This branch removes the exposure
+from the PRODUCT SURFACE, not from the database. That is a real improvement and
+an honest partial fix. 011 remains the complete one, and the demo tenant does not
+reduce the case for it.
+
+CONSEQUENCE: the recorded screencast is now stale. It shows connecting via a
+pasted URL rather than the button, and it shows Shaun's tenant. Re-record after
+this lands. The footage improves: a real button in the product, a clean inbox,
+and a flow identical to the reviewer's.
+
+KNOWN AND DELIBERATE ON THE DEMO BOT: the Worker's keyword intent regexes
+(bomber, longevity, hipflow, 15min, speedandpower, keyword_power) are Shaun's and
+live in Worker code, so they simply never fire for the demo bot. Likewise the
+BOOKED auto-promotion keys off a form.jotform.com URL, and the demo prompt emits
+no URL at all, so BOOKED is reached by the prompt's own two-condition rule and
+not by link detection. Neither matters for a reviewer who sends two DMs.
+
 2026-08-19 META APP REVIEW ACCOUNT CREATED ON PRODUCTION. REMOVE AFTER APPROVAL.
 
   email:   meta-review@getmu.co
