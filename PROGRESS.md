@@ -1,3 +1,80 @@
+2026-08-19 (later 2) CONNECT UI MOVED OUT OF SETTINGS, own permission and route.
+SUPERSEDES the placement described in the entry below (that entry says the card is
+the first card on Settings; it is not, it is its own page now).
+
+THE BLOCKER THIS FIXES. /dashboard/settings is gated on the settings_admin
+permission (App.jsx) and so is its sidebar link (Layout.jsx). The Meta App Review
+account has permissions ["inbox"], as specified. So the reviewer could not reach
+the Connect Instagram button AT ALL: no nav entry, and a direct URL redirect back
+to /dashboard. The button was unreachable by the exact account it was built for.
+Caught by auditing what the reviewer can actually see, not by testing as an admin.
+
+DECISION: option (b), a separate permission, not granting settings_admin.
+Anthony's reasoning, recorded verbatim in intent: granting settings_admin would
+show a Meta reviewer an auto-send toggle on a submission whose Human Agent
+justification states replies are never sent automatically. The page also carries
+per-stage automation unlocks and the whole bot config.
+
+WHAT CHANGED
+- New permission 'connections' in ALL_PERMISSIONS (AuthContext.jsx). Adding one
+  entry is the whole cost: UserManagement renders ALL_PERMISSIONS generically, so
+  the permission picker picked it up with no edit.
+- New route /dashboard/connections behind PermissionRoute permission="connections",
+  new sidebar section "Setup", new page dashboard/src/pages/Connections.jsx.
+- The Instagram Connection card MOVED there. Settings.jsx is restored byte-for-byte
+  to its pre-branch state (git checkout b8301b2), so this branch no longer touches
+  Settings at all.
+- Seed updated: reviewer permissions are ["inbox","connections"], and the profiles
+  UPDATE now carries a run note that it must be run alone with a SELECT before and
+  after, since it is the only statement touching a row the file did not create.
+- 'connections' added to DEFAULT_CLIENT_PERMISSIONS. FLAGGED FOR REVIEW: this only
+  pre-ticks the box on the invite form and grants nothing retroactively, but it is
+  a default change nobody explicitly asked for. Reasoning: a client who cannot
+  connect their own Instagram account cannot use the product on day one, which is
+  the gap this branch exists to close. Setters stay inbox-only by default.
+
+BRANDING AUDIT (asked for explicitly: does anything the reviewer sees carry Coach
+Shaun's branding). The demo bot's own fields are clean, verified against the live
+staging row: name "Mu AI Demo", target_avatar '', ai_behavior_settings all-empty,
+intent_definitions/welcome_context/webhook_url NULL, prompt md5 matches with 0
+brand hits. There is no bot avatar image concept in the dashboard at all.
+The DASHBOARD CHROME is where the branding lives:
+- FIXED HERE: Inbox lead panel hardcoded the field label "Golf Identity". Now
+  "Self Description". The KEY stays profile_facts.golf_identity because the
+  Worker's extraction schema writes that key for every bot and renaming it would
+  silently blank the field on Coach Shaun's existing rows. Label only.
+- FIXED HERE: em dashes in two ALL_PERMISSIONS labels ("Bot Tester - Edit",
+  "Settings - Admin"), now parenthesised. Standing-rule violation, user-visible.
+- NOT FIXED, deliberately out of scope, see the sweep item below.
+
+DEFERRED: WHITE-LABEL SWEEP, before the SECOND TENANT onboards, NOT before the
+Meta submission. None of the following is reachable by the reviewer account
+(each needs a permission it does not have), so none of it blocks the submission.
+All of it breaks white-label the moment Nella onboards a client who is not Coach
+Shaun:
+  1. Settings.jsx placeholders name Shaun's actual offer ("e.g. Bombers
+     Blueprint, ...") and are golf-specific throughout (offer summary,
+     qualification criteria, target avatar). Needs 'settings_admin'.
+  2. Analytics.jsx uses 'Bombers Blueprint' as BOTH the initial useState value
+     and the bot.name fallback, so it renders another tenant's client name on
+     first paint. Needs 'analytics'.
+  3. Tester.jsx is Shaun-branded throughout ("What Coach Shaun Actually Said",
+     "G'day mate. How long have you been playing golf for?"). Needs 'bot_tester'.
+  4. The Worker's profile_facts extraction schema asks EVERY bot for
+     golf_identity (sales-bot/src/index.js). Deliberately left alone in this
+     branch: it is a Worker change with a data-shape blast radius, and the label
+     fix removes the visible symptom.
+
+VERIFICATION AFTER THE MOVE: dashboard build clean, bundle carries the new route
+and card and shows 0 hits for "Golf Identity". ESLint: Layout.jsx and
+AuthContext.jsx unchanged from baseline (4 and 6 pre-existing problems), Inbox.jsx
+unchanged at 19, Settings.jsx back to its baseline 1 warning. Connections.jsx as a
+new file carries 2 errors from the react-hooks rule family that is endemic in this
+codebase (Inbox 16, AuthContext 6, Layout 3); both possible declaration orderings
+produce 2 errors of that family, so the codebase-idiomatic ordering was kept
+rather than contorting the code for a rule nothing else here satisfies. Stated
+plainly rather than reported as zero.
+
 2026-08-19 (later) CONNECT INSTAGRAM BUTTON + DEMO TENANT, on branch
 feat/connect-ui-and-demo-tenant. Built and locally verified. NOT deployed, NOT
 applied to any database yet.

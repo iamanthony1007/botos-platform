@@ -1851,7 +1851,12 @@ export default function Inbox() {
                     { label: 'Stage', value: selectedLead.conversation_stage },
                     { label: 'Channel', value: selectedLead.channel },
                     { label: 'Last Interaction', value: selectedLead.last_activity ? timeAgo(selectedLead.last_activity) : '—' },
-                    { label: 'Golf Identity', value: selectedLead.profile_facts?.golf_identity },
+                    // Label genericised 2026-08-19 for white-label. The KEY stays
+                    // profile_facts.golf_identity because the Worker's extraction
+                    // schema writes that key for every bot; renaming it here
+                    // would silently blank the field for Coach Shaun's existing
+                    // rows. Only the human-visible label changed.
+                    { label: 'Self Description', value: selectedLead.profile_facts?.golf_identity },
                     { label: 'Timeframe', value: selectedLead.profile_facts?.timeframe },
                     { label: "What They've Tried", value: selectedLead.profile_facts?.what_theyve_tried },
                     { label: 'Current Approach', value: selectedLead.profile_facts?.current_approach_working },

@@ -356,16 +356,30 @@ on conflict (id) do update set
 -- 3) Repoint the Meta App Review account at the demo tenant.
 --
 -- PRODUCTION ONLY: this auth user exists on production and not on staging, so
--- on staging this statement matches zero rows and is a harmless no-op. Role stays
--- setter and permissions stay ["inbox"], which is what the reviewer needs to see
--- the inbox and approve a reply, and nothing more. organization_id is set here
--- even though every other production profile has it null, because the demo
--- tenant is the one place we want the association recorded explicitly.
+-- on staging this statement matches zero rows and is a harmless no-op.
+--
+-- PERMISSIONS ARE ["inbox","connections"], NOT ["inbox"]. The original plan said
+-- ["inbox"], but /dashboard/settings is gated on settings_admin and so is its nav
+-- link, so an inbox-only reviewer could not reach the Connect Instagram button at
+-- all: the nav entry is absent and a direct URL redirects to /dashboard. The fix
+-- is NOT to grant settings_admin. That page carries the master auto-send toggle,
+-- and showing an auto-send toggle to a reviewer whose submission states replies
+-- are never sent automatically undercuts the Human Agent justification. So the
+-- card moved to its own /dashboard/connections route behind its own permission,
+-- and the reviewer gets exactly inbox plus connect.
+--
+-- organization_id is set here even though every other production profile has it
+-- null, because the demo tenant is the one place we want it recorded explicitly.
+--
+-- PRODUCTION RUN NOTE (Anthony, 2026-08-19): run this statement on its own with a
+-- SELECT of the row immediately before and immediately after. It repoints a LIVE
+-- auth user's profile and is the only statement in this file that touches a row
+-- this file did not create.
 update public.profiles
 set organization_id = '00000000-0000-0000-0000-0000000000d0',
     assigned_bot_id = '00000000-0000-0000-0000-0000000000d1',
     role            = 'setter',
-    permissions     = '["inbox"]'::jsonb
+    permissions     = '["inbox","connections"]'::jsonb
 where id = '98b266d7-1753-48b8-9811-c51553691f8a';
 
 commit;
