@@ -1,3 +1,29 @@
+2026-08-22 (later) HOMEPAGE BRANCH SPLIT, GATE REVISED TO NELLA'S SIGN-OFF.
+
+Ruling revised on new information: Nella needs the homepage live for lead
+generation and is still adding sections. So:
+- feat/homepage-restructure (tip 33b6328) now carries ONLY the landing rebuild,
+  MarketingSections and marketingCopy, PublicHeader, usePublicScroll plus its
+  index.css rules, HowItWorks, the App.jsx lazy split, and the verify-deploy
+  chunk-graph fix. Its PRODUCTION GATE IS NOW NELLA'S SIGN-OFF ON THE STAGING
+  PREVIEW, no longer Meta approval.
+- The auth-page restyles (Login, Waitlist, ForgotPassword, ResetPassword) moved
+  to feat/auth-restyle (tip bccf9b7), which KEEPS THE META-APPROVAL GATE with the
+  original reasoning: those are the screens the reviewer signs in through. It
+  branches off feat/homepage-restructure because the restyles depend on
+  PublicHeader and usePublicScroll; land the homepage first.
+- Split verified by blob hash: the four auth pages on the homepage branch are
+  byte-identical to main (8d8f4470, cd49999a, 3695b77b, 73a60849); the restyled
+  copies on feat/auth-restyle are byte-identical to the feat/how-it-works tip.
+- Homepage branch redeployed to staging (26328761, entry index-Dn_T0J5E.js),
+  verify-deploy OK across 15 files. Browser-checked: landing renders hero,
+  5-step strip, 2-card comparison, copyright line, nothing after; login page is
+  main's (no sticky header, no public-scroll). Zero console errors.
+- NEW STANDING RULE APPLIED: the deploy report was committed as
+  docs/homepage-staging-report.md on the branch BEFORE anything was pasted in
+  chat. Future deploy reports follow the same order.
+- Preview link for Nella: https://botos-platform-staging.pages.dev
+
 2026-08-22 LANDING PAGE: LEARN MORE FIXED ON PRODUCTION, HOMEPAGE RESTRUCTURE
 ON STAGING FOR NELLA.
 
