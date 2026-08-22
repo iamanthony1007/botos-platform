@@ -2,6 +2,8 @@ import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PublicHeader from '../components/PublicHeader'
 import { usePublicScroll } from '../lib/usePublicScroll'
+import { LearnComparison } from '../components/MarketingSections'
+import { FLOW_STEPS } from '../lib/marketingCopy'
 
 const GOLD = 'var(--acc)'
 const INK = '#18160E'
@@ -22,13 +24,7 @@ const STAGES = [
   ['FOLLOW-UP', 'No reply yet? Re-engage later without nagging.']
 ]
 
-const CAPTIONS = [
-  'A lead sends the first DM.',
-  'MU AI drafts a reply in seconds and holds it for review.',
-  'Your setter approves it. A human stays in the loop.',
-  'The reply sends.',
-  'No reply after 20 hours, so MU AI follows up on its own.'
-]
+const CAPTIONS = FLOW_STEPS
 
 // The longest caption reserves the caption block height so the card does not
 // change height between stages at any viewport width.
@@ -326,40 +322,8 @@ export default function HowItWorks() {
         <DmThread />
       </div>
 
-      {/* Section 4: How it learns, one concrete before and after */}
-      <div className="hiw-section">
-        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-          <div className="hiw-eyebrow" style={{ marginBottom: '12px' }}>How it learns</div>
-          <h2 className="hiw-h2">Correct it once. It remembers.</h2>
-        </div>
-        <div className="hiw-learn">
-          <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', padding: '22px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--red)', marginBottom: '14px' }}>Got it wrong</div>
-            <div style={{ fontSize: '13px', color: 'var(--tx3)', marginBottom: '6px' }}>Lead</div>
-            <div style={{ background: '#F7F6F1', borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: DARK, lineHeight: 1.5, marginBottom: '12px' }}>
-              Do you guarantee results?
-            </div>
-            <div style={{ fontSize: '13px', color: 'var(--tx3)', marginBottom: '6px' }}>Old reply</div>
-            <div style={{ background: 'var(--redbg)', border: '1px solid var(--redbd)', borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: '#7A2E28', lineHeight: 1.5 }}>
-              Absolutely, you will see results in 30 days, guaranteed.
-            </div>
-          </div>
-          <div style={{ background: '#fff', border: '1px solid var(--bdr)', borderRadius: 'var(--rlg)', padding: '22px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: '#2E7D46', marginBottom: '14px' }}>Answered like the coach</div>
-            <div style={{ fontSize: '13px', color: 'var(--tx3)', marginBottom: '6px' }}>Lead</div>
-            <div style={{ background: '#F7F6F1', borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: DARK, lineHeight: 1.5, marginBottom: '12px' }}>
-              Do you guarantee results?
-            </div>
-            <div style={{ fontSize: '13px', color: 'var(--tx3)', marginBottom: '6px' }}>New reply</div>
-            <div style={{ background: DARK, borderRadius: '12px', padding: '10px 14px', fontSize: '14px', color: '#fff', lineHeight: 1.5 }}>
-              I cannot promise a number, that depends on the work you put in. What I can promise is a plan built around your swing and honest feedback every week.
-            </div>
-          </div>
-        </div>
-        <p style={{ textAlign: 'center', fontSize: '14px', color: 'var(--tx2)', lineHeight: 1.6, maxWidth: '620px', margin: '22px auto 0' }}>
-          A setter corrected this once. MU AI saved the correction and now handles the same question the coach's way on later conversations.
-        </p>
-      </div>
+      {/* Section 4: the shared Without/With comparison (components/MarketingSections) */}
+      <LearnComparison />
 
       {/* Section 5: How it qualifies, the real pipeline */}
       <div className="hiw-section">
