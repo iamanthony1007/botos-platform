@@ -1,3 +1,72 @@
+2026-08-22 LANDING PAGE: LEARN MORE FIXED ON PRODUCTION, HOMEPAGE RESTRUCTURE
+ON STAGING FOR NELLA.
+
+THE INVESTIGATION (Nella reported Learn More on getmu.co dropping visitors at
+the login screen). The assumed mechanism, SPA fallback plus auth guard, was
+WRONG: unknown paths hit the * catch-all and go to /, never login. The real
+cause: main's Landing.jsx had ALL THREE buttons, including Learn More, hardcoded
+to navigate('/login'). The marketing page Learn More was meant to reach exists,
+finished, on branch feat/how-it-works (5 commits, 2026-08-07/08), which was
+never merged and until today never pushed. It is now on origin.
+
+SHIPPED TO PRODUCTION (B-plus, per Nella's own three-screenshot layout):
+- fix/landing-cta-waitlist, merge 296bc3e on main. No Learn More anywhere;
+  header and hero lead with Join the Waitlist (/waitlist), Log in secondary
+  (/login). Both targets verified as live routes.
+- Staging bundle index-6mtpbsmI.js verified, then production index-DqhtGDBb.js,
+  live on getmu.co, checked in the served bundle: Join the Waitlist 2,
+  Learn More 0, Get Started 0. Nella's reported break is closed.
+
+ON STAGING FOR HER REVIEW (feat/homepage-restructure, tip 5eacf7d, staging
+deploy 1b95d5f9 / bundle index-CyzyioCO.js):
+- Merged feat/how-it-works (lazy-loading split, PublicHeader, usePublicScroll,
+  the HowItWorks page). Conflicts: App.jsx (kept the branch's lazy shape,
+  re-added the Connections lazy import and route from 2a00f92) and Landing.jsx
+  (kept the B-plus version as the rebuild base).
+- Landing rebuilt to her layout: existing hero (gradient and rays now scoped to
+  the hero wrapper), then the five-step flow strip, then the Without/With
+  comparison. Sections extracted to components/MarketingSections.jsx and
+  lib/marketingCopy.js; HowItWorks imports the SAME LearnComparison and
+  FLOW_STEPS, so the pages cannot drift. All copy verbatim from the shipped
+  HowItWorks sections, nothing new invented.
+- BELOW THE COMPARISON THE PAGE STOPS at the pre-existing copyright line,
+  deliberately: Anthony is asking Nella what closes the page. Do not invent a
+  footer before her answer arrives. Commented in Landing.jsx.
+- Browser-checked on staging: renders in order, document scrolls
+  (public-scroll active), ends at the copyright line, four buttons as designed,
+  zero console errors. Every navigate target on every public page resolves to a
+  registered route.
+- Measured side effect of the lazy split: public entry bundle 1,149 kB down to
+  286 kB (gzip 301 kB down to 87 kB).
+
+DEPLOY-CHAIN FIX THAT FELL OUT: scripts/verify-deploy.mjs checked only
+index-*.js, and the lazy split moved createClient into the shared AuthContext
+chunk, so the verifier FAILED a correct staging deploy. It now discovers and
+scans the full chunk graph (entry plus every referenced assets/*-<hash>.js),
+logging which file carries each ref. Verified against the split staging deploy
+(15 files, expected ref 1 in AuthContext-d77slxN6.js, wrong 0) and against the
+pre-split production monolith (regression, passes). Without this fix, EVERY
+future deploy of the restructure would fail its own gate.
+
+PROPOSED, NOT DECIDED: what happens to /how-it-works. Nothing links to it any
+more (the landing absorbed its headline sections). Options, in preference
+order: (a) keep it live unlinked while Nella iterates, zero risk, revisit at
+her sign-off; (b) redirect /how-it-works to / so old shares and bookmarks land
+on the new homepage; (c) keep it linked from somewhere as the long-form page
+(it still has the interactive DM walkthrough, video, 10-stage grid, and
+platform tour that the homepage does not). Anthony picks, ideally with Nella's
+footer answer.
+
+GATES AND PENDING:
+- Production for the restructure stays gated on Meta approval (it restyles the
+  login and waitlist pages the reviewer sees; reasoning recorded 2026-08-19).
+- Nella's footer answer closes the page; her staging iteration may rename the
+  strip and comparison headers (they are props on the shared components).
+- Anthony sends her https://botos-platform-staging.pages.dev for iteration.
+- Screenshots of her layout are still to be forwarded; the build maps her
+  described order onto the existing HowItWorks components, so expect copy or
+  header tweaks, not structural ones, when they arrive.
+
 2026-08-19 (production) CONNECT UI + DEMO TENANT LIVE ON PRODUCTION.
 
 main at 2a00f92 (no-ff merge of feat/connect-ui-and-demo-tenant, pushed
