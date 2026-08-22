@@ -47,13 +47,23 @@ export default function Landing() {
         padding: '18px 48px', position: 'relative', zIndex: 2
       }}>
         <img src={LOGO_HORIZONTAL} alt="MU AI" style={{ height: '100px', width: 'auto' }} />
-        <button onClick={() => navigate('/login')} style={{
-          background: '#D4AF37', color: '#1A1A1A', border: 'none',
-          padding: '10px 24px', borderRadius: '8px', fontSize: '14px',
-          fontWeight: 700, cursor: 'pointer', fontFamily: "'Inter', sans-serif"
-        }}>
-          Get Started
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+          <button onClick={() => navigate('/login')} style={{
+            background: 'none', color: '#1A1A1A', border: 'none',
+            padding: '10px 6px', fontSize: '14px', fontWeight: 600,
+            cursor: 'pointer', fontFamily: "'Inter', sans-serif",
+            textDecoration: 'underline', textUnderlineOffset: '3px'
+          }}>
+            Log in
+          </button>
+          <button onClick={() => navigate('/waitlist')} style={{
+            background: '#D4AF37', color: '#1A1A1A', border: 'none',
+            padding: '10px 24px', borderRadius: '8px', fontSize: '14px',
+            fontWeight: 700, cursor: 'pointer', fontFamily: "'Inter', sans-serif"
+          }}>
+            Join the Waitlist
+          </button>
+        </div>
       </div>
 
       {/* Hero */}
@@ -87,22 +97,26 @@ export default function Landing() {
           MU AI delivers fast, precise, and adaptive AI systems built for the future.
         </p>
 
-        <div style={{ display: 'flex', gap: '14px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => navigate('/login')} style={{
+        {/* Nella's layout (2026-08-22): no Learn More anywhere. Header and hero
+            both lead with Join the Waitlist, with log-in as the secondary. The
+            old Learn More sent visitors to /login, which read as broken. */}
+        <div style={{ display: 'flex', gap: '18px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => navigate('/waitlist')} style={{
             background: '#D4AF37', color: '#1A1A1A', border: 'none',
             padding: '15px 36px', borderRadius: '10px', fontSize: '16px',
             fontWeight: 700, cursor: 'pointer',
             boxShadow: '0 4px 20px rgba(160,110,0,0.25)',
             fontFamily: "'Inter', sans-serif"
           }}>
-            Get Started
+            Join the Waitlist
           </button>
           <button onClick={() => navigate('/login')} style={{
-            background: '#1A1A1A', color: '#fff', border: 'none',
-            padding: '15px 36px', borderRadius: '10px', fontSize: '16px',
-            fontWeight: 600, cursor: 'pointer', fontFamily: "'Inter', sans-serif"
+            background: 'none', color: '#1A1A1A', border: 'none',
+            padding: '15px 6px', fontSize: '15px', fontWeight: 600,
+            cursor: 'pointer', fontFamily: "'Inter', sans-serif",
+            textDecoration: 'underline', textUnderlineOffset: '3px'
           }}>
-            Learn More
+            Log in
           </button>
         </div>
       </div>
