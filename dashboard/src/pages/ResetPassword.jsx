@@ -1,20 +1,22 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { usePublicScroll } from '../lib/usePublicScroll'
 
 const LOGO_STACKED = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20horizontal.png'
 
 const WRAP = {
   minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-  background: '#F5F5F0', padding: '20px', fontFamily: "'Inter', sans-serif"
+  background: 'var(--bg)', padding: '20px', fontFamily: "'Inter', sans-serif"
 }
 const CARD = {
-  background: '#fff', borderRadius: '16px', padding: '32px',
-  boxShadow: '0 4px 24px rgba(0,0,0,.07)', border: '1px solid #E8E6DE'
+  background: '#fff', borderRadius: 'var(--rlg)', padding: '32px',
+  boxShadow: 'var(--shm)', border: '1px solid var(--bdr)'
 }
 
 export default function ResetPassword() {
   const navigate = useNavigate()
+  usePublicScroll()
   const [checking, setChecking] = useState(true)
   const [ready, setReady] = useState(false)
   const [password, setPassword] = useState('')
@@ -78,7 +80,7 @@ export default function ResetPassword() {
           <img src={LOGO_STACKED} alt="MU AI"
             style={{ width: '200px', height: 'auto', display: 'block', margin: '0 auto 10px' }} />
           <div style={{
-            fontSize: '.78rem', color: '#9A9A8A', letterSpacing: '.12em',
+            fontSize: '.78rem', color: 'var(--tx3)', letterSpacing: '.12em',
             textTransform: 'uppercase', fontWeight: 500
           }}>
             Intelligence in Motion
@@ -87,24 +89,24 @@ export default function ResetPassword() {
 
         <div style={CARD}>
           {checking ? (
-            <div style={{ fontSize: '.85rem', color: '#9A9A8A' }}>Checking your link...</div>
+            <div style={{ fontSize: '.85rem', color: 'var(--tx3)' }}>Checking your link...</div>
 
           ) : done ? (
             <div>
-              <div style={{ fontSize: '1.15rem', fontWeight: 600, color: '#1A1A1A', marginBottom: '8px' }}>
+              <div style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--tx)', marginBottom: '8px' }}>
                 Password updated
               </div>
-              <div style={{ fontSize: '.85rem', color: '#6A6A5A', lineHeight: 1.6 }}>
+              <div style={{ fontSize: '.85rem', color: 'var(--tx2)', lineHeight: 1.6 }}>
                 Taking you to sign in...
               </div>
             </div>
 
           ) : !ready ? (
             <div>
-              <div style={{ fontSize: '1.15rem', fontWeight: 600, color: '#1A1A1A', marginBottom: '8px' }}>
+              <div style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--tx)', marginBottom: '8px' }}>
                 Link expired
               </div>
-              <div style={{ fontSize: '.85rem', color: '#6A6A5A', lineHeight: 1.6, marginBottom: '20px' }}>
+              <div style={{ fontSize: '.85rem', color: 'var(--tx2)', lineHeight: 1.6, marginBottom: '20px' }}>
                 This reset link is no longer valid. Links expire after 1 hour and can only be
                 used once.
               </div>
@@ -116,10 +118,10 @@ export default function ResetPassword() {
           ) : (
             <>
               <div style={{ marginBottom: '22px' }}>
-                <div style={{ fontSize: '1.15rem', fontWeight: 600, color: '#1A1A1A', marginBottom: '4px' }}>
+                <div style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--tx)', marginBottom: '4px' }}>
                   Set a new password
                 </div>
-                <div style={{ fontSize: '.82rem', color: '#9A9A8A' }}>
+                <div style={{ fontSize: '.82rem', color: 'var(--tx3)' }}>
                   At least 8 characters
                 </div>
               </div>
@@ -142,11 +144,11 @@ export default function ResetPassword() {
                 </div>
 
                 {error && (
-                  <div style={{ fontSize: '.8rem', color: '#C0392B' }}>{error}</div>
+                  <div style={{ fontSize: '.8rem', color: 'var(--red)' }}>{error}</div>
                 )}
 
                 <button type="submit" disabled={loading} style={{
-                  background: '#D4AF37', color: '#1A1A1A', border: 'none', borderRadius: '8px',
+                  background: 'var(--acc)', color: 'var(--tx)', border: 'none', borderRadius: '8px',
                   padding: '12px', fontSize: '.9rem', fontWeight: 600,
                   cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.7 : 1,
                   boxShadow: '0 2px 10px rgba(212,175,55,.25)', transition: 'all .15s', marginTop: '4px'
