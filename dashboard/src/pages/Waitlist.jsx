@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { usePublicScroll } from '../lib/usePublicScroll'
 
 const LOGO_STACKED = 'https://rydkwsjwlgnivlwlvqku.supabase.co/storage/v1/object/public/assets/Logo%20horizontal.png'
 const TURNSTILE_SITE_KEY = '0x4AAAAAAEIrdNtHqz3JxYx8'
@@ -39,14 +38,13 @@ const EMPTY = {
 function optionRowStyle(selected) {
   return {
     display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px',
-    border: `1.5px solid ${selected ? 'var(--acc)' : 'var(--bdr)'}`,
+    border: `1.5px solid ${selected ? '#D4AF37' : '#E8E6DE'}`,
     borderRadius: '8px', cursor: 'pointer', fontSize: '.85rem', color: '#3A3A2A',
     background: selected ? '#FBF7EA' : '#fff', transition: 'all .12s'
   }
 }
 
 export default function Waitlist() {
-  usePublicScroll()
   const [step, setStep] = useState(1)
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState('')
@@ -220,7 +218,7 @@ export default function Waitlist() {
                 <input
                   type="radio" name={field} value={opt} checked={selected}
                   onChange={() => set(field, opt)}
-                  style={{ accentColor: 'var(--acc)', margin: 0 }}
+                  style={{ accentColor: '#D4AF37', margin: 0 }}
                 />
                 <span>{opt}</span>
               </label>
@@ -266,7 +264,7 @@ export default function Waitlist() {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-      background: 'var(--bg)', padding: '40px 20px', fontFamily: "'Inter', sans-serif"
+      background: '#F5F5F0', padding: '40px 20px', fontFamily: "'Inter', sans-serif"
     }}>
       <div style={{ width: '100%', maxWidth: '480px' }}>
 
@@ -274,7 +272,7 @@ export default function Waitlist() {
           <img src={LOGO_STACKED} alt="MU AI"
             style={{ width: '200px', height: 'auto', display: 'block', margin: '0 auto 10px' }} />
           <div style={{
-            fontSize: '.78rem', color: 'var(--tx3)', letterSpacing: '.12em',
+            fontSize: '.78rem', color: '#9A9A8A', letterSpacing: '.12em',
             textTransform: 'uppercase', fontWeight: 500
           }}>
             Intelligence in Motion
@@ -282,21 +280,21 @@ export default function Waitlist() {
         </div>
 
         <div style={{
-          background: '#fff', borderRadius: 'var(--rlg)', padding: '32px',
-          boxShadow: 'var(--shm)', border: '1px solid var(--bdr)'
+          background: '#fff', borderRadius: '16px', padding: '32px',
+          boxShadow: '0 4px 24px rgba(0,0,0,.07)', border: '1px solid #E8E6DE'
         }}>
           {submitted ? (
             <div>
-              <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--tx)', marginBottom: '10px' }}>
+              <div style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1A1A1A', marginBottom: '10px' }}>
                 You're on the list
               </div>
-              <div style={{ fontSize: '.88rem', color: 'var(--tx2)', lineHeight: 1.65, marginBottom: '22px' }}>
+              <div style={{ fontSize: '.88rem', color: '#6A6A5A', lineHeight: 1.65, marginBottom: '22px' }}>
                 We have your application. Nella reviews every one personally and will be in
                 touch at {form.email || 'the email you provided'} if it's a fit. Keep an eye on
                 your inbox.
               </div>
               <Link to="/" style={{
-                display: 'inline-block', background: 'var(--acc)', color: 'var(--tx)',
+                display: 'inline-block', background: '#D4AF37', color: '#1A1A1A',
                 textDecoration: 'none', borderRadius: '10px', padding: '12px 22px',
                 fontSize: '.88rem', fontWeight: 700, letterSpacing: '.02em',
                 boxShadow: '0 2px 10px rgba(212,175,55,.25)'
@@ -307,10 +305,10 @@ export default function Waitlist() {
           ) : (
             <>
               <div style={{ marginBottom: '20px' }}>
-                <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--tx)', marginBottom: '4px' }}>
+                <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1A1A1A', marginBottom: '4px' }}>
                   Apply for early access
                 </div>
-                <div style={{ fontSize: '.82rem', color: 'var(--tx3)' }}>
+                <div style={{ fontSize: '.82rem', color: '#9A9A8A' }}>
                   {step === 1 && 'About you'}
                   {step === 2 && 'Your business'}
                   {step === 3 && 'Your setup'}
@@ -323,7 +321,7 @@ export default function Waitlist() {
                   {[1, 2, 3].map(n => (
                     <div key={n} style={{
                       flex: 1, height: '4px', borderRadius: '2px',
-                      background: n <= step ? 'var(--acc)' : 'var(--bdr)', transition: 'background .2s'
+                      background: n <= step ? '#D4AF37' : '#E8E6DE', transition: 'background .2s'
                     }} />
                   ))}
                 </div>
@@ -378,7 +376,7 @@ export default function Waitlist() {
                               <input
                                 type="checkbox" checked={selected}
                                 onChange={() => toggleBottleneck(opt)}
-                                style={{ accentColor: 'var(--acc)', margin: 0 }}
+                                style={{ accentColor: '#D4AF37', margin: 0 }}
                               />
                               <span>{opt}</span>
                             </label>
@@ -406,7 +404,7 @@ export default function Waitlist() {
 
                 {error && (
                   <div style={{
-                    background: 'var(--redbg)', border: '1px solid var(--redbd)', color: 'var(--red)',
+                    background: '#FDF0EE', border: '1px solid #F5C6C0', color: '#C0392B',
                     padding: '10px 14px', borderRadius: '8px', fontSize: '.83rem'
                   }}>
                     {error}
@@ -416,8 +414,8 @@ export default function Waitlist() {
                 <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
                   {step > 1 && (
                     <button type="button" onClick={back} disabled={submitting} style={{
-                      padding: '13px 20px', border: '1.5px solid var(--bdr)', borderRadius: '10px',
-                      background: '#fff', color: 'var(--tx2)', fontSize: '.9rem', fontWeight: 600,
+                      padding: '13px 20px', border: '1.5px solid #E8E6DE', borderRadius: '10px',
+                      background: '#fff', color: '#6A6A5A', fontSize: '.9rem', fontWeight: 600,
                       cursor: submitting ? 'not-allowed' : 'pointer', fontFamily: "'Inter', sans-serif"
                     }}>
                       Back
@@ -425,7 +423,7 @@ export default function Waitlist() {
                   )}
                   <button type="submit" disabled={submitting} style={{
                     flex: 1, padding: '13px', border: 'none', borderRadius: '10px',
-                    background: 'var(--acc)', color: 'var(--tx)', fontSize: '.9rem', fontWeight: 700,
+                    background: '#D4AF37', color: '#1A1A1A', fontSize: '.9rem', fontWeight: 700,
                     cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? .7 : 1,
                     fontFamily: "'Inter', sans-serif", letterSpacing: '.02em',
                     boxShadow: '0 2px 10px rgba(212,175,55,.25)', transition: 'all .15s'
