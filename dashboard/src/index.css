@@ -37,6 +37,11 @@
 }
 
 html, body, #root { height: 100%; overflow: hidden; }
+
+/* Public pages (landing, how-it-works, auth) opt into normal document scroll
+   via usePublicScroll(). The dashboard shell keeps the locked viewport above. */
+html.public-scroll, html.public-scroll body { height: auto; overflow: visible; }
+html.public-scroll #root { height: auto; min-height: 100vh; overflow: visible; }
 body { font-family: var(--fn); background: var(--bg); color: var(--tx); font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
