@@ -1,3 +1,41 @@
+2026-08-29 MT PHASE 0 CLOSED. LIVE ANON HOLE ON conversation_examples FOUND
+AND FIXED ON PRODUCTION. THE OR'D-POLICIES LESSON, RECORDED SO IT IS NOT
+RELEARNED THE HARD WAY.
+
+THE HOLE: conversation_examples carried a policy named "Service role full
+access" created WITHOUT a TO clause. A policy with no TO clause applies to
+PUBLIC, which includes anon. Combined with production's blanket anon table
+grants, anyone holding the public anon key (shipped in the getmu.co bundle,
+committed in wrangler.toml) could read, modify and delete every row: real
+coaching transcripts with contact names, at Tester.jsx scale (~648 rows).
+
+THE LESSON: this was the table EVERY audit called the correctly-scoped one,
+the template migration 011 was told to replicate. Its two scoped policies are
+genuinely correct, and they protected nothing, because permissive policies are
+OR'd: one careless policy beside them defeated both. Corollaries now standing:
+  1. A policy review that reads policy BODIES but not policy ROLES is not a
+     review. The bug was in the missing TO clause, not in any USING expression.
+  2. "Correctly scoped" is a property of a TABLE's whole policy set, never of
+     individual policies on it.
+  3. Migration 011's drop-everything-then-recreate loop (drop by iterating
+     pg_policy, not by name list) is the only shape that survives this class
+     of bug, and it stays.
+
+THE FIX, RUN BY ANTHONY ON PRODUCTION 2026-08-29: single tighten-only
+DROP POLICY "Service role full access" ON conversation_examples. Before-SELECT
+showed the three predicted policies, drop returned success. VERIFIED FROM
+OUTSIDE by anon-key probe: conversation_examples now HTTP 200 with ZERO rows
+(the connected_accounts deny shape, grant intact, no matching policy), with a
+control probe on waitlist_applications returning 401 permission denied in the
+same run, proving the probe carried real credentials. Staging needed nothing
+(RLS off there, zero policies on that table, and no anon grants at all).
+
+PHASE 0 STATE: docs/MULTI-TENANCY-PHASE-0-REFRESH.md (repo audit),
+db/phase0_state_read.sql (the probe Anthony ran in both SQL editors),
+docs/MULTI-TENANCY-PHASE-0-BASELINE.md (the live baseline plus corrections),
+all on feat/mt-phase-1-rls-v2. Decisions D1-D5 taken; migration draft next on
+the same branch. Nothing runs anywhere, staging included, until sign-off.
+
 2026-08-22 (later) HOMEPAGE BRANCH SPLIT, GATE REVISED TO NELLA'S SIGN-OFF.
 
 Ruling revised on new information: Nella needs the homepage live for lead

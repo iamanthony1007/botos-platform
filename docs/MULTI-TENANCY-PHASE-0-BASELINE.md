@@ -12,8 +12,36 @@ the migration design.
 
 ## 0. Lead finding: a live anon hole on production, unrelated to Phase 1
 
-**`conversation_examples` is readable and writable by anyone holding the public
-anon key, right now, on production.**
+**CLOSED 2026-08-29.** Anthony ran the drop on production: the before-SELECT
+showed the three predicted policies on `conversation_examples`, the
+`drop policy "Service role full access"` returned success. External anon-key
+probe run afterwards from the Claude session against
+`rydkwsjwlgnivlwlvqku`:
+
+```
+GET /rest/v1/conversation_examples?select=id&limit=3   (anon key, Prefer: count=exact)
+-> HTTP 200, body [], Content-Range: */0
+```
+
+Zero rows with the grant still intact, which is the `connected_accounts` deny
+shape, exactly as designed. Control probe in the same run, proving the probe
+carried real credentials and an empty result is a policy denial rather than a
+broken request:
+
+```
+GET /rest/v1/waitlist_applications?select=id&limit=1   (anon key)
+-> HTTP 401, 42501 permission denied for table waitlist_applications
+```
+
+The two scoped policies remain and Tester.jsx continues to work for
+authenticated staff. Write and delete were not probed (no mutation attempts
+against production); their denial follows from the same absence of any
+anon-matching policy. The original finding is preserved below for the record.
+
+---
+
+**`conversation_examples` was readable and writable by anyone holding the
+public anon key on production until 2026-08-29.**
 
 The mechanism, from the probe:
 
@@ -373,7 +401,7 @@ output before anything is pasted.
 | N-6 | 014 file unexecuted on production | Still outstanding, bookkeeping |
 | N-7 | `/meta/oauth/start` unauthenticated | Open, scope decision |
 | N-8 | Realtime under new policies | Open, matrix row |
-| N-9 | `conversation_examples` PUBLIC ALL policy | **NEW, live. Decision needed now** |
+| N-9 | `conversation_examples` PUBLIC ALL policy | **CLOSED 2026-08-29.** Dropped on production by Anthony, external anon probe confirms 200 with zero rows, control probe on waitlist confirms the probe was real |
 | N-10 | `invites` PUBLIC UPDATE policy | **NEW.** Fold into 011 |
 | N-11 | Staging grants differ from production | **NEW.** Affects rehearsal fidelity |
 | N-12 | Superadmins lose dashboard under draft backfill | **NEW.** Decision D1 |
