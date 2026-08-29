@@ -1202,14 +1202,68 @@ var index_default = {
     // encrypted against their tenant (bot_id). Both endpoints are GET.
     // ========================================================================
 
-    // Start: validate bot_id, mint single-use state in KV, redirect to Instagram.
-    // TODO(dashboard): once the dashboard UI exists, require an authenticated dashboard
-    // session here. Today this only mints a short-lived state; the real work is gated by
-    // state validation in the callback.
+    // Init: the JWT-gated half of the connect handshake. The dashboard POSTs
+    // { bot_id } with the user's Supabase JWT; we verify the JWT, assert the
+    // caller's tenant may touch that bot, then mint a single-use init token in
+    // KV and return a short-lived URL for /meta/oauth/start. The tenant check
+    // lives HERE and not on /start because /start must stay a plain browser
+    // navigation (it ends in a 302 to Instagram) and a navigation cannot carry
+    // an Authorization header.
+    if (url.pathname === "/meta/oauth/init" && request.method === "POST") {
+      try {
+        const callerUserId = await verifyDashboardJwt(env, request);
+        if (!callerUserId) {
+          return new Response(JSON.stringify({ error: "unauthorized" }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const body = await request.json().catch(() => ({}));
+        const initBotId = body && body.bot_id;
+        if (!isValidUuid(initBotId)) {
+          return new Response(JSON.stringify({ error: "Invalid or missing bot_id" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        if (!(await callerMayAccessBot(env, callerUserId, initBotId))) {
+          return new Response(JSON.stringify({ error: "forbidden" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        const initToken = generateOauthState();
+        await env.MEMORY_STORE.put("oauth_init:" + initToken,
+          JSON.stringify({ bot_id: initBotId, user_id: callerUserId, created_at: Date.now() }),
+          { expirationTtl: 300 });
+        const startUrl = (env.PUBLIC_WORKER_URL || "https://sales-bot.nellakuate.workers.dev") +
+          "/meta/oauth/start?init=" + encodeURIComponent(initToken);
+        return new Response(JSON.stringify({ url: startUrl }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        console.log("meta/oauth/init: error " + (e && e.message));
+        return new Response(JSON.stringify({ error: "init failed" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // Start: consume the single-use init token minted by /meta/oauth/init,
+    // recover the tenant-verified bot_id from KV (never from the query string
+    // any more), mint the OAuth state, redirect to Instagram. Closed 2026-08
+    // (baseline N-7): this route used to take bot_id directly with no
+    // authentication, so anyone who knew a bot id could start a connect that
+    // landed their own Instagram account on someone else's tenant.
     if (url.pathname === "/meta/oauth/start" && request.method === "GET") {
-      const botId = url.searchParams.get("bot_id");
+      const initToken = url.searchParams.get("init");
+      if (!initToken) {
+        return new Response("Missing init token. Start the connect from the dashboard's Connections page.",
+          { status: 403, headers: { "Content-Type": "text/plain" } });
+      }
+      const initRaw = await env.MEMORY_STORE.get("oauth_init:" + initToken);
+      if (!initRaw) {
+        return new Response("Connect link expired or already used. Go back to the dashboard and click Connect Instagram again.",
+          { status: 403, headers: { "Content-Type": "text/plain" } });
+      }
+      // Single use: consume before redirecting so a copied link cannot replay.
+      await env.MEMORY_STORE.delete("oauth_init:" + initToken);
+      let botId = null;
+      try { botId = JSON.parse(initRaw).bot_id; } catch (e) { botId = null; }
       if (!isValidUuid(botId)) {
-        return new Response("Invalid or missing bot_id.", { status: 400, headers: { "Content-Type": "text/plain" } });
+        return new Response("Corrupt init state.", { status: 400, headers: { "Content-Type": "text/plain" } });
       }
       const state = generateOauthState();
       await env.MEMORY_STORE.put("oauth_state:" + state,
@@ -1464,11 +1518,10 @@ var index_default = {
     // is built field by field rather than from the row. Keep it that way: widen
     // the select and you widen the blast radius.
     //
-    // Same JWT gate as /meta/send, and the same recorded absence of tenant
-    // scoping (see the 2026-08-17 Stage 5 note in PROGRESS.md): any logged-in
-    // dashboard user can ask about any bot_id. That is the pre-011 posture
-    // everywhere else and folds into the same future JWT to profiles to assigned
-    // bot check. What leaks under it is a handle and a date, not tenant content.
+    // Same JWT gate as /meta/send, plus the tenant assertion (added 2026-08
+    // with migration 011): the caller's profile must place the requested bot
+    // inside their tenant, superadmin passes by role, 403 otherwise. Before
+    // this, any logged-in dashboard user could ask about any bot_id.
     if (url.pathname === "/meta/connection-status" && request.method === "GET") {
       try {
         const callerUserId = await verifyDashboardJwt(env, request);
@@ -1480,6 +1533,10 @@ var index_default = {
         if (!isValidUuid(botId)) {
           return new Response(JSON.stringify({ error: "Invalid or missing bot_id" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        if (!(await callerMayAccessBot(env, callerUserId, botId))) {
+          return new Response(JSON.stringify({ error: "forbidden" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
         // Mirrors getInstagramSendCreds exactly: same platform, same deauthorized
         // filter, same newest-first order, same limit-1 pick. The UI must describe
@@ -1545,6 +1602,15 @@ var index_default = {
         if (!review) {
           return new Response(JSON.stringify({ error: "review not found" }),
             { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        // Tenant assertion (added 2026-08 with migration 011): the JWT gate
+        // proves a login, not a tenant. The review's bot must sit inside the
+        // caller's tenant before anything else happens, because this route
+        // arms real tenant tokens and sends under the tenant's brand.
+        // Superadmin passes by role, 403 otherwise.
+        if (!(await callerMayAccessBot(env, callerUserId, review.bot_id))) {
+          return new Response(JSON.stringify({ error: "forbidden" }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
         if (review.channel !== "whatsapp" && review.channel !== "instagram_api") {
           return new Response(JSON.stringify({ error: "unsupported channel", channel: review.channel }),
@@ -5218,6 +5284,68 @@ async function verifyDashboardJwt(env, request) {
   } catch (e) {
     return null;
   }
+}
+
+// ============================================================================
+// Tenant assertion for the JWT-gated dashboard routes (/meta/send,
+// /meta/connection-status, /meta/oauth/init). verifyDashboardJwt proves a
+// login; these prove the tenant. All reads use the service key, so RLS is not
+// in play here: the comparison itself is the boundary. One shared helper, not
+// three copies, so a third caller cannot drift.
+// ============================================================================
+
+// The caller's profile row, or null. Selects only what the assertion needs.
+async function getCallerProfile(env, userId) {
+  if (!userId) return null;
+  try {
+    const resp = await fetch(
+      `${getSupabaseUrl(env)}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}` +
+      `&select=id,role,organization_id,assigned_bot_id,disabled&limit=1`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+    );
+    if (!resp.ok) return null;
+    const rows = await resp.json().catch(() => null);
+    return rows && rows[0] ? rows[0] : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// A bot's organization_id, or null.
+async function getBotOrgId(env, botId) {
+  if (!botId) return null;
+  try {
+    const resp = await fetch(
+      `${getSupabaseUrl(env)}/rest/v1/bots?id=eq.${encodeURIComponent(botId)}` +
+      `&select=organization_id&limit=1`,
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+    );
+    if (!resp.ok) return null;
+    const rows = await resp.json().catch(() => null);
+    return rows && rows[0] && rows[0].organization_id ? rows[0].organization_id : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// May this dashboard user act on this bot's tenant? Fails closed on every
+// error path (missing profile, disabled account, fetch failure, null orgs).
+// Mirrors the RLS helper semantics from migration 011:
+//   - disabled profile: no
+//   - superadmin: yes, by role; organization_id is never consulted (D1)
+//   - assigned_bot_id match: yes. Also keeps a legitimate setter working if
+//     this Worker deploys before 011's org backfill has run.
+//   - otherwise: org equality with explicit null guards on both sides.
+async function callerMayAccessBot(env, callerUserId, botId) {
+  if (!callerUserId || !botId) return false;
+  const profile = await getCallerProfile(env, callerUserId);
+  if (!profile || profile.disabled === true) return false;
+  if (profile.role === "superadmin") return true;
+  if (profile.assigned_bot_id && profile.assigned_bot_id === botId) return true;
+  if (!profile.organization_id) return false;
+  const botOrg = await getBotOrgId(env, botId);
+  if (!botOrg) return false;
+  return botOrg === profile.organization_id;
 }
 
 // Resolve the Instagram send credentials for a bot: the connected account id

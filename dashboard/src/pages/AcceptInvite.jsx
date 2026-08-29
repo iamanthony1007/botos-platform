@@ -24,17 +24,24 @@ export default function AcceptInvite() {
 
   async function loadInvite() {
     try {
-      const { data, error } = await supabase
-        .from('invites')
-        .select('id, email, name, token, role, status, expires_at, assigned_bot_id, permissions, bots (name)')
-        .eq('token', token)
-        .eq('status', 'pending')
-        .single()
+      // Migration 011 (D4): this page runs pre-login as anon, and the old
+      // direct read of invites rode on an anon SELECT policy that permitted
+      // LISTING every pending invite with its token. That policy is gone.
+      // lookup_invite is a SECURITY DEFINER RPC taking the token as an
+      // argument and returning exactly one row's render fields, token
+      // excluded (we already hold it). It returns zero rows for anything not
+      // pending or already expired, so those checks are server-side now; the
+      // client-side expiry check stays as a harmless second opinion.
+      const { data, error } = await supabase.rpc('lookup_invite', { invite_token: token })
+      const row = Array.isArray(data) ? data[0] : data
 
-      if (error || !data) { setError('Invite not found or has already been used'); setLoading(false); return }
-      if (new Date(data.expires_at) < new Date()) { setError('This invite has expired'); setLoading(false); return }
+      if (error || !row) { setError('Invite not found or has already been used'); setLoading(false); return }
+      if (row.expires_at && new Date(row.expires_at) < new Date()) { setError('This invite has expired'); setLoading(false); return }
 
-      setInvite(data)
+      // Shape shim: the render and acceptInvite read invite.bots?.name and
+      // invite.token from the old embedded select; the RPC returns bot_name
+      // flat and no token.
+      setInvite({ ...row, token, bots: row.bot_name ? { name: row.bot_name } : null })
       setLoading(false)
     } catch (err) {
       setError('Failed to load invite')
