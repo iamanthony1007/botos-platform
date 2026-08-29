@@ -1,3 +1,46 @@
+2026-08-29 (later) MT PHASE 1 DRAFT COMMITTED, AWAITING SIGN-OFF. NOTHING HAS
+RUN ANYWHERE, STAGING INCLUDED.
+
+On feat/mt-phase-1-rls-v2, four deliverables:
+- db/migrations/011_tenant_rls_policies.sql: 14 numbered idempotent chunks
+  (0 staging-only grant alignment, 1 helpers, 2 Bombers Blueprint org, 3
+  backfill with zero-null gate, 4 lookup_invite RPC, DEPLOY GATE, 5-11
+  policies with create-before-sweep so production never has a zero-policy
+  window, 12 enable RLS, 13 anon revokes). Every chunk ends in a verification
+  SELECT with its expected output written beside it. Encodes D1 (superadmin
+  org stays NULL, role checks only), D2 (disabled profiles never gate), D4
+  (anon invite listing replaced by SECURITY DEFINER RPC), D5 (anon table
+  grants revoked after the RPC exists). The profiles select policy leads with
+  unconditional id = auth.uid(), the null-org fix.
+- db/migrations/011_rollback.sql: restores the pre-011 permissive posture
+  VERBATIM from the 2026-08-29 baseline. Deliberately does NOT restore the
+  conversation_examples PUBLIC policy (a bug, not a posture), anon grants, the
+  data chunks, or drop the RPC (deployed AcceptInvite depends on it).
+- Worker (sales-bot/src/index.js): tenant assertions on /meta/send and
+  /meta/connection-status (shared callerMayAccessBot helper: superadmin by
+  role, assigned-bot match, else org equality, fail closed). New JWT-gated
+  POST /meta/oauth/init minting a single-use 300s KV token; /meta/oauth/start
+  now requires and consumes that token and takes bot_id from KV, never the
+  query string, closing the unauthenticated-start hole (N-7). node --check
+  passes.
+- Dashboard: Connections.jsx does the init handshake (tab opened inside the
+  click gesture, pointed after the fetch, popup-blocker safe);
+  AcceptInvite.jsx switches the invite lookup to supabase.rpc('lookup_invite')
+  with a shape shim. vite build:staging passes, local only, NOT deployed.
+
+docs/MT-PHASE-1-STAGING-PLAN.md carries the execution order (chunks 0-4,
+deploy staging Worker+dashboard, chunks 5-13, matrix, rollback rehearsal and
+re-apply) and the 15-row behavioral matrix: the briefing's 10 rows adapted to
+staging's two tenants plus Realtime-under-RLS, AcceptInvite end to end, oauth
+init cross-tenant 403s, connection-status 403, and the superadmin null-org
+dashboard walk (the getAssignedBot .single() regression row). Needs one new
+staging artifact: bombers-setter-sim@staging.getmu.co. D3 recorded for Part B:
+Nella's superadmin login is never touched, her business gets a separate
+tenant-staff account (admin, org SuperYOU, SuperYOU bot, connections perm).
+
+GATE: Anthony reviews the draft. Then staging per the plan, then the matrix,
+then stop again before any production runbook is written.
+
 2026-08-29 MT PHASE 0 CLOSED. LIVE ANON HOLE ON conversation_examples FOUND
 AND FIXED ON PRODUCTION. THE OR'D-POLICIES LESSON, RECORDED SO IT IS NOT
 RELEARNED THE HARD WAY.
