@@ -322,8 +322,14 @@ stable
 security definer
 set search_path = public
 as $$
-  select i.id, i.email, i.name, i.role, i.assigned_bot_id, i.permissions,
-         i.expires_at, b.name
+  -- to_jsonb on permissions is LOAD-BEARING, found live on production
+  -- 2026-08-29: the repo schema declares invites.permissions jsonb, but the
+  -- real production column is text[] (schema.sql is a reconstruction and this
+  -- is where the drift surfaced, as a 42P13 at CREATE time). to_jsonb
+  -- normalizes either underlying type to the declared jsonb, and the
+  -- dashboard receives the same JSON array of strings in both cases.
+  select i.id, i.email, i.name, i.role, i.assigned_bot_id,
+         to_jsonb(i.permissions), i.expires_at, b.name
   from public.invites i
   left join public.bots b on b.id = i.assigned_bot_id
   where i.token = invite_token
