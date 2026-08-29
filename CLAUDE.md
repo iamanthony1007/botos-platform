@@ -79,6 +79,13 @@ Substantive. What changed, why, verification done, version IDs where applicable.
 - Do not apply Supabase migrations to production.
 - Do not modify Make.com scenarios.
 - Do not delete files from the repo.
-- Do not commit and push without showing me the diff and the commit message first.
 
 For any of the above, present the proposed change, wait for my confirmation, then proceed.
+
+## Commit and push policy (standing since 2026-08-29)
+
+Push accompanies every commit: commit on the feature branch, push immediately,
+no separate approval for the push. The review gate reads GitHub, not chat
+summaries. Commits stay substantive per the rules above. This replaces the
+earlier rule that required showing the diff and commit message before any
+commit and push.
