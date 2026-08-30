@@ -93,9 +93,33 @@ export default function Connections() {
   // is deliberately no redirect back to the dashboard yet: closing that tab must
   // leave the dashboard exactly where it was. They come back and hit Refresh
   // status.
-  function startInstagramConnect() {
+  //
+  // Two-step since migration 011: POST /meta/oauth/init with the user's JWT
+  // (the Worker verifies login AND tenant there, 403 on a cross-tenant bot_id),
+  // get back a short-lived single-use /meta/oauth/start URL, open that. The
+  // tab is opened synchronously inside the click gesture and pointed at the
+  // URL after the fetch resolves; opening it after an await would trip popup
+  // blockers.
+  async function startInstagramConnect() {
     if (!bot || !bot.id) return
-    window.open(WORKER_URL + '/meta/oauth/start?bot_id=' + encodeURIComponent(bot.id), '_blank', 'noopener')
+    const tab = window.open('about:blank', '_blank')
+    try {
+      const { data: sess } = await supabase.auth.getSession()
+      const jwt = sess?.session?.access_token
+      if (!jwt) throw new Error('No login session. Reload the page and sign in again.')
+      const resp = await fetch(WORKER_URL + '/meta/oauth/init', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bot_id: bot.id })
+      })
+      const j = await resp.json().catch(() => ({}))
+      if (!resp.ok || !j.url) throw new Error(j.error || ('HTTP ' + resp.status))
+      if (tab) tab.location.href = j.url
+      else window.open(j.url, '_blank', 'noopener')
+    } catch (e) {
+      if (tab) tab.close()
+      setConnectionError('Could not start the Instagram connect. ' + ((e && e.message) || ''))
+    }
   }
 
   if (loading) return <div className="page" style={{ alignItems: 'center', justifyContent: 'center' }}><div className="spinner" /></div>

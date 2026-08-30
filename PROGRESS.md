@@ -1,3 +1,124 @@
+2026-08-30 MT PHASE 1 IS LIVE ON PRODUCTION. TENANT ISOLATION REAL AT THE
+DATABASE. MATRIX FULLY GREEN. SYSTEM STILL PAUSED.
+
+Production-direct run per Anthony's 2026-08-29 ruling (staging skipped, his
+call, objection registered once and dropped; docs/MT-PHASE-1-PRODUCTION-RUN.md
+is the full record with the results section). Headlines:
+
+- All 13 chunks of migration 011 v2 applied to rydkwsjwlgnivlwlvqku, each
+  verified against its written expected output. Bombers Blueprint org created
+  (c5fb0844-57d2-4b26-a667-cc1090a52ade), backfill landed per the row-by-row
+  confirmed map, superadmins stay org-null per D1 and both dashboards render.
+- ONE LIVE DRIFT FOUND: production invites.permissions is text[], repo schema
+  said jsonb. Chunk 4 failed atomically at CREATE (42P13), fixed with
+  to_jsonb, re-pasted clean. The repo schema remains a reconstruction; trust
+  it accordingly.
+- Deploys: Worker dcda6447-c43a-492e-a44f-3dc9fbb84ef4 (rollback anchor
+  3754c1dc-0370-46a3-8938-d5ac2b9c9fd0), dashboard index-BlDpb7L3.js
+  deployment 37e4f90f (anchor index-DqhtGDBb.js). Tenant assertions live on
+  /meta/send and /meta/connection-status; /meta/oauth/start now requires the
+  single-use token from the new JWT-and-tenant-gated /meta/oauth/init; the
+  unauthenticated-start hole is closed.
+- Matrix: 25/25 automated PASS (scripts/mt-prod-matrix.mjs, sessions minted
+  per tier, only writes were a delete-verified fixture on the demo tenant).
+  Manual rows all green: three-tier browser walks, Realtime under RLS moving
+  live, AcceptInvite end to end via the lookup_invite RPC with teardown, and
+  the 08:00 UTC cron captured running clean on the service key under full RLS.
+- Anon posture: all table grants revoked (D5). Anon now reaches only auth
+  endpoints and lookup_invite. Migration 014 file pasted, N-6 closed.
+
+STILL GATED ON ANTHONY'S EXPLICIT WORD, NOTHING IMPLICIT: unpause, any
+reconnect, and Part B (Nella's Instagram connect, which per D3 gets a separate
+SuperYOU tenant-staff account: admin role, org SuperYOU, SuperYOU bot,
+connections permission; her superadmin login is never the connect vehicle).
+
+FOLLOW-UPS RECORDED: (1) staging is now BEHIND production and must get chunks
+0-13 before it is trusted as a rehearsal environment again; (2) the
+accept-invite SECURITY DEFINER RPC that closes the role-stamping caveat; (3)
+authenticated grant tightening to staging's posture; (4) rollback rehearsal
+never happened anywhere, the rollback script remains unproven by execution.
+
+2026-08-29 (later) MT PHASE 1 DRAFT COMMITTED, AWAITING SIGN-OFF. NOTHING HAS
+RUN ANYWHERE, STAGING INCLUDED.
+
+On feat/mt-phase-1-rls-v2, four deliverables:
+- db/migrations/011_tenant_rls_policies.sql: 14 numbered idempotent chunks
+  (0 staging-only grant alignment, 1 helpers, 2 Bombers Blueprint org, 3
+  backfill with zero-null gate, 4 lookup_invite RPC, DEPLOY GATE, 5-11
+  policies with create-before-sweep so production never has a zero-policy
+  window, 12 enable RLS, 13 anon revokes). Every chunk ends in a verification
+  SELECT with its expected output written beside it. Encodes D1 (superadmin
+  org stays NULL, role checks only), D2 (disabled profiles never gate), D4
+  (anon invite listing replaced by SECURITY DEFINER RPC), D5 (anon table
+  grants revoked after the RPC exists). The profiles select policy leads with
+  unconditional id = auth.uid(), the null-org fix.
+- db/migrations/011_rollback.sql: restores the pre-011 permissive posture
+  VERBATIM from the 2026-08-29 baseline. Deliberately does NOT restore the
+  conversation_examples PUBLIC policy (a bug, not a posture), anon grants, the
+  data chunks, or drop the RPC (deployed AcceptInvite depends on it).
+- Worker (sales-bot/src/index.js): tenant assertions on /meta/send and
+  /meta/connection-status (shared callerMayAccessBot helper: superadmin by
+  role, assigned-bot match, else org equality, fail closed). New JWT-gated
+  POST /meta/oauth/init minting a single-use 300s KV token; /meta/oauth/start
+  now requires and consumes that token and takes bot_id from KV, never the
+  query string, closing the unauthenticated-start hole (N-7). node --check
+  passes.
+- Dashboard: Connections.jsx does the init handshake (tab opened inside the
+  click gesture, pointed after the fetch, popup-blocker safe);
+  AcceptInvite.jsx switches the invite lookup to supabase.rpc('lookup_invite')
+  with a shape shim. vite build:staging passes, local only, NOT deployed.
+
+docs/MT-PHASE-1-STAGING-PLAN.md carries the execution order (chunks 0-4,
+deploy staging Worker+dashboard, chunks 5-13, matrix, rollback rehearsal and
+re-apply) and the 15-row behavioral matrix: the briefing's 10 rows adapted to
+staging's two tenants plus Realtime-under-RLS, AcceptInvite end to end, oauth
+init cross-tenant 403s, connection-status 403, and the superadmin null-org
+dashboard walk (the getAssignedBot .single() regression row). Needs one new
+staging artifact: bombers-setter-sim@staging.getmu.co. D3 recorded for Part B:
+Nella's superadmin login is never touched, her business gets a separate
+tenant-staff account (admin, org SuperYOU, SuperYOU bot, connections perm).
+
+GATE: Anthony reviews the draft. Then staging per the plan, then the matrix,
+then stop again before any production runbook is written.
+
+2026-08-29 MT PHASE 0 CLOSED. LIVE ANON HOLE ON conversation_examples FOUND
+AND FIXED ON PRODUCTION. THE OR'D-POLICIES LESSON, RECORDED SO IT IS NOT
+RELEARNED THE HARD WAY.
+
+THE HOLE: conversation_examples carried a policy named "Service role full
+access" created WITHOUT a TO clause. A policy with no TO clause applies to
+PUBLIC, which includes anon. Combined with production's blanket anon table
+grants, anyone holding the public anon key (shipped in the getmu.co bundle,
+committed in wrangler.toml) could read, modify and delete every row: real
+coaching transcripts with contact names, at Tester.jsx scale (~648 rows).
+
+THE LESSON: this was the table EVERY audit called the correctly-scoped one,
+the template migration 011 was told to replicate. Its two scoped policies are
+genuinely correct, and they protected nothing, because permissive policies are
+OR'd: one careless policy beside them defeated both. Corollaries now standing:
+  1. A policy review that reads policy BODIES but not policy ROLES is not a
+     review. The bug was in the missing TO clause, not in any USING expression.
+  2. "Correctly scoped" is a property of a TABLE's whole policy set, never of
+     individual policies on it.
+  3. Migration 011's drop-everything-then-recreate loop (drop by iterating
+     pg_policy, not by name list) is the only shape that survives this class
+     of bug, and it stays.
+
+THE FIX, RUN BY ANTHONY ON PRODUCTION 2026-08-29: single tighten-only
+DROP POLICY "Service role full access" ON conversation_examples. Before-SELECT
+showed the three predicted policies, drop returned success. VERIFIED FROM
+OUTSIDE by anon-key probe: conversation_examples now HTTP 200 with ZERO rows
+(the connected_accounts deny shape, grant intact, no matching policy), with a
+control probe on waitlist_applications returning 401 permission denied in the
+same run, proving the probe carried real credentials. Staging needed nothing
+(RLS off there, zero policies on that table, and no anon grants at all).
+
+PHASE 0 STATE: docs/MULTI-TENANCY-PHASE-0-REFRESH.md (repo audit),
+db/phase0_state_read.sql (the probe Anthony ran in both SQL editors),
+docs/MULTI-TENANCY-PHASE-0-BASELINE.md (the live baseline plus corrections),
+all on feat/mt-phase-1-rls-v2. Decisions D1-D5 taken; migration draft next on
+the same branch. Nothing runs anywhere, staging included, until sign-off.
+
 2026-08-22 (later) HOMEPAGE BRANCH SPLIT, GATE REVISED TO NELLA'S SIGN-OFF.
 
 Ruling revised on new information: Nella needs the homepage live for lead
