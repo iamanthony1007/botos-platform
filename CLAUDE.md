@@ -89,3 +89,14 @@ no separate approval for the push. The review gate reads GitHub, not chat
 summaries. Commits stay substantive per the rules above. This replaces the
 earlier rule that required showing the diff and commit message before any
 commit and push.
+
+## Deployed code merges same day (standing since 2026-08-30)
+
+Any branch whose content is deployed to production merges into main the same
+day the deploy verifies, no-ff, with a byte-identity check between the merged
+main and the deployed artifact's source recorded in the merge context. Main
+must never describe a production that does not exist: the MT Phase 1 branch
+sat unmerged while its code ran live, and the next phase nearly branched off
+a main that would have rolled the tenant assertions off production with its
+first Worker deploy. New branches are cut only from a main that has absorbed
+every live deploy.
