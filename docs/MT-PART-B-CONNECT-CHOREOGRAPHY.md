@@ -11,39 +11,43 @@ rule.
   prompt (placeholder, see The prompt below), zero conversations, zero
   reviews. Seed: `db/seeds/nella_tenant_2026-08-30.sql`, all three pastes
   verified.
-- Her account: `Nellaledonne6803@proton.me`, role admin, org `...00e0`, bot
-  `...00e1`, permissions inbox + connections. Created with no password;
-  recovery email sent 2026-08-30 (redirects to getmu.co/reset-password), she
-  sets her own. 11/11 verification passes including the both-sides isolation
-  probes from a session minted as her.
+- Her account: `ornellakuate@gmail.com` (REVISED 2026-08-30, second ruling):
+  role admin, org `...00e0`, bot `...00e1`, permissions inbox + connections.
+  This is her pre-existing April account with a password she already knows,
+  REPOINTED off the Bombers tenant onto hers (SELECT before and after
+  verified; it was client on Bombers, the cross-tenant view she keeps via her
+  superadmin login). The proton.me account from the first ruling was created,
+  verified 11/11 including both-sides isolation probes, then DELETED when
+  email delivery friction made the pre-built-account path more trouble than
+  the repoint; the isolation probes' findings hold for this account because
+  they test the profile shape (admin, org e0, bot e1), which is identical.
 - The connect path is tenant-gated end to end: /meta/oauth/init requires her
   JWT and refuses any bot outside her tenant, /meta/oauth/start takes only
   the single-use token init mints.
 
 ## THE ONE RULE THAT CANNOT BE BROKEN ON THE CALL
 
-**The connect happens from `Nellaledonne6803@proton.me`, never from her
+**The connect happens from `ornellakuate@gmail.com`, never from her
 superadmin login (nellakuate@gmail.com).** Her superadmin account resolves to
 the BOMBERS bot in the UI (assigned_bot_id fallthrough, D1), so a connect
 clicked from that session would attach her Instagram to Coach Shaun's tenant.
-The new account resolves to "Nella's bot" and can reach nothing else. If the
-wrong account is logged in on her machine, sign it out first.
+The ornellakuate account now resolves to "Nella's bot" and can reach nothing
+else. The two addresses differ by one letter; check which is signed in before
+she clicks anything, and sign out the wrong one first.
 
 ## Before the call (Anthony, five minutes)
 
-1. Confirm she received the recovery email and has set her password (or
-   re-trigger via Forgot password on getmu.co for her address).
-2. Have her log in once at getmu.co: expect a mostly empty dashboard titled
-   for her tenant, and a Connections page showing "Nella's bot" with
-   Instagram NOT CONNECTED. If Connections shows no bot, stop and check which
-   account she is signed in as.
+1. She logs in at getmu.co as ornellakuate@gmail.com with her existing
+   password (Forgot password on getmu.co works normally for gmail if needed).
+2. Expect a mostly empty dashboard for her tenant, and a Connections page
+   showing "Nella's bot" with Instagram NOT CONNECTED. If Connections shows
+   anything else (especially Bombers content), stop: wrong account signed in.
 3. Have your own superadmin session open in a second browser for the
    verification reads after her click.
 
 ## The call
 
-1. She logs in at getmu.co as `Nellaledonne6803@proton.me` on her own
-   machine.
+1. She logs in at getmu.co as `ornellakuate@gmail.com` on her own machine.
 2. Connections page, Connect Instagram. A new tab opens on Instagram's
    consent screen via the init handshake (her session mints the single-use
    URL; nobody pastes URLs by hand).

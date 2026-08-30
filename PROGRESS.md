@@ -1,3 +1,23 @@
+2026-08-30 (later still) PART B ACCOUNT REVISED: ornellakuate@gmail.com IS
+NELLA'S TENANT-STAFF LOGIN. PROTON ACCOUNT DELETED.
+
+Sequence, all ruled by Anthony during the login attempt: the proton address
+hit email-delivery friction (rate limiter first, then undelivered/unclicked
+links). Pivots considered and their endings: re-invite of the existing proton
+account dead-ends in AcceptInvite's already-registered branch (it can create
+an account or sign into one, never set a password on an existing passwordless
+one); delete-and-reinvite was ruled, then superseded by the better fact that
+ornellakuate@gmail.com already existed with a known password. Final state:
+- ornellakuate@gmail.com REPOINTED (SELECT before/after verified): role
+  client->admin, org Bombers->...00e0, bot ...0002->...00e1, permissions
+  ["inbox","connections"]. She logs in with the password she already has.
+  Cost, stated: that login no longer sees the Bombers tenant; her superadmin
+  login keeps cross-tenant sight.
+- The proton auth user and profile: DELETED (the 11/11 isolation findings
+  transfer, they tested the profile shape, which is identical).
+- Choreography doc updated: the connect happens from ornellakuate@gmail.com,
+  never nellakuate@gmail.com, one letter apart, check before she clicks.
+
 2026-08-30 (later) MERGE LANDED, PART B TENANT SEEDED, NELLA'S ACCOUNT LIVE
 AND VERIFIED. CONNECT CHOREOGRAPHY HANDED TO ANTHONY. FB-1 PAUSED AT STEP 0.
 
