@@ -93,3 +93,85 @@ profiles, so it is the pure "other tenant" read target.
 
 Matrix green, THEN: unpause decision, reconnects, and Part B choreography,
 each its own explicit step. Nothing implicit.
+
+---
+
+# RESULTS (2026-08-30): RUN COMPLETE, MATRIX FULLY GREEN
+
+Executed 2026-08-29 late evening through 2026-08-30 morning, Anthony pasting,
+Claude serving chunks and verifying. Every chunk verified against its written
+expected output. One deviation, recorded below. Nothing has unpaused.
+
+## Chunk log
+
+| chunk | result |
+|---|---|
+| 1 helpers | 4 functions, secdef, stable, search_path pinned |
+| 2 Bombers org | created `c5fb0844-57d2-4b26-a667-cc1090a52ade`, bot ...0002 repointed, platform org empty of bots as designed |
+| 3 backfill | superadmin statements no-ops as predicted; staff rows landed exactly per the confirmed map; gate ZERO rows; map check 8/8 |
+| 4 RPC | FAILED FIRST PASTE, 42P13: production invites.permissions is text[], repo schema said jsonb. Clean no-op failure (CREATE is atomic). Fixed with to_jsonb (commit 67df261), re-paste verified. The one live schema-drift find of the run |
+| 5-11 policies | all seven chunks exact-match on their policy censuses; conversation_examples inline policies retired; both invites PUBLIC holes swept |
+| 12 census | 16/16 tables rls_enabled true, policy counts exact |
+| 13 anon revokes | zero anon grants remain; external probes confirm permission denied on all 16 tables, lookup_invite returns 200 empty on bogus token |
+| 014 bookkeeping | pasted, zero rows, N-6 closed |
+
+Mid-run eyeballs: Inbox rendered Bombers leads after chunk 5 (first scoped
+read proof); dashboard rendered after chunk 9 (profiles self-read fix proof,
+the highest-stakes moment of the run).
+
+## Deploy gate
+
+| item | rollback anchor | deployed |
+|---|---|---|
+| Worker | `3754c1dc-0370-46a3-8938-d5ac2b9c9fd0` | `dcda6447-c43a-492e-a44f-3dc9fbb84ef4` |
+| Dashboard | `index-DqhtGDBb.js` | `index-BlDpb7L3.js`, deployment `37e4f90f` |
+
+Verified at deploy time: verify-deploy OK (right ref 1, wrong ref 0), getmu.co
+serving the new bundle, login rendering with zero console errors, CORS
+preflight allowing Authorization+POST, 401 on unauthenticated init /
+connection-status / send, 403 on start without init, bogus init, and the
+legacy ?bot_id= form.
+
+## Matrix results
+
+Automated (scripts/mt-prod-matrix.mjs, run by Anthony with the masked service
+key): **25/25 PASS.** Highlights: each tier sees exactly its own bots;
+Bombers setter reads zero SuperYOU rows; demo setter reads zero Bombers rows
+(the read that returned the full lead history pre-011); cross-tenant UPDATE
+affected zero rows with the same-tenant control affecting one; cross-tenant
+INSERT rejected 42501; connected_accounts empty and ddr/waitlist denied for
+all three tiers; /meta/send 403 cross-tenant with the same-tenant control
+proving gate ordering (400 not-approved, nothing sent); oauth init 403
+cross-tenant, start single-use with replay 403; connection-status 403
+cross-tenant, 200 own-bot. Fixture review created on the demo tenant only and
+delete-verified in cleanup.
+
+Manual rows, all confirmed by Anthony:
+- Row 8 browser walks: superadmin, meta-review, and the throwaway MT Test
+  session all rendered, no blank spinners.
+- Row 11 Realtime: pending badge moved live on the meta-review session for a
+  demo-tenant fixture insert and delete. Realtime-under-RLS works.
+- Row 12 AcceptInvite end to end: invite card rendered via the lookup_invite
+  RPC over anon, account created, landed scoped to the demo tenant, torn down
+  (disabled=true verified).
+- Sighting explained during row 12: the MT Test session showed two demo
+  conversations (@thonysolutions, @de_anthony001). Verified by bot_id select:
+  demo-tenant rows from the 2026-08-19/20 App Review demo cycle, not leakage;
+  @thonysolutions also exists separately under the Bombers bot because the
+  same human messaged both businesses.
+- Row 10 cron: the 2026-08-30 08:00 UTC scheduled run captured live via
+  wrangler tail: follow-up cron ok=true (0 candidates, the paused-system
+  expectation; a blocked service key errors rather than returning a
+  well-formed empty result) and ig-refresh ran clean. Service-key paths
+  untouched by RLS, proven on the live system.
+
+## Standing state
+
+Tenant isolation is LIVE on production. The anon role reaches nothing but
+auth endpoints and lookup_invite. The system remains PAUSED: unpause,
+reconnects, and Part B (Nella's connect, with the separate SuperYOU
+tenant-staff account per D3) each await Anthony's explicit word.
+
+Staging is now BEHIND production (the run there was skipped by ruling):
+chunks 0-13 must be applied to staging before it is next trusted as a
+rehearsal environment. Recorded as the first follow-up.

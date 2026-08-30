@@ -1,3 +1,43 @@
+2026-08-30 MT PHASE 1 IS LIVE ON PRODUCTION. TENANT ISOLATION REAL AT THE
+DATABASE. MATRIX FULLY GREEN. SYSTEM STILL PAUSED.
+
+Production-direct run per Anthony's 2026-08-29 ruling (staging skipped, his
+call, objection registered once and dropped; docs/MT-PHASE-1-PRODUCTION-RUN.md
+is the full record with the results section). Headlines:
+
+- All 13 chunks of migration 011 v2 applied to rydkwsjwlgnivlwlvqku, each
+  verified against its written expected output. Bombers Blueprint org created
+  (c5fb0844-57d2-4b26-a667-cc1090a52ade), backfill landed per the row-by-row
+  confirmed map, superadmins stay org-null per D1 and both dashboards render.
+- ONE LIVE DRIFT FOUND: production invites.permissions is text[], repo schema
+  said jsonb. Chunk 4 failed atomically at CREATE (42P13), fixed with
+  to_jsonb, re-pasted clean. The repo schema remains a reconstruction; trust
+  it accordingly.
+- Deploys: Worker dcda6447-c43a-492e-a44f-3dc9fbb84ef4 (rollback anchor
+  3754c1dc-0370-46a3-8938-d5ac2b9c9fd0), dashboard index-BlDpb7L3.js
+  deployment 37e4f90f (anchor index-DqhtGDBb.js). Tenant assertions live on
+  /meta/send and /meta/connection-status; /meta/oauth/start now requires the
+  single-use token from the new JWT-and-tenant-gated /meta/oauth/init; the
+  unauthenticated-start hole is closed.
+- Matrix: 25/25 automated PASS (scripts/mt-prod-matrix.mjs, sessions minted
+  per tier, only writes were a delete-verified fixture on the demo tenant).
+  Manual rows all green: three-tier browser walks, Realtime under RLS moving
+  live, AcceptInvite end to end via the lookup_invite RPC with teardown, and
+  the 08:00 UTC cron captured running clean on the service key under full RLS.
+- Anon posture: all table grants revoked (D5). Anon now reaches only auth
+  endpoints and lookup_invite. Migration 014 file pasted, N-6 closed.
+
+STILL GATED ON ANTHONY'S EXPLICIT WORD, NOTHING IMPLICIT: unpause, any
+reconnect, and Part B (Nella's Instagram connect, which per D3 gets a separate
+SuperYOU tenant-staff account: admin role, org SuperYOU, SuperYOU bot,
+connections permission; her superadmin login is never the connect vehicle).
+
+FOLLOW-UPS RECORDED: (1) staging is now BEHIND production and must get chunks
+0-13 before it is trusted as a rehearsal environment again; (2) the
+accept-invite SECURITY DEFINER RPC that closes the role-stamping caveat; (3)
+authenticated grant tightening to staging's posture; (4) rollback rehearsal
+never happened anywhere, the rollback script remains unproven by execution.
+
 2026-08-29 (later) MT PHASE 1 DRAFT COMMITTED, AWAITING SIGN-OFF. NOTHING HAS
 RUN ANYWHERE, STAGING INCLUDED.
 
