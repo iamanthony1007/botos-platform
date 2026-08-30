@@ -1,3 +1,38 @@
+2026-08-30 (later) MERGE LANDED, PART B TENANT SEEDED, NELLA'S ACCOUNT LIVE
+AND VERIFIED. CONNECT CHOREOGRAPHY HANDED TO ANTHONY. FB-1 PAUSED AT STEP 0.
+
+MERGE: feat/mt-phase-1-rls-v2 into main no-ff (b6e950e), byte identity proven
+(main blob = branch blob = working-tree hash 27a17c82 for the Worker source,
+the exact tree deployed as dcda6447; zero differing files). NEW STANDING RULE
+in CLAUDE.md (f19d4a1): deployed code merges into main the same day its
+deploy verifies; new branches only from a main that has absorbed every live
+deploy. Cause: FB-1 nearly branched off a main whose first Worker deploy
+would have rolled the tenant assertions off production.
+
+PART B (branch feat/mt-part-b-nella-tenant, ruling supersedes D3's SuperYOU
+wording; the never-her-superadmin-login principle stands):
+- Tenant seeded on production: org+bot "Nella's bot" (...00e0/...00e1), three
+  pastes verified exact. Prompt copied at insert time from the demo scaffold
+  row, md5 65e10a8a preserved; PLACEHOLDER until her business content lands
+  via the Prompt Editor. auto_send false, stage_automation {}, zero rows.
+- Account Nellaledonne6803@proton.me: admin, org e0, bot e1, perms
+  ["inbox","connections"], created via admin API email_confirm true, NO
+  password minted. 11/11 script verification including both-sides isolation
+  from a session minted as her (sees exactly her bot, tenant empty, zero
+  Bombers/SuperYOU rows, connected_accounts unreachable). Recovery email sent
+  (script hit GoTrue's per-address rate limit 429, re-triggered clean via
+  /auth/v1/recover, HTTP 200, redirect getmu.co/reset-password): she sets her
+  own password.
+- docs/MT-PART-B-CONNECT-CHOREOGRAPHY.md committed: the call script for
+  Anthony and Nella. THE ONE RULE: the connect happens from the proton
+  account, never her superadmin login, which resolves to the BOMBERS bot in
+  the UI and would attach her Instagram to Coach Shaun's tenant. Plus the
+  24-hour-window and placeholder-prompt warnings to say to her plainly, the
+  post-click verification reads, and the live both-sides check on real data.
+
+FB-1 (Facebook Messenger connect) briefing received and PAUSED at Step 0 by
+Anthony's pivot ruling; resumes after Part B's connect.
+
 2026-08-30 MT PHASE 1 IS LIVE ON PRODUCTION. TENANT ISOLATION REAL AT THE
 DATABASE. MATRIX FULLY GREEN. SYSTEM STILL PAUSED.
 
