@@ -54,7 +54,7 @@ export default function Audit() {
     <div className="mk-page mk-page--blush">
       <PublicHeader right="home" />
 
-      <div className="mk-container">
+      <main className="mk-container">
         {/* hero */}
         <div className="mk-audit-hero">
           <div>
@@ -161,7 +161,7 @@ export default function Audit() {
             <div className="mk-signature-role">DM Expert</div>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }

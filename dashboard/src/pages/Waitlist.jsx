@@ -146,7 +146,7 @@ export default function Waitlist() {
     <div className="mk-page mk-page--blush">
       <PublicHeader right="form" />
 
-      <div className="mk-container">
+      <main className="mk-container">
         {/* hero */}
         <div className="mk-wl-hero">
           <div>
@@ -220,7 +220,7 @@ export default function Waitlist() {
         <div className="mk-wl-tagline">
           Real conversations. &nbsp; Real clients. &nbsp; Real growth.
         </div>
-      </div>
+      </main>
     </div>
   )
 }

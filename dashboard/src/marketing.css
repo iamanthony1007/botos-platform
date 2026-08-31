@@ -14,10 +14,36 @@
  * a separate branch (recorded in the funnel briefing).
  */
 
+/* Metric-matched fallbacks so the Google-font swap does not reflow the page.
+ * size-adjust values are MEASURED in-browser against the loaded webfonts
+ * (Playfair renders at 88.3% of Georgia's width for the same string, Poppins
+ * at 112.7% of Arial's). Before this, the swap shifted the whole hero and
+ * Lighthouse scored CLS 0.372 on the homepage. Keep these in sync if the
+ * families ever change. */
+@font-face {
+  font-family: 'Playfair Fallback';
+  src: local('Georgia');
+  size-adjust: 88.3%;
+  ascent-override: 122%;
+  descent-override: 30%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: 'Poppins Fallback';
+  src: local('Arial');
+  size-adjust: 112.7%;
+  ascent-override: 93%;
+  descent-override: 31%;
+  line-gap-override: 0%;
+}
+
 .mk-page {
   /* palette */
   --mk-pink: #e82c6e;
   --mk-pink-deep: #cf1c5b;
+  /* darker pink for SMALL text: #e82c6e is 3.5-3.9:1 on the blush
+     backgrounds, below WCAG AA. Large headlines keep --mk-pink. */
+  --mk-pink-text: #c81b57;
   --mk-pink-grad: linear-gradient(135deg, #f43f7f 0%, #e0175d 100%);
   --mk-pink-soft: #fbdfe9;
   --mk-pink-wash: #fdf0f4;
@@ -26,7 +52,7 @@
   --mk-strip: #fce7ee;
   --mk-ink: #221a1d;
   --mk-body: #4a3f44;
-  --mk-muted: #8a7a80;
+  --mk-muted: #756369;
   --mk-card: #ffffff;
   --mk-border: #f2dce3;
   --mk-border-soft: #f7e7ec;
@@ -40,8 +66,8 @@
   --mk-stars: #f0a030;
 
   /* type */
-  --mk-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
-  --mk-sans: 'Poppins', 'Segoe UI', Helvetica, Arial, sans-serif;
+  --mk-serif: 'Playfair Display', 'Playfair Fallback', Georgia, serif;
+  --mk-sans: 'Poppins', 'Poppins Fallback', Arial, sans-serif;
   --mk-script: 'Segoe Script', 'Bradley Hand', 'Savoye LET', cursive;
 
   /* shape */
@@ -113,7 +139,9 @@
   line-height: 1.25;
   margin: 0 0 8px;
 }
-.mk-accent { color: var(--mk-pink); }
+.mk-accent { color: var(--mk-pink-text); }
+/* large display text passes AA at 3:1, so the H1 keeps the vivid brand pink */
+.mk-h1 .mk-accent { color: var(--mk-pink); }
 .mk-serif-italic {
   font-family: var(--mk-serif);
   font-style: italic;
@@ -137,7 +165,7 @@
 }
 .mk-strip-text { font-weight: 600; color: var(--mk-ink); font-size: 0.95rem; }
 .mk-strip-cta {
-  color: var(--mk-pink);
+  color: var(--mk-pink-text);
   font-weight: 700;
   font-size: 0.8rem;
   letter-spacing: 0.09em;
@@ -184,7 +212,7 @@
 }
 .mk-login-link:hover { color: var(--mk-ink); }
 .mk-header-cta {
-  color: var(--mk-pink);
+  color: var(--mk-pink-text);
   font-weight: 700;
   font-size: 0.82rem;
   letter-spacing: 0.1em;
@@ -256,7 +284,7 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
-.mk-badge--outline { background: transparent; color: var(--mk-pink); border-color: var(--mk-pink); }
+.mk-badge--outline { background: transparent; color: var(--mk-pink-text); border-color: var(--mk-pink); }
 
 .mk-chips { display: flex; flex-wrap: wrap; gap: 12px 22px; align-items: center; }
 .mk-chips--stack { flex-direction: column; align-items: flex-start; gap: 8px; }
@@ -393,7 +421,7 @@
   border-radius: 999px;
   padding: 7px 12px;
   font-size: 0.6rem;
-  color: #c0b4ba;
+  color: #77686f;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -420,9 +448,9 @@
   padding: 3px 8px;
   white-space: nowrap;
 }
-.mk-intent--high { background: var(--mk-pink-soft); color: var(--mk-pink-deep); }
-.mk-intent--medium { background: #fdf2dc; color: #a06a12; }
-.mk-intent--booked { background: #e0f0ff; color: #1c62b8; }
+.mk-intent--high { background: var(--mk-pink-soft); color: #b41850; }
+.mk-intent--medium { background: #fdf2dc; color: #815409; }
+.mk-intent--booked { background: #e0f0ff; color: #17549e; }
 
 /* stat cards */
 .mk-stat {
@@ -435,7 +463,7 @@
 .mk-stat-label { font-size: 0.62rem; font-weight: 600; color: var(--mk-ink); line-height: 1.3; }
 .mk-stat-sub { font-size: 0.58rem; color: var(--mk-muted); }
 .mk-stat-value { font-size: 1.15rem; font-weight: 700; color: var(--mk-ink); margin-top: 4px; font-family: var(--mk-sans); }
-.mk-stat-delta { font-size: 0.58rem; font-weight: 700; color: var(--mk-green); background: var(--mk-green-soft); border-radius: 999px; padding: 2px 7px; }
+.mk-stat-delta { font-size: 0.58rem; font-weight: 700; color: #1d7040; background: var(--mk-green-soft); border-radius: 999px; padding: 2px 7px; }
 
 /* audit overview screen */
 .mk-audit-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #f1eef0; }
@@ -453,7 +481,7 @@
 .mk-leak-metric-label { font-size: 0.56rem; color: var(--mk-muted); }
 .mk-leak-metric-value { font-size: 0.95rem; font-weight: 700; color: var(--mk-ink); line-height: 1.15; }
 .mk-leak-list { font-size: 0.58rem; color: var(--mk-body); line-height: 1.7; }
-.mk-leak-recover { font-size: 0.85rem; font-weight: 700; color: var(--mk-pink); }
+.mk-leak-recover { font-size: 0.85rem; font-weight: 700; color: var(--mk-pink-text); }
 
 /* messages list (waitlist phone) */
 .mk-msgs-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; }
@@ -604,10 +632,10 @@
   color: var(--mk-ink); font-weight: 700; font-size: 0.92rem; pointer-events: none;
 }
 .mk-calc-result-value { font-size: clamp(1.7rem, 3vw, 2.2rem); font-weight: 700; color: var(--mk-pink); line-height: 1.1; }
-.mk-calc-result-unit { color: var(--mk-pink); font-size: 0.95rem; font-weight: 600; }
+.mk-calc-result-unit { color: var(--mk-pink-text); font-size: 0.95rem; font-weight: 600; }
 .mk-calc-hint {
   display: flex; align-items: center; gap: 9px;
-  color: var(--mk-pink); font-weight: 600; font-size: 0.88rem;
+  color: var(--mk-pink-text); font-weight: 600; font-size: 0.88rem;
   margin-top: 18px;
 }
 
@@ -721,7 +749,7 @@
 .mk-price-card { padding: 22px; }
 .mk-price-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .mk-price-label { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--mk-ink); font-size: 0.95rem; }
-.mk-price-amount { font-weight: 700; color: var(--mk-pink); font-size: 1.05rem; }
+.mk-price-amount { font-weight: 700; color: var(--mk-pink-text); font-size: 1.05rem; }
 .mk-price-secure { text-align: center; font-size: 0.8rem; color: var(--mk-muted); margin-top: 12px; }
 .mk-stripe-word { color: #635bff; font-weight: 700; font-size: 0.95rem; letter-spacing: -0.01em; }
 
@@ -734,7 +762,7 @@
 .mk-walkaway { padding: clamp(20px, 3vw, 30px); }
 .mk-walkaway-title { font-family: var(--mk-serif); font-weight: 600; color: var(--mk-ink); font-size: 1.25rem; margin-bottom: 16px; }
 .mk-walk-item { display: flex; gap: 10px; font-size: 0.9rem; color: var(--mk-ink); margin-bottom: 11px; line-height: 1.5; }
-.mk-walk-credit { color: var(--mk-pink); font-weight: 700; font-size: 0.95rem; line-height: 1.55; margin: 16px 0 10px; }
+.mk-walk-credit { color: var(--mk-pink-text); font-weight: 700; font-size: 0.95rem; line-height: 1.55; margin: 16px 0 10px; }
 .mk-walk-note { font-size: 0.88rem; color: var(--mk-body); line-height: 1.6; }
 .mk-walk-hr { border: none; border-top: 1px solid var(--mk-border); margin: 18px 0; }
 

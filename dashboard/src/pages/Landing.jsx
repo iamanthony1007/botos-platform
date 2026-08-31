@@ -119,7 +119,7 @@ function SoundFamiliar() {
           <span style={{ color: 'var(--mk-amber)', flex: 'none', paddingTop: 2 }}><Icon name="warning" size={22} strokeWidth={2} /></span>
           <span>
             If you have a hunch that you have good leads but aren&#39;t getting enough calls,
-            it&#39;s not a lead problem, it&#39;s a <strong style={{ color: 'var(--mk-pink)' }}>DM process problem.</strong>
+            it&#39;s not a lead problem, it&#39;s a <strong style={{ color: 'var(--mk-pink-text)' }}>DM process problem.</strong>
           </span>
         </div>
       </div>
@@ -330,6 +330,8 @@ export default function Landing() {
     <div className="mk-page">
       <AnnouncementStrip />
 
+      <main>
+
       {/* 2. hero */}
       <section className="mk-hero">
         <div className="mk-container mk-split">
@@ -370,7 +372,7 @@ export default function Landing() {
           </div>
           <div>
             <h2 className="mk-h2">You have leads in your DMs.</h2>
-            <p className="mk-serif-italic" style={{ fontSize: 'clamp(1.15rem, 2.2vw, 1.5rem)', lineHeight: 1.4, color: 'var(--mk-pink)', margin: '0 0 18px' }}>
+            <p className="mk-serif-italic" style={{ fontSize: 'clamp(1.15rem, 2.2vw, 1.5rem)', lineHeight: 1.4, color: 'var(--mk-pink-text)', margin: '0 0 18px' }}>
               You just aren&#39;t prioritizing the right ones{' '}
               <span style={{ color: 'var(--mk-ink)' }}>consistently.</span>
             </p>
@@ -449,6 +451,8 @@ export default function Landing() {
           <TrustChips stack />
         </div>
       </section>
+
+      </main>
 
       <div className="mk-copyright">MU AI &copy; 2026</div>
     </div>

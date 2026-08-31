@@ -1,3 +1,42 @@
+2026-08-31 FUNNEL SITE BUILT AND ON STAGING FOR NELLA. PRODUCTION UNTOUCHED.
+
+feat/funnel-site (off main f19d4a1) rebuilds the public site from Nella's
+three 2026-08-30 mockups: homepage at /, restyled 4-field /waitlist, new $97
+/audit with a disabled "Checkout coming soon" button until her Stripe Payment
+Link lands (STRIPE_PAYMENT_LINK constant in Audit.jsx, one-line change),
+/audit/thank-you shell, /how-it-works redirecting to /. SUPERSEDES the
+marketing components of feat/homepage-restructure; KEEPS its infrastructure
+(lazy split, PublicHeader pattern, usePublicScroll, verify-deploy chunk-graph
+fix). All device imagery is coded HTML/CSS, fictional contents, no
+screenshots. Client copy verbatim including its em dashes (recorded exception
+to the no-em-dash rule, commit 1151a42). Logo is the repo's golden rabbit
+icon without wordmark; the mockup "Moo" mark is unused.
+
+STAGING: deployed and verify-deploy green (staging ref 1, wrong ref 0, 15
+chunks). Login surface byte-identical to main (0-line diff on the four auth
+pages and index.html) and live-checked. Lighthouse: a11y 100 / BP 100 /
+SEO 92 on all three pages, CLS 0.372 fixed to 0 with metric-matched font
+fallbacks; perf number unreliable on the loaded build machine, re-measure via
+PSI. Full record: docs/funnel-site-build-report.md.
+
+WAITLIST E2E BLOCKED ON THREE ANTHONY STEPS, then rerun: (1) migration 015
+pasted into STAGING Supabase (adds phone, drops NOT NULL on retired form
+columns; production paste ONLY with the production deploy); (2) staging Pages
+env vars ALL missing per the function's GET diagnostics (SUPABASE_URL,
+SUPABASE_SERVICE_KEY, TURNSTILE_SECRET_KEY, RESEND_API_KEY,
+NELLA_NOTIFY_EMAIL); (3) Turnstile sitekey does not allow the staging
+hostname, widget renders blank there.
+
+PENDING NELLA: Stripe Payment Link (success URL https://getmu.co/audit/thank-you),
+$297 Credit confirmation, thank-you fulfilment flow, testimonial 1 wording
+("hire Nella again", mockup text illegible at that word), dashboard palette
+question (separate branch if yes), illustrative-caption question (default no).
+
+GATE UNCHANGED: production deploy only on Nella's staging sign-off, with the
+deploy verifier confirming the login surface, and migration 015 to production
+in the same window. The Supabase MCP in this environment reaches neither
+BotOS project, so all SQL goes through Anthony's SQL editor paste.
+
 2026-08-30 MT PHASE 1 IS LIVE ON PRODUCTION. TENANT ISOLATION REAL AT THE
 DATABASE. MATRIX FULLY GREEN. SYSTEM STILL PAUSED.
 

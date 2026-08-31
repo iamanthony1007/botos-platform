@@ -22,7 +22,7 @@ export default function AuditThankYou() {
   return (
     <div className="mk-page mk-page--blush">
       <PublicHeader right="home" />
-      <div className="mk-container">
+      <main className="mk-container">
         <div className="mk-card mk-ty-card">
           <span style={{ width: 58, height: 58, borderRadius: '50%', background: 'var(--mk-pink-soft)', color: 'var(--mk-pink-deep)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px' }}>
             <Icon name="check" size={28} strokeWidth={3} />
@@ -36,7 +36,7 @@ export default function AuditThankYou() {
             Back to Home
           </button>
         </div>
-      </div>
+      </main>
     </div>
   )
 }

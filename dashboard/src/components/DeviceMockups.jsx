@@ -33,7 +33,7 @@ const ROW_FILLS = [
 // Phone: the Med Spa DM thread from the hero mockup.
 export function PhoneChat({ style }) {
   return (
-    <div className="mk-phone" style={style}>
+    <div className="mk-phone" style={style} aria-hidden="true">
       <div className="mk-phone-screen">
         <div className="mk-chat-head">
           <MiniAvatar />
@@ -69,7 +69,7 @@ const CONV_ROWS = [
 
 export function ConversationsPanel() {
   return (
-    <div className="mk-laptop">
+    <div className="mk-laptop" aria-hidden="true">
       <div className="mk-laptop-screen mk-conv">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px 0' }}>
           <span className="mk-conv-title">Conversations</span>
@@ -119,19 +119,19 @@ export function StatCard({ label, sub, value, delta, spark, iconName }) {
 // around them. Positions collapse to a stacked grid on mobile (see CSS).
 export function HeroCollage() {
   return (
-    <div className="mk-collage" aria-label="Illustration of DM conversations turning into booked appointments">
+    <div className="mk-collage" role="img" aria-label="Illustration of DM conversations turning into booked appointments">
       <div className="mk-collage-laptop"><ConversationsPanel /></div>
       <div className="mk-collage-phone"><PhoneChat /></div>
-      <div className="mk-collage-stat mk-collage-stat--1">
+      <div className="mk-collage-stat mk-collage-stat--1" aria-hidden="true">
         <StatCard label="Conversations Booked" sub="This Month" value="392" spark />
       </div>
-      <div className="mk-collage-stat mk-collage-stat--2">
+      <div className="mk-collage-stat mk-collage-stat--2" aria-hidden="true">
         <StatCard label="Lost Revenue" value="$43,600" iconName="zap" />
       </div>
-      <div className="mk-collage-stat mk-collage-stat--3">
+      <div className="mk-collage-stat mk-collage-stat--3" aria-hidden="true">
         <StatCard label="Appointments Booked" sub="This Month" value="37" spark />
       </div>
-      <div className="mk-collage-stat mk-collage-stat--4">
+      <div className="mk-collage-stat mk-collage-stat--4" aria-hidden="true">
         <StatCard label="Revenue Generated" sub="This Month" value="$24,700" delta="+32%" spark />
       </div>
     </div>
@@ -144,7 +144,7 @@ const AUDIT_FINDINGS = ['Slow response time', 'Under-value proposition', 'Low qu
 
 export function AuditOverviewLaptop() {
   return (
-    <div className="mk-laptop">
+    <div className="mk-laptop" aria-hidden="true">
       <div className="mk-laptop-screen">
         <div className="mk-audit-head">
           <MiniAvatar bg={ROW_FILLS[2]} size={22} />
@@ -173,7 +173,7 @@ export function AuditOverviewLaptop() {
 // Phone: the Revenue Leakage panel.
 export function LeakagePhone({ style }) {
   return (
-    <div className="mk-phone" style={style}>
+    <div className="mk-phone" style={style} aria-hidden="true">
       <div className="mk-phone-screen mk-leak">
         <div>
           <div className="mk-leak-title">Revenue Leakage</div>
@@ -213,7 +213,7 @@ export function LeakagePhone({ style }) {
 // The audit-overview collage used twice on the homepage.
 export function AuditCollage() {
   return (
-    <div className="mk-collage-audit" aria-label="Illustration of a DM audit overview with a revenue leakage report">
+    <div className="mk-collage-audit" role="img" aria-label="Illustration of a DM audit overview with a revenue leakage report">
       <div className="mk-collage-audit-laptop"><AuditOverviewLaptop /></div>
       <div className="mk-collage-audit-phone"><LeakagePhone /></div>
     </div>
@@ -231,7 +231,7 @@ const MSG_ROWS = [
 
 export function MessagesPhone({ style }) {
   return (
-    <div className="mk-phone" style={style}>
+    <div className="mk-phone" style={style} aria-hidden="true">
       <div className="mk-phone-screen">
         <div className="mk-msgs-head">
           <span className="mk-msgs-title">Messages</span>
@@ -265,7 +265,7 @@ export function MessagesPhone({ style }) {
 // briefing (mockup showed blue bubbles; the funnel site is rose).
 export function TabletChat({ style }) {
   return (
-    <div className="mk-tablet" style={style}>
+    <div className="mk-tablet" style={style} aria-hidden="true">
       <div className="mk-tablet-screen">
         <div className="mk-chat-body" style={{ padding: '16px 12px' }}>
           <div className="mk-bubble mk-bubble--in">Hey! I&#39;d love to book a consult...</div>
@@ -284,14 +284,14 @@ export function TabletChat({ style }) {
 // not readable fake documents.
 export function AuditPapers() {
   return (
-    <div className="mk-collage-papers" aria-label="Illustration of a DM audit report with a chat and notes">
-      <div className="mk-paper mk-collage-paper1">
+    <div className="mk-collage-papers" role="img" aria-label="Illustration of a DM audit report with a chat and notes">
+      <div className="mk-paper mk-collage-paper1" aria-hidden="true">
         <div className="mk-paper-title">DM AUDIT</div>
         {[0, 1, 2, 3, 4, 5].map(i => (
           <div key={i} className={i % 3 === 2 ? 'mk-paper-line mk-paper-line--short' : 'mk-paper-line'} />
         ))}
       </div>
-      <div className="mk-paper mk-collage-paper2">
+      <div className="mk-paper mk-collage-paper2" aria-hidden="true">
         {[0, 1, 2, 3, 4, 5, 6].map(i => (
           <div key={i} style={{ display: 'flex', gap: 5 }}>
             <div className="mk-paper-line" style={{ flex: 2 }} />
@@ -301,7 +301,7 @@ export function AuditPapers() {
         ))}
       </div>
       <div className="mk-collage-tablet"><TabletChat /></div>
-      <div className="mk-note mk-note--pink mk-collage-note">
+      <div className="mk-note mk-note--pink mk-collage-note" aria-hidden="true">
         &#10003; More calls.<br />
         &#10003; More clients<br />
         &#10003; More revenue<br />
