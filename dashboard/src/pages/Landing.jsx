@@ -135,6 +135,11 @@ function SoundFamiliar() {
 const fmtUsd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const fmtNum = new Intl.NumberFormat('en-US')
 
+// Secondary line under the headline result, per Nella's 2026-08-31 answer:
+// the realistically recoverable share of the leakage. The copy derives its
+// percentage from this constant, so changing the rate keeps them in step.
+const RECOVERY_RATE = 0.25
+
 function digitsOnly(s, max) {
   const n = s.replace(/[^0-9]/g, '').slice(0, 9)
   if (n === '') return ''
@@ -185,13 +190,17 @@ function Calculator() {
               <span className="mk-calc-op" aria-hidden="true">&#215;</span>
               {field('Your average sale', sale, setSale, { prefix: '$', max: 10000000, ariaLabel: 'Your average sale in dollars' })}
               <span className="mk-calc-op" aria-hidden="true">=</span>
-              <div className="mk-calc-field">
+              <div className="mk-calc-field mk-calc-field--result">
                 <div className="mk-calc-label">Potential revenue you&#39;re losing</div>
                 <div className="mk-calc-result-value" aria-live="polite">
                   {fmtUsd.format(Math.round(lost))}
                   <div className="mk-calc-result-unit">/month</div>
                 </div>
               </div>
+            </div>
+            <div className="mk-calc-recover">
+              Realistically recoverable: <strong>{fmtUsd.format(Math.round(lost * RECOVERY_RATE))}/month</strong>, based
+              on winning back just {Math.round(RECOVERY_RATE * 100)}% of those lost conversations.
             </div>
             <div className="mk-calc-hint">
               <Icon name="refresh" size={16} strokeWidth={2.2} />
@@ -211,10 +220,11 @@ const GET_CARDS = [
   { icon: 'bar-chart', title: 'Revenue Leakage Report', text: "See exactly how much revenue you're leaking (and how much it's costing you)." },
   { icon: 'target', title: 'Action Plan', text: 'Step-by-step plan to fix the leaks and start booking more calls.' },
   { icon: 'video', title: 'DM Performance Review', text: "I'll review your team's responses, messaging and follow-up flow." },
-  // $297 Credit is rendered as shown in the mockup; the figure is pending
-  // Nella's confirmation (flagged in the build report). Swap the string here.
-  { icon: 'gift', title: '$297 Credit', text: 'This audit cost will be credited toward our full offer if we work together.' },
-  { icon: 'gear', title: '100% Actionable', text: 'No fluff. Just clear, practical next steps.' },
+  // Figure confirmed by Nella 2026-08-31: the credit matches the $97 price,
+  // not the mockup's $297.
+  { icon: 'gift', title: '$97 Credit', text: 'This audit cost will be credited toward our full offer if we work together.' },
+  // Card six replaced per Nella's 2026-08-31 answer (was "100% Actionable").
+  { icon: 'phone', title: 'A Strategy Call', text: "I'll break down what the issue is so you know exactly what to do next." },
 ]
 
 function WhatYouGet() {

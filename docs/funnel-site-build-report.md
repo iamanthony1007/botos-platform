@@ -17,9 +17,9 @@ no-em-dash rule covers our prose and code only, recorded in commit 1151a42.
 | 3 | "You have leads in your DMs" | Built | Coded audit-overview collage left, copy and CTA right |
 | 4 | Profile card | Built | Her real photo (repo asset, 640px JPEG). Local time computed from Europe/Madrid, refreshes every 30s, never faked |
 | 5 | "Sound familiar?" grid | Built | Six line-icon pains plus the warning callout, wording verbatim |
-| 6 | Revenue calculator | Built | leads x (pct/100) x avg sale. Defaults 100 / 60% / $2,000 = $120,000. Edge-tested: blank, non-numeric, percent clamped to 100, value caps; NaN cannot render |
+| 6 | Revenue calculator | Built | leads x (pct/100) x avg sale. Defaults 100 / 60% / $2,000 = $120,000. Edge-tested: blank, non-numeric, percent clamped to 100, value caps; NaN cannot render. Per Nella 2026-08-31: one secondary line beneath the headline shows recoverable revenue at RECOVERY_RATE = 0.25 (constant in Landing.jsx; the copy derives its 25% from it). No extra inputs or controls |
 | 7 | "I'll audit your DMs" | Built | Five-line checklist, CTA, "50+ businesses" trust line |
-| 8 | "What you get" grid | Built | Six cards. **$297 Credit rendered as shown, PENDING Nella's confirmation**; swap is one string in Landing.jsx GET_CARDS |
+| 8 | "What you get" grid | Built | Six cards. Per Nella 2026-08-31: credit card reads **$97 Credit** (was the mockup's $297), and card six is **"A Strategy Call"** ("I'll break down what the issue is so you know exactly what to do next."), replacing "100% Actionable" |
 | 9 | Audit-credit note line | Built | Verbatim |
 | 10 | Testimonials | Built | Four cards, 5.0 stars, dates, highlight spans placed as drawn. **One word needs Nella's eye**: card 1's mockup text is AI-garbled at "I would happily hire ___ again"; rendered as "Nella" |
 | 11 | Footer CTA strip | Built | Calendar icon, two-line close, CTA, stacked chips |
@@ -56,8 +56,14 @@ only the visible "powered by stripe" wordmark).
 **String to pass to Nella for the Payment Link success URL:**
 `https://getmu.co/audit/thank-you`
 
-/audit/thank-you is a shell (confirmation headline, receipt line, back
-button); the intake or booking element waits on her fulfilment answer.
+/audit/thank-you: per Nella's 2026-08-31 answer, the page itself delivers
+the audit instructions, so fulfilment works from day one before any email
+automation exists. The page carries an AUDIT_INSTRUCTIONS structure
+(AuditThankYou.jsx, loud TODO) that renders her full instructions once the
+docx Anthony is forwarding arrives; the docx has NOT arrived yet (checked
+Downloads, Documents and Gmail 2026-08-31), so the page renders the
+confirmation shell alone rather than shipping invented copy. Transcribing
+the docx into the array is the entire change.
 
 ## Device imagery
 
@@ -113,14 +119,62 @@ Waiting on Anthony (staging E2E of the waitlist is blocked on all three):
 Then: full waitlist submit with a real Turnstile solve, row verified in
 staging Supabase, Resend notification received.
 
-Waiting on Nella:
-1. Stripe Payment Link (success URL string above).
-2. $297 Credit figure confirmation.
-3. Thank-you page fulfilment flow (intake, booking, or email-only).
-4. Testimonial card 1 wording ("hire Nella again", mockup illegible).
-5. Dashboard palette question (out of scope here either way).
-6. Whether the devices get a discreet "illustrative" caption (default none).
+Waiting on Nella (updated 2026-08-31 after her answers; $97 credit, card
+six, calculator recovery line and page-as-delivery are now ANSWERED and
+built):
+1. Stripe Payment Link (success URL string above). Stays disabled-until-real;
+   one-line swap in Audit.jsx when it arrives.
+2. Testimonial card 1 wording ("hire Nella again", mockup illegible).
+3. Dashboard palette question (out of scope here either way).
+4. Whether the devices get a discreet "illustrative" caption (default none).
+
+Waiting on Anthony, new: the audit-instructions docx. Announced as
+forwarded, not yet received (Downloads, Documents and Gmail all checked
+2026-08-31). The thank-you page renders it as soon as it is transcribed into
+AUDIT_INSTRUCTIONS in AuditThankYou.jsx.
 
 Deferred by design: a meta description would improve SEO but lives in
 index.html, which is frozen with the login shell; add it in the first branch
 after the Meta review thread closes.
+
+## Phase 2, scoped 2026-08-31: Stripe webhook fulfilment. DO NOT BUILD YET
+
+Gate: Nella's Stripe access exists and her Payment Link is live. Nothing
+below is started until then; this section exists so the build is mechanical.
+
+Route: a Cloudflare Pages Function, dashboard/functions/api/stripe-webhook.js,
+POST only, alongside the waitlist function.
+
+1. Signature verification first, before any parsing: the Stripe-Signature
+   header (t and v1 fields) against the RAW request body with
+   HMAC-SHA256(STRIPE_WEBHOOK_SECRET), constant-time compare, 5-minute
+   timestamp tolerance. crypto.subtle covers this; no Stripe SDK, no new
+   dependencies. Unverified requests get 400 and do nothing.
+2. Handle checkout.session.completed only; every other event type returns
+   200 unhandled. Extract from session.customer_details: email, name, phone;
+   Instagram handle from the Payment Link's custom field. TWO PAYMENT LINK
+   PREREQUISITES FOR NELLA'S STRIPE, or these fields simply do not exist in
+   the event: enable phone number collection, and add a custom field with
+   key instagram_handle.
+3. Record the purchase, awaited, before any email: insert into
+   audit_purchases via migration 016 (016_audit_purchases.sql plus
+   rollback). Sketch: id uuid pk, created_at, stripe_session_id text UNIQUE,
+   email not null, name, phone, instagram_handle, amount_total integer,
+   currency text, payment_status text, raw_session jsonb. RLS enabled, zero
+   anon access, authenticated read-only at most; writes only through this
+   function on the service key (the migration 010 model). The UNIQUE on
+   stripe_session_id makes Stripe's retry deliveries idempotent: on
+   conflict, skip the emails, return 200.
+4. Then, not awaited (the waitlist function's waitUntil pattern): Resend to
+   the buyer carrying the SAME instructions the thank-you page renders
+   (extract AUDIT_INSTRUCTIONS into one shared module both import, so page
+   and email cannot drift), and a Resend notification to Nella with the
+   buyer's handle, email and phone.
+5. Env, via Pages UI per the standing rule: STRIPE_WEBHOOK_SECRET new;
+   SUPABASE_URL, SUPABASE_SERVICE_KEY, RESEND_API_KEY, NELLA_NOTIFY_EMAIL
+   already required by the waitlist function. No Stripe API key is needed
+   at all: the webhook only receives and verifies.
+6. Stripe-side setup: webhook endpoint registered for
+   https://getmu.co/api/stripe-webhook on checkout.session.completed, secret
+   copied into the env. Staging first with Stripe test mode and the CLI
+   relay, then production.

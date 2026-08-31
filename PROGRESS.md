@@ -1,3 +1,29 @@
+2026-08-31 (later) NELLA'S ANSWERS APPLIED, ON STAGING. PHASE 2 SCOPED.
+
+Applied to feat/funnel-site and redeployed to staging (verify-deploy green,
+live bundle grep: "A Strategy Call" 1, "$97 Credit" 1, "Realistically
+recoverable" 1, "$297" 0):
+- What-you-get card five reads $97 Credit (was the mockup's $297); card six
+  is "A Strategy Call" ("I'll break down what the issue is so you know
+  exactly what to do next."), replacing "100% Actionable".
+- Calculator: all four columns now sit inline on desktop per the mockup, and
+  one secondary line beneath the headline shows recoverable revenue at
+  RECOVERY_RATE = 0.25 (constant in Landing.jsx; copy derives its 25% from
+  it). No new inputs. Recompute and zero/blank paths re-verified, no NaN.
+- Thank-you page is now THE delivery mechanism per her answer: it renders
+  the full audit instructions from AUDIT_INSTRUCTIONS in AuditThankYou.jsx.
+  THE DOCX HAS NOT ARRIVED (Downloads, Documents, Gmail checked); until it
+  is transcribed the page renders the confirmation shell, nothing invented.
+  Transcribing the docx into the array is the entire remaining change.
+- Stripe button unchanged: disabled until the real Payment Link lands.
+- PHASE 2 SCOPED, NOT BUILT (gate: Nella's Stripe access): Pages Function
+  /api/stripe-webhook with raw-body HMAC signature verification, insert into
+  audit_purchases via migration 016 (stripe_session_id UNIQUE for retry
+  idempotency), then unawaited Resend to buyer (same shared instructions
+  module as the page) and notify to Nella with handle, email, phone. Two
+  Payment Link prerequisites recorded: phone collection on, custom field
+  instagram_handle. Full sketch in docs/funnel-site-build-report.md.
+
 2026-08-31 FUNNEL SITE BUILT AND ON STAGING FOR NELLA. PRODUCTION UNTOUCHED.
 
 feat/funnel-site (off main f19d4a1) rebuilds the public site from Nella's
