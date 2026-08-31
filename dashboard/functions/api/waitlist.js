@@ -3,36 +3,20 @@
 // Holds the Supabase SERVICE key. This is the only server-side code in the
 // dashboard. The anon key in the browser bundle has no access to this table
 // (see migration 010), so every write must come through here.
+//
+// 2026-08-31: rewritten for the funnel-site waitlist (migration 015). The
+// form is now four required fields (business name, Instagram handle, email,
+// phone), down from the old three-step application. Legacy columns stay in
+// the table, nullable, so old applications keep their data; this function
+// simply no longer collects them.
 
-const ALLOWED = {
-  lead_source: ['Paid Ads', 'Organic', 'Both'],
-  response_speed: ['Less than 5 minutes', 'Less than 1 hour', 'Same day', 'Next day or later'],
-  has_dm_script: [
-    'Yes, we have one that works',
-    'Yes, but it needs improvement',
-    'No, we dont have one yet'
-  ],
-  has_booking_system: ['Yes', 'No (I need help setting this up)'],
-  current_crm: ['GoHighLevel', 'HubSpot', 'SalesForce', 'Close.io', 'Airtable', 'Google Sheets', 'None yet'],
-  team_size: ['Just me', '1 setter', '2-3 setters', '4+ setters']
-};
+const REQUIRED_TEXT = ['business_name', 'instagram_handle', 'email', 'phone'];
 
-const BOTTLENECKS = [
-  'I cant keep up with DMs/volume',
-  "My messages don't convert into bookings",
-  'Too many unqualified leads',
-  "Follow up isn't consistent",
-  'I need a better system/structure'
-];
-
-const REQUIRED_TEXT = [
-  'first_name', 'last_name', 'email', 'instagram_handle',
-  'what_you_sell', 'main_offer_price', 'inbound_leads_per_day',
-  'booked_calls_per_week', 'avg_monthly_revenue', 'failed_dm_example'
-];
-
-const MAX_LEN = 5000;
+const MAX_LEN = 500;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+// Permissive on purpose: digits with common separators, 7 to 20 digits total.
+// Never lose an application to a formatting quibble.
+const PHONE_RE = /^[+()\d\s.-]{7,25}$/;
 
 function json(status, obj) {
   return new Response(JSON.stringify(obj), {
@@ -134,30 +118,10 @@ export async function onRequestPost(context) {
     row[f] = v;
   }
   if (!EMAIL_RE.test(row.email)) return json(400, { error: 'Please enter a valid email address.' });
-
-  row.business_name = clean(body.business_name) || null;
-  row.anything_else = clean(body.anything_else) || null;
+  if (!PHONE_RE.test(row.phone)) return json(400, { error: 'Please enter a valid phone number.' });
 
   // Strip a leading @ so handles are stored consistently.
   row.instagram_handle = row.instagram_handle.replace(/^@+/, '');
-
-  for (const [field, options] of Object.entries(ALLOWED)) {
-    const v = clean(body[field]);
-    const optional = field === 'has_booking_system';
-    if (!v) {
-      if (optional) { row[field] = null; continue; }
-      return json(400, { error: `Missing required field: ${field}` });
-    }
-    // Must match the DB check constraints exactly or the insert fails.
-    if (!options.includes(v)) return json(400, { error: `Invalid value for ${field}` });
-    row[field] = v;
-  }
-
-  const picked = Array.isArray(body.bottlenecks) ? body.bottlenecks : [];
-  row.bottlenecks = picked.filter(b => BOTTLENECKS.includes(b));
-  if (row.bottlenecks.length === 0) {
-    return json(400, { error: 'Please select at least one bottleneck.' });
-  }
 
   row.ip_hash = ip ? await sha256(ip) : null;
   row.user_agent = clean(request.headers.get('User-Agent') || '') || null;
@@ -191,30 +155,12 @@ export async function onRequestPost(context) {
   // show the applicant an error for something that actually worked.
   if (env.RESEND_API_KEY && env.NELLA_NOTIFY_EMAIL) {
     const lines = [
-      `${row.first_name} ${row.last_name} applied to the MU AI waitlist.`,
+      `${row.business_name} joined the MU AI waitlist.`,
       '',
-      `Email: ${row.email}`,
+      `Business: ${row.business_name}`,
       `Instagram: @${row.instagram_handle}`,
-      `Business: ${row.business_name || '(not given)'}`,
-      '',
-      `Sells: ${row.what_you_sell}`,
-      `Offer price: ${row.main_offer_price}`,
-      `Monthly revenue: ${row.avg_monthly_revenue}`,
-      `Leads/day: ${row.inbound_leads_per_day}`,
-      `Booked calls/week: ${row.booked_calls_per_week}`,
-      `Lead source: ${row.lead_source}`,
-      `Response speed: ${row.response_speed}`,
-      `Team: ${row.team_size}`,
-      `CRM: ${row.current_crm}`,
-      `DM script: ${row.has_dm_script}`,
-      `Booking system: ${row.has_booking_system || '(not answered)'}`,
-      `Bottlenecks: ${row.bottlenecks.join(', ')}`,
-      '',
-      'Failed DM example:',
-      row.failed_dm_example,
-      '',
-      'Anything else:',
-      row.anything_else || '(nothing)'
+      `Email: ${row.email}`,
+      `Phone: ${row.phone}`
     ];
     context.waitUntil(
       fetch('https://api.resend.com/emails', {
@@ -227,7 +173,7 @@ export async function onRequestPost(context) {
           from: 'MU AI Waitlist <waitlist@getmu.co>',
           to: [env.NELLA_NOTIFY_EMAIL],
           reply_to: row.email,
-          subject: `New waitlist application: ${row.first_name} ${row.last_name} (@${row.instagram_handle})`,
+          subject: `New waitlist signup: ${row.business_name} (@${row.instagram_handle})`,
           text: lines.join('\n')
         })
       })
