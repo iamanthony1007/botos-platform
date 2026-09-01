@@ -58,12 +58,14 @@ only the visible "powered by stripe" wordmark).
 
 /audit/thank-you: per Nella's 2026-08-31 answer, the page itself delivers
 the audit instructions, so fulfilment works from day one before any email
-automation exists. The page carries an AUDIT_INSTRUCTIONS structure
-(AuditThankYou.jsx, loud TODO) that renders her full instructions once the
-docx Anthony is forwarding arrives; the docx has NOT arrived yet (checked
-Downloads, Documents and Gmail 2026-08-31), so the page renders the
-confirmation shell alone rather than shipping invented copy. Transcribing
-the docx into the array is the entire change.
+automation exists. DONE 2026-09-01: the content of her document "Getting
+Your DM Messages to Me (Before Our Call).docx" is transcribed verbatim into
+the AuditInstructions component in AuditThankYou.jsx (title, intro, the
+ten-step messages-only export walkthrough with its video link, and the
+what-happens-next section) and renders under the order confirmation.
+Verified on staging: the live bundle carries the full text. Phase 2's buyer
+email must be generated from this same component's copy so page and email
+cannot drift.
 
 ## Device imagery
 
@@ -128,10 +130,10 @@ built):
 3. Dashboard palette question (out of scope here either way).
 4. Whether the devices get a discreet "illustrative" caption (default none).
 
-Waiting on Anthony, new: the audit-instructions docx. Announced as
-forwarded, not yet received (Downloads, Documents and Gmail all checked
-2026-08-31). The thank-you page renders it as soon as it is transcribed into
-AUDIT_INSTRUCTIONS in AuditThankYou.jsx.
+The audit-instructions docx arrived 2026-09-01 and is rendered on
+/audit/thank-you; that item is closed. Fulfilment is live the moment the
+Payment Link is: buyer pays, lands on the thank-you page, follows the
+export instructions.
 
 Deferred by design: a meta description would improve SEO but lives in
 index.html, which is frozen with the login shell; add it in the first branch

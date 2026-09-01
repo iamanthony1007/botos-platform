@@ -1,3 +1,16 @@
+2026-09-01 AUDIT DELIVERY CONTENT LIVE ON THE THANK-YOU PAGE (STAGING).
+
+Nella's "Getting Your DM Messages to Me (Before Our Call).docx" arrived and
+is transcribed verbatim into the AuditInstructions component in
+AuditThankYou.jsx: title, intro, the ten-step messages-only Instagram export
+walkthrough (JSON format, with her video link), and the what-happens-next
+section. /audit/thank-you now delivers fulfilment by itself: buyer pays,
+lands here, follows the export steps. Staging redeployed, verify-deploy
+green, live bundle grep confirms the full text. Phase 2's buyer email must
+reuse this component's copy so page and email cannot drift (recorded in the
+report). With this, the only funnel item still waiting on Nella that blocks
+go-live is the Stripe Payment Link itself.
+
 2026-08-31 (later) NELLA'S ANSWERS APPLIED, ON STAGING. PHASE 2 SCOPED.
 
 Applied to feat/funnel-site and redeployed to staging (verify-deploy green,
