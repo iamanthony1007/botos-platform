@@ -115,9 +115,14 @@ Waiting on Anthony (staging E2E of the waitlist is blocked on all three):
    staging report ALL env missing (SUPABASE_URL, SUPABASE_SERVICE_KEY,
    TURNSTILE_SECRET_KEY, RESEND_API_KEY, NELLA_NOTIFY_EMAIL). Set via
    Cloudflare Pages UI on botos-platform-staging.
-3. Turnstile hostname: the widget stays blank on staging; the sitekey does
-   not appear to allow botos-platform-staging.pages.dev. Add the hostname to
-   the Turnstile widget config (or accept E2E on production post-sign-off).
+3. Turnstile hostname, CONFIRMED 2026-09-01 with the error code: the widget
+   fails on staging with Turnstile error 110200, "Unknown domain: Domain not
+   allowed" (captured via a diagnostic render with an error callback; some
+   browsers display it as "Unable to connect to website"). Fix in the
+   Cloudflare dashboard: Turnstile, open the widget with sitekey
+   0x4AAAAAAEIrdNtHqz3JxYx8, Hostname management, add
+   botos-platform-staging.pages.dev (this also covers the per-deploy
+   preview subdomains). getmu.co stays listed for production.
 Then: full waitlist submit with a real Turnstile solve, row verified in
 staging Supabase, Resend notification received.
 
