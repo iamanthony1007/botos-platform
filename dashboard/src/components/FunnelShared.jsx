@@ -67,8 +67,9 @@ export function Stars({ gold = false, size = '0.95rem' }) {
   )
 }
 
-// Illustrative avatar row. Deliberately abstract gradient circles, not faces:
-// no stock photos, nothing that could resolve to a real person (briefing 6).
+// Illustrative avatar treatment: gradient circles carrying a simple person
+// silhouette. Reads as people without using stock photos or anything that
+// could resolve to a real person (briefing 6).
 const AVATAR_FILLS = [
   'linear-gradient(135deg, #f0a8c4, #d96a95)',
   'linear-gradient(135deg, #e8c9a8, #c99263)',
@@ -77,11 +78,26 @@ const AVATAR_FILLS = [
   'linear-gradient(135deg, #a8cbe8, #6a92c9)',
 ]
 
+// Head-and-shoulders glyph, anchored to the bottom of its circle like a
+// profile photo. Scales with the circle via the .mk-avatar-person CSS.
+export function PersonGlyph() {
+  return (
+    <span className="mk-avatar-person" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="12" cy="8.6" r="4.4" />
+        <path d="M12 14.6c-4.9 0-8.9 3.4-8.9 7.9V24h17.8v-1.5c0-4.5-4-7.9-8.9-7.9z" />
+      </svg>
+    </span>
+  )
+}
+
 export function AvatarRow({ small = false }) {
   return (
     <div className="mk-avatars" aria-hidden="true">
       {AVATAR_FILLS.map((bg, i) => (
-        <span key={i} className={small ? 'mk-avatar mk-avatar--sm' : 'mk-avatar'} style={{ background: bg }} />
+        <span key={i} className={small ? 'mk-avatar mk-avatar--sm' : 'mk-avatar'} style={{ background: bg }}>
+          <PersonGlyph />
+        </span>
       ))}
     </div>
   )

@@ -1,3 +1,27 @@
+2026-09-01 (later) ANTHONY'S LAYOUT CORRECTIONS APPLIED, ON STAGING.
+
+Three corrections from his review of the staging preview:
+1. Header: taller, rabbit logo included on the homepage strip (bigger
+   everywhere, still wordmark-free) and Log in restyled as a bordered pink
+   pill (.mk-login-btn). Homepage strip is now logo / centered message and
+   waitlist CTA / Log in; subpage headers match.
+2. Device mockups hold real Apple proportions: iPhone frames at 9:18.6 with
+   dynamic island and home bar, MacBook screens at 16:10 over a hinged base
+   with lid notch, iPad at 3:4. Every screen element is sized in cqw against
+   the device width (container queries), so devices render correctly at any
+   size instead of stretching with content. LESSON RECORDED: container-type
+   zeroes an element's intrinsic width, and grid/flex stretch is disabled by
+   auto margins and centered alignment, so device wrappers need EXPLICIT
+   widths in the mobile collage overrides; without them the phones collapsed
+   to 0x0 on mobile (caught in-browser, fixed with higher-specificity
+   explicit-width rules).
+3. Avatar circles now carry person silhouettes (PersonGlyph in
+   FunnelShared), in the trust rows, conversation rows, chat headers and
+   story rings. Still no photos, nothing resolving to a real person.
+Verified desktop and 375px on all four pages (phones/laptops measured, all
+screen content fits its frame, no horizontal overflow), staging redeployed,
+verify-deploy green, login surface untouched.
+
 2026-09-01 AUDIT DELIVERY CONTENT LIVE ON THE THANK-YOU PAGE (STAGING).
 
 Nella's "Getting Your DM Messages to Me (Before Our Call).docx" arrived and

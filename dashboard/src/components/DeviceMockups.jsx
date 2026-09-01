@@ -1,4 +1,4 @@
-import { Icon } from './FunnelShared'
+import { Icon, PersonGlyph } from './FunnelShared'
 
 // Coded illustrative device screens for the funnel pages, rebuilt from the
 // mockups as HTML/CSS per the briefing: no dashboard screenshots, no sliced
@@ -19,7 +19,11 @@ function Sparkline({ points = '0,26 14,18 26,22 40,10 52,16 66,6 80,12 96,2' }) 
 }
 
 function MiniAvatar({ bg = 'linear-gradient(135deg, #f0a8c4, #d96a95)', size = 22 }) {
-  return <span style={{ width: size, height: size, borderRadius: '50%', background: bg, flex: 'none', display: 'inline-block' }} aria-hidden="true" />
+  return (
+    <span style={{ width: size, height: size, borderRadius: '50%', background: bg, flex: 'none', display: 'inline-block', overflow: 'hidden' }} aria-hidden="true">
+      <PersonGlyph />
+    </span>
+  )
 }
 
 const ROW_FILLS = [
@@ -36,7 +40,7 @@ export function PhoneChat({ style }) {
     <div className="mk-phone" style={style} aria-hidden="true">
       <div className="mk-phone-screen">
         <div className="mk-chat-head">
-          <MiniAvatar />
+          <MiniAvatar size="10cqw" />
           <div>
             <div className="mk-chat-name">Med Spa Account</div>
             <div className="mk-chat-sub">Active now</div>
@@ -53,6 +57,7 @@ export function PhoneChat({ style }) {
           <span>Type a message...</span>
           <Icon name="arrow-right" size={11} strokeWidth={2.4} style={{ color: 'var(--mk-pink)' }} />
         </div>
+        <div className="mk-phone-homebar" />
       </div>
     </div>
   )
@@ -71,7 +76,7 @@ export function ConversationsPanel() {
   return (
     <div className="mk-laptop" aria-hidden="true">
       <div className="mk-laptop-screen mk-conv">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px 0' }}>
+        <div className="mk-conv-topbar">
           <span className="mk-conv-title">Conversations</span>
           <Icon name="refresh" size={12} strokeWidth={2.2} style={{ color: 'var(--mk-muted)' }} />
         </div>
@@ -82,7 +87,7 @@ export function ConversationsPanel() {
         </div>
         {CONV_ROWS.map((r, i) => (
           <div className="mk-conv-row" key={r.handle}>
-            <MiniAvatar bg={ROW_FILLS[i]} size={24} />
+            <MiniAvatar bg={ROW_FILLS[i]} size="6.4cqw" />
             <div>
               <div className="mk-conv-handle">{r.handle}</div>
               <div className="mk-conv-note">{r.note}</div>
@@ -147,7 +152,7 @@ export function AuditOverviewLaptop() {
     <div className="mk-laptop" aria-hidden="true">
       <div className="mk-laptop-screen">
         <div className="mk-audit-head">
-          <MiniAvatar bg={ROW_FILLS[2]} size={22} />
+          <MiniAvatar bg={ROW_FILLS[2]} size="5.6cqw" />
           <span className="mk-audit-title">DM Audit Overview</span>
         </div>
         <div className="mk-audit-cols">
@@ -182,7 +187,7 @@ export function LeakagePhone({ style }) {
         <hr className="mk-leak-hr" />
         <div>
           <div className="mk-leak-metric-label">Potential Lost Revenue</div>
-          <div className="mk-leak-metric-value">$24,700<span style={{ fontSize: '0.55rem', color: 'var(--mk-muted)', fontWeight: 500 }}> /month</span></div>
+          <div className="mk-leak-metric-value">$24,700<span style={{ fontSize: '4.6cqw', color: 'var(--mk-muted)', fontWeight: 500 }}> /month</span></div>
         </div>
         <hr className="mk-leak-hr" />
         <div>
@@ -192,7 +197,7 @@ export function LeakagePhone({ style }) {
         </div>
         <hr className="mk-leak-hr" />
         <div>
-          <div className="mk-leak-title" style={{ fontSize: '0.62rem' }}>Fix These 3 Things</div>
+          <div className="mk-leak-title" style={{ fontSize: '5.4cqw' }}>Fix These 3 Things</div>
           <div className="mk-leak-list">
             1. Better Qualification<br />
             2. Value-First Messaging<br />
@@ -205,6 +210,7 @@ export function LeakagePhone({ style }) {
           <div className="mk-leak-recover">$18K+/month</div>
           <div className="mk-leak-sub">with improvements</div>
         </div>
+        <div className="mk-phone-homebar" />
       </div>
     </div>
   )
@@ -240,14 +246,14 @@ export function MessagesPhone({ style }) {
         <div className="mk-stories">
           {['rosewell', 'glowtheory', 'lumiere', 'velvet'].map((n, i) => (
             <span className="mk-story" key={n}>
-              <span className="mk-story-ring"><div style={{ background: ROW_FILLS[i] }} /></span>
+              <span className="mk-story-ring"><div style={{ background: ROW_FILLS[i], overflow: 'hidden' }}><PersonGlyph /></div></span>
               <span className="mk-story-name">{n}</span>
             </span>
           ))}
         </div>
         {MSG_ROWS.map((m, i) => (
           <div className="mk-msg-row" key={m.sub}>
-            <MiniAvatar bg={ROW_FILLS[(i + 1) % 5]} size={24} />
+            <MiniAvatar bg={ROW_FILLS[(i + 1) % 5]} size="11cqw" />
             <div>
               <div className="mk-msg-text">{m.text}</div>
               <div className="mk-msg-sub">{m.sub}</div>
@@ -255,7 +261,8 @@ export function MessagesPhone({ style }) {
             <span className="mk-msg-time">{m.time}</span>
           </div>
         ))}
-        <div style={{ height: 10 }} />
+        <div style={{ flex: 1 }} />
+        <div className="mk-phone-homebar" />
       </div>
     </div>
   )
@@ -267,7 +274,7 @@ export function TabletChat({ style }) {
   return (
     <div className="mk-tablet" style={style} aria-hidden="true">
       <div className="mk-tablet-screen">
-        <div className="mk-chat-body" style={{ padding: '16px 12px' }}>
+        <div className="mk-chat-body">
           <div className="mk-bubble mk-bubble--in">Hey! I&#39;d love to book a consult...</div>
           <div className="mk-bubble mk-bubble--out">Can you tell me more about your services?</div>
           <div className="mk-bubble mk-bubble--out">I&#39;m interested, what are your prices?</div>

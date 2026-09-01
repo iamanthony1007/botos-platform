@@ -22,8 +22,8 @@ function ArrowLeft() {
 }
 
 // Shared header for the public funnel pages (waitlist, audit, thank-you).
-// The homepage uses AnnouncementStrip alone, matching its mockup, which has
-// no logo row. Log in stays reachable but understated, per the briefing.
+// Log in is a bordered pill in the theme pink, per Anthony's 2026-09-01
+// layout corrections; the rabbit renders large, no wordmark.
 //
 // right:
 //   'waitlist'  renders JOIN THE WAITLIST -> /waitlist (mockup's own header CTA)
@@ -44,7 +44,6 @@ export default function PublicHeader({ right = 'waitlist' }) {
         <img src={RABBIT} alt="" />
       </button>
       <div className="mk-header-right">
-        <button className="mk-login-link" onClick={() => navigate('/login')}>Log in</button>
         {right === 'waitlist' && (
           <button className="mk-header-cta" onClick={() => navigate('/waitlist')}>
             Join the Waitlist <ArrowRight />
@@ -60,26 +59,30 @@ export default function PublicHeader({ right = 'waitlist' }) {
             <ArrowLeft /> Back to Home
           </button>
         )}
+        <button className="mk-login-btn" onClick={() => navigate('/login')}>Log in</button>
       </div>
     </header>
   )
 }
 
-// The homepage announcement strip: mockup's top bar. The CTA routes to
-// /waitlist; Log in sits at the far edge so it stays reachable without
-// competing with the strip message.
+// The homepage announcement strip, now a full header bar per Anthony's
+// 2026-09-01 corrections: rabbit logo left, the mockup's strip message and
+// waitlist CTA centered, Log in as a bordered pill on the right.
 export function AnnouncementStrip() {
   const navigate = useNavigate()
   return (
     <div className="mk-strip">
-      <span aria-hidden="true" style={{ color: 'var(--mk-pink)', fontSize: '0.9rem' }}>&#10022;</span>
-      <span className="mk-strip-text">Turn your existing DMs into more sales.</span>
-      <button className="mk-strip-cta" onClick={() => navigate('/waitlist')}>
-        Join the Waitlist <ArrowRight />
+      <button className="mk-logo-btn mk-strip-logo" onClick={() => navigate('/')} aria-label="Home">
+        <img src={RABBIT} alt="" />
       </button>
-      <button className="mk-login-link mk-strip-login" onClick={() => navigate('/login')}>
-        Log in
-      </button>
+      <div className="mk-strip-center">
+        <span aria-hidden="true" style={{ color: 'var(--mk-pink)', fontSize: '0.9rem' }}>&#10022;</span>
+        <span className="mk-strip-text">Turn your existing DMs into more sales.</span>
+        <button className="mk-strip-cta" onClick={() => navigate('/waitlist')}>
+          Join the Waitlist <ArrowRight />
+        </button>
+      </div>
+      <button className="mk-login-btn" onClick={() => navigate('/login')}>Log in</button>
     </div>
   )
 }
