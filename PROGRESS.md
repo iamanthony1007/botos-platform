@@ -1,3 +1,58 @@
+2026-09-14 ADDENDUM: PRE-FLIGHT RAN AND CLEARED REAL DIRTY STATE. DEMO
+RULING REVISED TO BOTH BRANCHES (Anthony's call).
+
+PRE-FLIGHT FINDING: connected_accounts held an instagram_api row for
+anthony_make1 (external id 17841480168261359) bound to Mu AI Demo (...00d1),
+created 2026-08-19 22:29 UTC, deauthorized 2026-09-12 00:45 UTC, token
+correctly nulled. So the 2026-08-18 cleanup DID work; this was a fresh,
+unrecorded connect the next evening, later deauthorized by app removal.
+Code trace at 76c8988: the deauthorize handler is PATCH-only and cannot
+mint rows; the only INSERT path is the OAuth connect callback. Row deleted
+by primary key 2026-09-14; pre-flight now returns exactly the one WhatsApp
+row. LESSON: a connect is a production state change and gets a PROGRESS
+line the day it happens.
+
+RULING REVISED: the demo supports BOTH branches.
+- SIMULATE (default): a synthetic connected_accounts row binds fake
+  business id 990914100000 to demo bot ...00e1; no OAuth connect needed.
+  New file db/seeds/real_estate_demo_synthetic_account_2026-09-14.sql
+  (idempotent, verification included, row id ...00e2). Safe by code trace:
+  the inbound path never reads the token (routeInstagramEvent does no Graph
+  API call, profileName null); refreshInstagramTokens requires non-null
+  token_expires_at so a null-expiry row is never a candidate; the follow-up
+  cron is hardcoded to Shaun's BOT_ID and channel in (instagram, manychat),
+  so demo rows (bot ...00e1, channel instagram_api) are double-excluded.
+- LIVE (only if Nella wants the on-camera moment): DELETE the synthetic row
+  ...00e2 FIRST (getInstagramSendCreds selects by bot_id, limit 1, no
+  ordering; a second tokenless row on the bot can break real sends), then
+  the real connect; DEMO_IG_ACCOUNT_ID becomes that connect's
+  external_account_id. Dev-mode caveat: until the Meta app is Live, only
+  role-holding IG accounts can connect and DM.
+
+REVISED DEMO-DAY ORDER: (1) tenant seed + verification in the PRODUCTION
+SQL editor; (2) viewing profile decided and assigned; needed in BOTH
+branches for the presenter's inbox access; never Nella's superadmin, never
+meta-review; (3a SIMULATE) paste the synthetic-account seed and set
+DEMO_IG_ACCOUNT_ID=990914100000, or (3b LIVE) delete row ...00e2 if
+present, real connect, read external_account_id; (4) driver --list then
+--run; (5) naming paste; (6) open the inbox.
+
+STANDING RULE, EITHER BRANCH: nobody clicks Send on the six synthetic
+conversations. Their sender IGSIDs are fake; a send fails at Meta
+regardless of connect state.
+
+SIDE FLAG: Supabase banner on Nella's account shows outstanding invoices in
+another org. Not the Mu AI project, but flagged to her; unpaid Supabase
+invoices during demo week are a risk that costs one message to remove.
+
+AFTER-DEMO TRACK (scoped, not started, attach to the retainer restart
+conversation): productize this pipeline as demo tenants + simulation packs
++ reseed inside production (Stripe test-mode pattern, is_demo flag on
+orgs); the two backlogged Tester fixes (botId routing, false-success save)
+fold into it as the live-typing half. Hard line: never fake unbuilt
+features inside the real dashboard; proposed features get labeled
+prototypes outside production.
+
 2026-09-14 REAL ESTATE DEMO BUILT ON feat/demo-real-estate-tenant. NOTHING
 HAS RUN ANYWHERE. THE CONNECT COMES FIRST AND IS ANTHONY'S.
 
