@@ -1,3 +1,64 @@
+2026-09-14 REAL ESTATE DEMO BUILT ON feat/demo-real-estate-tenant. NOTHING
+HAS RUN ANYWHERE. THE CONNECT COMES FIRST AND IS ANTHONY'S.
+
+(Branch note: cut from main, so this file here lacks the funnel-site entries
+of 2026-08-31 to 2026-09-01; those live on feat/funnel-site and merge with
+that branch.)
+
+RULING RECORDED: the Conversation Simulator is ruled OUT for the demo. The
+trace (this session) proved /webhook is hardcoded to Shaun's BOT_ID, so
+Tester on any tenant converses with Shaun's prompt and writes to Shaun's
+tenant, and Dashboard/Inbox/Analytics all filter channel='tester' and
+customer_id like 'tester_%' out anyway. BACKLOGGED, not built: (1) tester
+botId routing (getBotSettings already takes a botId the route never passes;
+Tester already prefers bots.webhook_url), (2) Tester's false-success save
+(its reviews update cross-tenant no-ops under RLS but still toasts Saved).
+
+BUILT TONIGHT, from Nella's four demo documents (Offer Brief, Brand Voice &
+Intent Definitions, Conversation Flow & Qualification Logic, Simulation
+Pack):
+- db/seeds/real_estate_demo_tenant_2026-09-14.sql: "Real Estate Demo" org
+  ...00e0 and bot ...00e1, auto_send false, stage_automation {}, per the
+  proven demo-seed pattern. intent_definitions SET from her three tiers
+  (unlike the fitness demo, deliberately: her classification is the demo).
+  Prompt embedded verbatim, md5 fe1a6721d9b1514b3a6de810987fc438.
+- db/prompts/real_estate_demo_prompt_2026-09-14.md: her structure translated
+  onto the proven skeleton, all 17 load-bearing headers byte-identical to the
+  Mu AI Demo prompt. $7,500 / 12-week offer context; price MAY be stated when
+  asked (her docs instruct answering the actual question; differs from the
+  fitness demo's no-pricing rule, recorded in the seed header); nine voice
+  adjectives as conversation rules; qualify-through-conversation with the
+  never-re-ask rule; medical guardrail became the financial one (no
+  guaranteed outcomes or returns, no personalized financial/lending/credit/
+  tax/legal advice). Leak scan 0 (Shaun terms AND fitness-demo terms).
+- scripts/demo-drive-real-estate.mjs: PRODUCTION variant of the stage4 events
+  script. Six personas (her four primary simulations, opening messages
+  verbatim, plus two of her randomized variations), 16 lead turns, distinct
+  synthetic IGSIDs (990914... namespace), signed with the real app secret via
+  Anthony's masked Read-Host prompt. SAFE BY DEFAULT: --list prints the plan
+  with no secret; --run requires the secret AND DEMO_IG_ACCOUNT_ID, which is
+  connected_accounts.external_account_id and cannot exist until the connect.
+  Verified: node --check clean, --list works, --run refuses without env.
+- db/seeds/real_estate_demo_naming_2026-09-14.sql: post-run block naming the
+  six conversations after their personas, keyed on the driver's fixed sender
+  ids, demo bot only, with expected-intent verification per her pack.
+
+ACCEPTANCE: her Expected Classification Test. Expected intents recorded in
+the naming file's verification block; divergence after the run is a prompt
+finding.
+
+EXECUTION ORDER FOR DEMO DAY (all Anthony): (1) paste the tenant seed +
+verification into the PRODUCTION SQL editor; (2) decide and assign the
+viewing profile (commented template at the seed's bottom; the Connections
+page connects the ASSIGNED bot's Instagram, so this precedes the connect;
+never Nella's superadmin, never meta-review); (3) connect the demo Instagram
+account; (4) read external_account_id, run the driver with --list then
+--run; (5) paste the naming block; (6) open the inbox. PRE-FLIGHT: confirm
+anthony_make1 left no connected_accounts row (expected: 1 row total, the
+WhatsApp one, zero instagram_api rows, per the 2026-08-18 cleanup).
+
+DELIBERATELY SKIPPED: reseed tooling (after-demo deliverable, per ruling).
+
 2026-08-30 MT PHASE 1 IS LIVE ON PRODUCTION. TENANT ISOLATION REAL AT THE
 DATABASE. MATRIX FULLY GREEN. SYSTEM STILL PAUSED.
 
