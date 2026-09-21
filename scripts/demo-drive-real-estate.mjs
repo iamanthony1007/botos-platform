@@ -62,7 +62,7 @@ const PERSONAS = [
   {
     key: "low",
     label: "Simulation 1, LOW intent, casual follower (Jordan)",
-    igsid: "990914100101",
+    igsid: "990914100111",
     turns: [
       "Hey, I saw your post about buying your first investment property. Can you send me the First Property in 90 Days roadmap?",
       "Honestly I'm not sure yet. I've just been watching your videos and wondering if it's something I could eventually do.",
