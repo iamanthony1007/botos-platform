@@ -61,3 +61,7 @@ dashboard/.env.staging
 d i f f - f o r - r e v i e w . t x t 
  
  
+Whatsapp Verify Token.txt
+.commit_msg_*.txt
+.merge_msg_*.txt
+
